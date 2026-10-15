@@ -37,6 +37,14 @@ final class LauncherModel: ObservableObject {
             strip.watch(tabs)
         }
     }
+    /// This Mac's automations, the runner that fires them (`startAutomations`), and the switch's watch (option 01 of `prompts-cant-run-on-a-schedule`).
+    let automations = AutomationStore()
+    let automationRunner = AutomationRunner()
+    var automationSwitch: AnyCancellable?
+    /// The tabs a person sees: `tabs` less the runs of automations nobody has opened (`ClaudeTab.isHiddenRun`). Every list of tabs for the eye
+    /// reads this: the strip, the projects column, the session list and its selection, the board's cards, the keys' rows. Lookups, saving, the
+    /// launch sweep, the notifier and the host's listing read `tabs`.
+    var shownTabs: [ClaudeTab] { tabs.filter { !$0.isHiddenRun } }
     /// Where a tab being dragged in the header or the Tabs list will land.
     let tabDrag = TabDrag()
     /// The header's tab strip: which tabs it shows, and the list of those it doesn't.
@@ -394,7 +402,7 @@ final class LauncherModel: ObservableObject {
             return Self.searchHeight + 1 + Self.emptyHeight   // "No results", or the hint under a bare `?`
         case .sessions:
             guard showsSessionList else { return Self.searchHeight }
-            let headers = (tabs.isEmpty ? 0 : 1) + Set(peerListTabs.map(\.peer.id)).count + (shownRecent.isEmpty ? 0 : 1)
+            let headers = (shownTabs.isEmpty ? 0 : 1) + Set(peerListTabs.map(\.peer.id)).count + (shownRecent.isEmpty ? 0 : 1)
             return Self.searchHeight + 1 + CGFloat(headers) * Self.sessionHeaderHeight
                 + CGFloat(sessionListCount) * Self.sessionRowHeight + 8
         }
@@ -622,7 +630,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Empty search lists open and recent sessions so they can be picked with ↑↓ and Return.
-    var showsSessionList: Bool { query.isEmpty && !(tabs.isEmpty && allRecent.isEmpty && peerOpenRows.isEmpty) }
+    var showsSessionList: Bool { query.isEmpty && !(shownTabs.isEmpty && allRecent.isEmpty && peerOpenRows.isEmpty) }
     var shownRecent: ArraySlice<TabRecord> { allRecent.prefix(Self.recentShown) }
 
     /// Rebuilds `allRecent` from this Mac's Recent and the paired Macs': newest first, one entry per tab under the host's id. A tab open
@@ -771,14 +779,14 @@ final class LauncherModel: ObservableObject {
     /// The session list's rows, in order: this Mac's tabs, then the peers' open tabs, then
     /// Recent. Every index into it (`sessionSelection`, `move`, `openSelected`, the view) comes from
     /// these, so a section can't be miscounted in one place.
-    var peerRowsStart: Int { tabs.count }
-    var recentRowsStart: Int { tabs.count + peerListTabs.count }
+    var peerRowsStart: Int { shownTabs.count }
+    var recentRowsStart: Int { shownTabs.count + peerListTabs.count }
     var sessionListCount: Int { recentRowsStart + shownRecent.count }
 
     /// Identifies a row of the session list across updates, so the highlight can follow it.
     private func sessionRowID(at index: Int) -> String? {
-        let peerTabs = peerListTabs
-        if tabs.indices.contains(index) { return "tab|" + tabs[index].viewID.uuidString }
+        let peerTabs = peerListTabs, open = shownTabs
+        if open.indices.contains(index) { return "tab|" + open[index].viewID.uuidString }
         if peerTabs.indices.contains(index - peerRowsStart) { return peerTabs[index - peerRowsStart].viewID }
         let recentIndex = index - recentRowsStart
         let shown = shownRecent
@@ -1121,9 +1129,9 @@ final class LauncherModel: ObservableObject {
 
     func openSelected() {
         if showsSessionList {
-            let peerTabs = peerListTabs
-            if tabs.indices.contains(sessionSelection) {
-                activate(tabs[sessionSelection])
+            let peerTabs = peerListTabs, shown = shownTabs
+            if shown.indices.contains(sessionSelection) {
+                activate(shown[sessionSelection])
             } else if peerTabs.indices.contains(sessionSelection - peerRowsStart) {
                 openPeerTab(peerTabs[sessionSelection - peerRowsStart])
             } else if shownRecent.indices.contains(sessionSelection - recentRowsStart) {
@@ -2504,6 +2512,15 @@ final class LauncherModel: ObservableObject {
     private func sessionExited(_ session: ClaudeSession, code: Int32?, query prompt: String) {
         guard !quitting, let index = tabs.firstIndex(where: { $0.contains(session) }) else { return }
         let tab = tabs[index]
+        // A run nobody opened ends into its automation's run list: not Recent, not an ended card, not Completed.
+        if tab.isHiddenRun, session.record.automation != nil {
+            runClosed(session, code: code)
+            closing[tab.id] = nil
+            tabs.remove(at: index)
+            sessionSelection = min(sessionSelection, max(0, shownTabs.count - 1))
+            saveSessions()
+            return
+        }
         // Marked while open: by another Mac on a tab that runs here (its saved tab keeps the date), or by the host of one that runs on a
         // paired Mac, whose Completed copy is flagged. Read before the pane's close takes it out of the cached listing.
         let markedAt = doneMark(of: tab)
@@ -2581,7 +2598,7 @@ final class LauncherModel: ObservableObject {
                                      databasePath: store.path)
             }
         }
-        sessionSelection = min(sessionSelection, max(0, tabs.count - 1))
+        sessionSelection = min(sessionSelection, max(0, shownTabs.count - 1))
         guard activeTab === tab else { return }   // a background tab ended
 
         let quick = session.isClaude && session.started && Date().timeIntervalSince(session.launchedAt) < 3
@@ -2951,16 +2968,19 @@ final class LauncherModel: ObservableObject {
     func moveTab(_ tab: ClaudeTab, toGap gap: Int) {
         guard let from = tabs.firstIndex(where: { $0 === tab }), gap != from, gap != from + 1,
               (0...tabs.count).contains(gap) else { return }
-        let selected = tabs.indices.contains(sessionSelection) ? tabs[sessionSelection] : nil
+        let shown = shownTabs
+        let selected = shown.indices.contains(sessionSelection) ? shown[sessionSelection] : nil
         strip.keepRunByIndex()
         tabs.move(fromOffsets: [from], toOffset: gap)
-        if let selected, let i = tabs.firstIndex(where: { $0 === selected }) { sessionSelection = i }
+        if let selected, let i = shownTabs.firstIndex(where: { $0 === selected }) { sessionSelection = i }
         saveSessions()
     }
 
     /// Showing a tab closes the board or the outline over it, unless the tab only became the one underneath
     /// (`keepingBoard`: the tab on screen ended).
     func activate(_ tab: ClaudeTab, keepingBoard: Bool = false) {
+        // A run nobody had opened is an ordinary tab from the moment it is shown.
+        if tab.isHiddenRun { runOpened(tab) }
         pendingSplit = nil
         strip.closeList()
         if !keepingBoard {
@@ -2980,7 +3000,7 @@ final class LauncherModel: ObservableObject {
         pendingSplit = nil
         strip.closeList()
         startSummaryTicker()
-        if let active = activeTab, let i = tabs.firstIndex(where: { $0 === active }) {
+        if let active = activeTab, let i = shownTabs.firstIndex(where: { $0 === active }) {
             sessionSelection = i
         }
         activeTab = nil

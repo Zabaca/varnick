@@ -505,6 +505,8 @@ final class PanelAccess {
             let selected = board.problems.selection.flatMap { id in board.problems.cards.first { $0.id == id } }
                 .map { "selected: \"\($0.title)\"" } ?? "no problem selected"
             return ["Showing: the session board, Problems tab (\(selected))"]
+        case .runs:
+            return ["Showing: the session board, Runs tab"]
         }
     }
 }

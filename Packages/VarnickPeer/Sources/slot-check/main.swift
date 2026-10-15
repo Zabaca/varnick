@@ -174,6 +174,43 @@ for cadence in presets {
     expect("\(cadence.label) survives its file", back == cadence, String(decoding: data, as: UTF8.self))
 }
 
+// MARK: The file
+
+// A throwaway folder: nothing here touches the support folder.
+let folder = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-\(getpid())", isDirectory: true)
+try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: folder) }
+let file = AutomationFile.url(in: folder)
+expect("no file reads as missing, which is not a problem", AutomationFile.read(at: file) == .missing && AutomationFile.read(at: file).problem == nil)
+var sample = Automation(name: "Morning summary", prompt: "Say hello", cadence: .weekdays(hour: 9, minute: 0), timeZone: "America/Los_Angeles",
+                        permissions: .allowedOnly, allowedTools: ["Bash(git status)", "Edit"], createdAt: at("2026-10-15 09:00"))
+sample.lastSlot = at("2026-10-15 16:00")
+for index in 0..<(Automation.runLimit + 5) {
+    sample.record(AutomationRun(slot: at("2026-10-15 16:00").addingTimeInterval(Double(index) * 60), state: .done))
+}
+expect("a run list keeps twenty, newest first", sample.runs.count == 20 && sample.runs.first!.slot > sample.runs.last!.slot)
+sample.runs[0].state = .message
+sample.runs[0].detail = "Found 3"
+do {
+    try AutomationFile.write([sample], to: file)
+    let back = AutomationFile.read(at: file)
+    expect("an automation survives its file", back == .loaded([sample]), "\(back)")
+    let mode = (try? FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int) ?? 0
+    expect("the file is owner-only", mode == 0o600, String(mode, radix: 8))
+} catch {
+    expect("the file can be written", false, "\(error)")
+}
+try? Data("{\"version\": 99, \"automations\": []}".utf8).write(to: file)
+expect("a newer version is never written over", AutomationFile.read(at: file) == .newer(99) && AutomationFile.read(at: file).problem != nil)
+try? Data("not json".utf8).write(to: file)
+if case .unreadable = AutomationFile.read(at: file) {} else { expect("garbage is unreadable", false) }
+try? Data("{\"version\": 1, \"automations\": [{\"name\": 3}]}".utf8).write(to: file)
+if case .unreadable = AutomationFile.read(at: file) {} else { expect("a record that doesn't decode is unreadable", false) }
+expect("an unreadable file fires nothing", AutomationFile.read(at: file).automations.isEmpty)
+// A run state a newer build wrote reads as done, not as an unreadable file.
+let strange = Data("\"somethingNew\"".utf8)
+expect("an unknown run state reads as done", (try? JSONDecoder().decode(RunState.self, from: strange)) == .done)
+
 if failures > 0 {
     FileHandle.standardError.write(Data("error: check-slots: \(failures) of \(cases) checks failed\n".utf8))
     exit(1)

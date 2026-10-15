@@ -74,7 +74,8 @@ struct LauncherView: View {
                 SettingsView(embedder: model.baseEmbedder, localReranker: model.localReranker, textGenerator: model.textGenerator,
                              embeddingServer: model.embeddingServer, textGenerationServer: model.textGeneration.server,
                              claudeCode: model.textGeneration.claude, resources: model.settingsResources,
-                             close: { model.toggleSettings() }, askRestart: { model.askRestart() }, openAppFolders: { model.openAppFolders() })
+                             close: { model.toggleSettings() }, askRestart: { model.askRestart() }, openAppFolders: { model.openAppFolders() },
+                             launcher: model)
             } else if model.showingBoard {
                 SessionBoardView(board: model.board) { model.closeBoard() }
             } else if model.showingOutline {
@@ -179,7 +180,8 @@ struct LauncherView: View {
 
     private var sessionList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !model.tabs.isEmpty {
+            let shown = model.shownTabs
+            if !shown.isEmpty {
                 HStack {
                     SectionLabel(text: "Tabs")
                     Spacer()
@@ -188,14 +190,14 @@ struct LauncherView: View {
                 .padding(.trailing, Theme.gutter)
                 .frame(height: LauncherModel.sessionHeaderHeight)
                 VStack(spacing: 0) {
-                    ForEach(Array(model.tabs.enumerated()), id: \.element.viewID) { i, t in
+                    ForEach(Array(shown.enumerated()), id: \.element.viewID) { i, t in
                         TabRow(tab: t, selected: i == model.sessionSelection, pills: model.pills(for: t.focused.record),
                                sessions: model.tabSummaries[t.viewID] ?? [], mark: model.tabMarks[t.viewID])
                             .onTapGesture { model.tabDrag.tap { model.activate(t) } }
-                            .reorderable(t, in: model, axis: .vertical)
+                            .reorderable(t, among: shown, in: model, axis: .vertical, place: { model.fullGap($0, among: shown) })
                     }
                 }
-                .tabDropMarker(model.tabDrag, in: model.tabs, axis: .vertical)
+                .tabDropMarker(model.tabDrag, in: shown, axis: .vertical)
             }
             // Each paired Mac's open tabs, under its name; ↩ opens one whole, in its host's layout, on cards.
             let peerTabs = model.peerListTabs

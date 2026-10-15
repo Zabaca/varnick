@@ -61,6 +61,20 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// a peer asked for follows the peer's. Nil follows the setting.
     var skipPermissions: Bool?
 
+    /// Started with `--permission-mode dontAsk` (an automation's Allowed tools only): anything not allowed is refused with no dialog. Passed
+    /// again on resume, with `allowedTools`, which are added to the session's settings beside `notify`'s. Optional so older saved records load.
+    var dontAsk: Bool?
+    var allowedTools: [String]?
+
+    /// The automation this session is a run of (option 01 of `prompts-cant-run-on-a-schedule`), for the whole life of the record: a run's MCP
+    /// server lists `notify` alone, whatever Screen access and Panel access say, at every start of it. Optional so older records load, and an older
+    /// build ignores it.
+    var automation: UUID?
+
+    /// A run nobody has opened: its tab is kept out of the strip, the session list, the board, Recent and search until the user opens it, from the
+    /// board's Runs tab or a notice. Cleared when the tab is shown, taken over, or Automations is turned off (`LauncherModel.isHiddenRun`).
+    var runUnopened: Bool?
+
     /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude
     /// pane here that another Mac marked. `SessionStore.State` turns it into a tab's mark and never writes it again. Optional so older files load.
     var completedAt: Date?

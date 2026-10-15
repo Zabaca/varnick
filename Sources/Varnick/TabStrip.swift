@@ -226,7 +226,7 @@ final class TabStrip: ObservableObject {
     func refresh(mode: TabOverflow? = nil) {
         guard let model else { return }
         model.tabProjects.rebuild()
-        let tabs = model.tabs.filter { model.tabProjects.includes($0) }
+        let tabs = model.shownTabs.filter { model.tabProjects.includes($0) }
         if !tabs.elementsEqual(self.tabs, by: ===) { self.tabs = tabs }
         let items = tabs.map { tab -> TabFit.Item in
             if model.renamingTab === tab { return TabFit.Item(natural: TabMetrics.renameWidth, rigid: true) }
