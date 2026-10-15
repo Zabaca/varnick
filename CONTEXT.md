@@ -62,6 +62,14 @@ _Avoid_: Memory view, task manager, process list, Activity Monitor
 One box inside a tab, showing a session, a terminal, a web page, a **Custom app**, a file or the live **Transcript**.
 _Avoid_: Window, view, leaf
 
+**Task**:
+Something the user hands Varnick to carry out on a website in a **Task pane**, such as finding a fact ("how much is delivery to Canada") or filling its forms ("create an account for Robin Vale"). The harness owns the loop: it reads the page, peeks at every link, keeps a value bank for forms, checks in code and gets itself out of loops. Jev chooses each step (Claude, in its place, when the relevance filter isn't on TypeSafe with a key, or after Jev fails), and the user's own Claude Code writes the values and steers when Jev is unsure. The user types passwords, one-time codes and card numbers in the page, ticks the terms and allows every form submit but a search. One task runs at a time; it ends with its pane, with Stop, or when Varnick restarts. Behind a switch, off by default (Settings › Experimental); see [ADR 0038](docs/adr/0038-varnick-carries-out-a-task-in-a-browser-of-its-own-with-jev-choosing-each-step-and-claude-steering.md).
+_Avoid_: Agent (a Claude Code definition), computer use (avoided for **Screen access**), automation
+
+**Task pane**:
+A **Pane** that is a browser of Varnick's own, picked with `!task` or the split picker's Task tile: an address bar, a task line, the page, and a column of steps, each marked with who acted (Jev, Claude, the harness, the user). Its website data is its own, not kept, and gone when it closes. It reads and acts inside the page only, never on the screen, so it needs no permission. It is never saved, so a restart ends it, and it is not listed to paired Macs or the phone.
+_Avoid_: Agent pane, automation pane
+
 **Restart**:
 Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart. Not Restart Varnick (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Varnick restarting).
 _Avoid_: Reload, relaunch

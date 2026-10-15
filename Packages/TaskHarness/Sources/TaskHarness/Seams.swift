@@ -97,9 +97,11 @@ public enum System2Role: String, Sendable {
 }
 
 /// System 2: the user's own Claude Code, in a conversation for each role of the task. `message` is the next user message; the reply is the
-/// model's text. Throws when the helper fails or misses its deadline.
+/// model's text. `preface` is what a conversation starts with (the role and the task): the implementation puts it before the message that starts
+/// a conversation, which is the first of the role and the first after a conversation ended (a missed deadline), and nowhere else. Throws when the
+/// helper fails or misses its deadline.
 public protocol System2: AnyObject {
-    func ask(_ role: System2Role, _ message: String) async throws -> String
+    func ask(_ role: System2Role, _ message: String, preface: String) async throws -> String
 }
 
 public enum Decision: Equatable, Sendable {

@@ -119,8 +119,8 @@ final class ScriptedSystem2: System2 {
     /// Raised to make every call fail.
     var failing = false
 
-    func ask(_ role: System2Role, _ message: String) async throws -> String {
-        messages.append((role, message))
+    func ask(_ role: System2Role, _ message: String, preface: String) async throws -> String {
+        messages.append((role, preface + "\n" + message))
         if failing { throw ScriptedSystem1.Failure() }
         if message.contains("Does it state the answer the task asks for?") { return "{\"verdict\": \"\(verdict)\"}" }
         if role == .values {

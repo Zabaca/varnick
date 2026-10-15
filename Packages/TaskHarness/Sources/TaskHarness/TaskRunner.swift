@@ -83,7 +83,6 @@ public final class TaskRunner {
     private var turnNumber = 0
     private var s1Turns = 0
     private var claudeMessages = 0
-    private var startedRoles: Set<System2Role> = []
 
     // Steering
     private var hints: [String] = []
@@ -226,14 +225,11 @@ public final class TaskRunner {
 
     // MARK: System 2
 
-    /// Claude, in a conversation for the role. The first message of each carries the role and the task.
+    /// Claude, in a conversation for the role.
     private func askClaude(_ role: System2Role, _ text: String) async throws -> String {
-        let first = !startedRoles.contains(role)
-        startedRoles.insert(role)
         claudeMessages += 1
         stats.claudeCalls += 1
-        let message = first ? Prompts.role(task: task) + "\n" + text : text
-        return try await system2.ask(role, message)
+        return try await system2.ask(role, text, preface: Prompts.role(task: task))
     }
 
     private func requestValues(fields: [PageField]?, why: String, address: String = "") {
@@ -252,15 +248,12 @@ public final class TaskRunner {
         let job = Job(why: why, fields: ids, startedTurn: turnNumber)
         // Messages to one conversation go in the order they were made, whatever order tasks start in.
         let previous = valuesChain
-        let first = !startedRoles.contains(.values)
-        startedRoles.insert(.values)
         claudeMessages += 1
         stats.claudeCalls += 1
-        let message = first ? Prompts.role(task: task) + "\n" + text : text
-        let system2 = self.system2
+        let system2 = self.system2, preface = Prompts.role(task: task)
         let work = Task<String?, Never> {
             _ = await previous?.value
-            let reply = try? await system2.ask(.values, message)
+            let reply = try? await system2.ask(.values, text, preface: preface)
             job.markFinished()
             return reply
         }

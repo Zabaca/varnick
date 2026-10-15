@@ -57,7 +57,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
-  Phone page, the Problems board and the Outline (Experimental, below).
+  Phone page, the Problems board, the Outline and Tasks (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -381,6 +381,24 @@ the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as an
 does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
 and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
+
+**Tasks** hands Varnick something to do on a website: find a fact ("how much is delivery to Canada"), or fill in forms ("create an
+account for Robin Vale"). On, `!task` and the split picker's Task tile open a **Task pane**, a browser of Varnick's own. It has none
+of your cookies or logins, keeps nothing when you close it, and is not saved, so a restart ends it. Open the site in it, write the
+task in the task line under the address bar and press ↩. A column of steps beside the page says what Jev, Claude and the harness do,
+one line each, and Varnick can say the milestones aloud (Speak progress, on in the pane). It reads and acts inside the page only, never
+on your screen, so it needs no permission and works while you use the Mac.
+- **You type** passwords, one-time codes and card numbers in the page yourself (Varnick never reads them, and no model sees them),
+  **you tick** the terms box, and **every form submit but a search asks**: Allow lets Varnick press it, I'll do it waits for you to
+  press it in the page and then Resume.
+- **A click or a key of yours in the page pauses the task** before its next action; Resume hands it back. Stop (the button, or
+  ⌘.) ends it at once and leaves the page as it is. Closing the pane, turning the switch off or restarting Varnick ends it too.
+- **Jev** chooses each step when the relevance filter is on TypeSafe with a key saved. Without it, or after it fails three times, Claude
+  chooses (the pane says "Without Jev"), more slowly. Your own Claude Code, logged in, is needed either way: it writes the values and
+  steers. Nothing starts without it.
+- One task runs at a time. A second task in the same pane keeps the first one's cookies and cart.
+- What goes where is in [privacy and security](privacy-and-security.md#anthropic-through-tasks). To try it on a made-up shop,
+  run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Task pane.
 
 ## TypeSafe
 

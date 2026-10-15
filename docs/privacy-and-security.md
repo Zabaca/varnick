@@ -83,6 +83,14 @@ Mac** or leave it off (it is off by default): then none of this happens.
   app's, a remote desktop's or a virtual machine's, one past the limits of the read, or one that moved before
   the picture was taken. Don't use this with a password or other secret typed in such a field (ADR 0021).
 
+- **Tasks** (off by default; Settings › Experimental). While a task runs with the relevance filter on TypeSafe and a key
+  saved, Jev chooses each step, one call a turn: the task you wrote; the page's address, title, links and buttons (their
+  labels) and text blocks; for each link on the page, the title, headings, first lines and link names of the page behind
+  it; the text being read as the answer; the labels of form fields and the values the task types into them (the name,
+  email and address you wrote in the task, for example); the last few steps; and Claude's hints. A password, a one-time
+  code and a card number are never among them: you type those in the page, and the harness never reads them. Without the
+  filter on TypeSafe, none of this goes to TypeSafe and Claude chooses the steps instead (below). Not logged.
+
 None of this goes to a model server.
 
 ### ElevenLabs
@@ -153,6 +161,28 @@ session was read. A request that names one of your session folders, or is only a
   and counts toward your plan's usage limits.
 - Varnick speaks a sentence or two naming where the answer came from, and writes them to today's transcript. It does
   not log the request, the prompt, the search words, the reply or the answer.
+
+### Anthropic, through Tasks
+
+A task (Settings › Experimental › **Tasks**, off by default) is written in a Task pane and carried out in that pane's own
+browser, which has none of your cookies or logins and keeps nothing when it closes. Your own `claude` writes the values it
+types and steers, in two conversations kept open for the length of the task, on your plan.
+
+- **What goes to Anthropic:** the task you wrote; each page's address, title, links, buttons, text and form fields (their
+  labels and, for a field the task filled, its value); the previews of its links; the trail of every page the task has
+  visited, what was done there and what it led to; and the values Claude wrote itself. The first time Claude is shown a
+  page, it is shown whole; after that, what changed. When Jev isn't used (the relevance filter isn't on TypeSafe with a key
+  saved, or Jev failed three times in a row), Claude also makes each step's choices, so each step is a message.
+- **What never goes:** a password, a one-time code or a card field's value. The page script does not read them: it sends
+  only whether such a field is filled. That holds for a field that was ever a password, so a "show password" button
+  doesn't change it. You type them in the page. Anything else you type in the page, in a field that isn't one of those,
+  is shown to Claude (and to Jev) as that field's value, like one the task typed.
+- **What Claude Code itself sends** with a call, as above. The conversations are not sessions: nothing is saved as a
+  transcript.
+- Each message is a model turn and counts toward your plan's usage limits; a task takes from a handful of messages to
+  the 20 it is limited to, plus a call for each step when Jev isn't used.
+- Varnick doesn't log a task, a page's address or title, a label, a value or a reply; only each step's kind, who acted,
+  how long it took and the task's counts.
 
 ### Anthropic, through Screen access
 
@@ -359,6 +389,25 @@ may also ask again after some weeks whether Varnick may keep recording (not veri
 
 Point at the screen itself only reads the window in front, and only when you ask about the screen. The arrow it draws can't
 take focus or clicks, and goes by itself.
+
+### Tasks act as you on a site, and wait for you
+
+A task (Settings › Experimental › Tasks, off by default) clicks links and buttons and types into forms in a Task pane's own browser,
+as you would, to carry out what you wrote. It is the other way round from Screen access: it acts inside Varnick's web view only,
+never on your screen, needs no permission, and brings nothing to the front.
+
+- **It can do anything a site lets a visitor do,** account creation and a purchase included, with the details you wrote in the
+  task and Claude filled in from it. What it doesn't do: type your password, a one-time code or a card number (you type those
+  in the page), tick a terms box Claude marked as yours (you tick it), or press a form's submit without you. **Every form
+  submit but a search box's asks** ("Allow" lets Varnick press it, "I'll do it" waits for you to press it in the page), and so
+  does any button on a page that has a form, a script-handled "Place order" included. On a page with no form, a button or a
+  link is an ordinary click: a site that changes things when a link is followed, or a script-handled button on a page with no
+  form, is not stopped by this (inferred, not tried).
+- **A click or a key of yours in the page pauses the task** before its next action; Resume hands it back. Stop ends it at once.
+- The pane's cookies and storage are its own, empty at the start and gone when it closes, so a site never sees your logins and a
+  task can't use them.
+- **What steers a task can steer it:** a page it reads is read by Jev and by Claude, and a page that talks to them is read like
+  any text. The gates above are in code, not in the models' hands.
 
 ### Screen access acts without asking
 

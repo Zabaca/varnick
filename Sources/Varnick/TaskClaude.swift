@@ -27,6 +27,7 @@ final class ClaudeConversation: @unchecked Sendable {
 
     private let claude: String
     private let environment: [String: String]
+    /// What a conversation starts with (the role and the task), put before the message that starts one.
     private let lock = NSLock()
     private var process: Subprocess.Open?
     private var lines = TextHelper.Lines()
@@ -40,13 +41,14 @@ final class ClaudeConversation: @unchecked Sendable {
         self.environment = environment
     }
 
-    /// The reply to `text`. Throws `Failure` with a kind, or `CancellationError`.
-    func send(_ text: String) async throws -> String {
+    /// The reply to `text`. `preface` goes before it when it starts a conversation (the first, or the first after one ended). Throws `Failure`
+    /// with a kind, or `CancellationError`.
+    func send(_ text: String, preface: String = "") async throws -> String {
         let work: Task<String, Error> = lock.withLock {
             let previous = tail
             let w = Task<String, Error> {
                 _ = await previous?.value
-                return try await self.exchange(text)
+                return try await self.exchange(text, preface: preface)
             }
             tail = Task { _ = try? await w.value }
             return w
@@ -68,10 +70,10 @@ final class ClaudeConversation: @unchecked Sendable {
         finished?.end()
     }
 
-    private func exchange(_ text: String) async throws -> String {
+    private func exchange(_ text: String, preface: String) async throws -> String {
         try Task.checkCancellation()
         guard TextHelper.isInstalled else { throw Failure(kind: "text helper missing") }
-        try write(text)
+        try write(text, preface: preface)
         let began = ContinuousClock.now
         let reply = await nextResult()
         if Task.isCancelled { end(); throw CancellationError() }
@@ -89,14 +91,14 @@ final class ClaudeConversation: @unchecked Sendable {
     }
 
     /// The first message starts the helper with the request; later ones are lines on its input.
-    private func write(_ text: String) throws {
+    private func write(_ text: String, preface: String) throws {
         let existing = lock.withLock { process }
         if let existing {
             guard let line = try? JSONSerialization.data(withJSONObject: ["message": text]) else { throw Failure(kind: "message unwritable") }
             return existing.send(line + Data([0x0A]))
         }
         try? FileManager.default.createDirectory(at: TextHelper.workingFolder, withIntermediateDirectories: true)
-        let start = Start(prompt: text, model: TextHelper.model, claude: claude, filter: TextHelper.filter.path, cwd: TextHelper.workingFolder.path)
+        let start = Start(prompt: preface.isEmpty ? text : preface + "\n" + text, model: TextHelper.model, claude: claude, filter: TextHelper.filter.path, cwd: TextHelper.workingFolder.path)
         guard var line = try? JSONEncoder().encode(start) else { throw Failure(kind: "request unwritable") }
         line.append(0x0A)
         let open = Subprocess.open(TextHelper.bun.path, ["--no-env-file", "--no-install", TextHelper.script.path], environment: environment,
@@ -185,8 +187,8 @@ final class TaskClaude: System2, @unchecked Sendable {
         guidance = ClaudeConversation(claude: claude, environment: environment)
     }
 
-    func ask(_ role: System2Role, _ message: String) async throws -> String {
-        try await (role == .values ? values : guidance).send(message)
+    func ask(_ role: System2Role, _ message: String, preface: String) async throws -> String {
+        try await (role == .values ? values : guidance).send(message, preface: preface)
     }
 
     func end() {
@@ -204,7 +206,7 @@ final class ClaudeSystem1: System1, @unchecked Sendable {
     init(claude: TaskClaude) { self.claude = claude }
 
     func ask(state: JSON, questions: [Question]) async throws -> [String: Answer] {
-        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions))
+        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions), preface: "")
         guard let answers = Prompts.readFallback(reply, questions: questions) else { throw ClaudeConversation.Failure(kind: "reply unreadable") }
         return answers
     }
