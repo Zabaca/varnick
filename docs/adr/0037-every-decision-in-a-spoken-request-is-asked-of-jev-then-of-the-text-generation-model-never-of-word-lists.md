@@ -8,7 +8,7 @@ The case that prompted it: "What time is it again?" missed the clock's phrase li
 
 **Every routing, classification or yes/no decision in a spoken request is a question to Jev.** That covers where to look, the clock, something Varnick can't do, the screen, which project folder and which time a request names, whether only the user's own things can answer it, one result or several, and which words to search for.
 - The questions go in the one route call that already runs while the request is being said, since Jev takes many named questions in one call.
-- The judge's row scores stay their own call, as ADR 0036 has them.
+- The judge's row scores stay their own call, as ADR 0036 has them. When Jev isn't used or fails, the Text generation model scores the rows too (amended 2026-10-15; before, they went unjudged and the top rows were read, which kept the web out of reach when TypeSafe's budget was spent). Only when it fails as well are the rows unjudged, and the writer is then offered the web.
 
 **When Jev isn't used or fails, the same questions go to the Text generation model** the user set (Claude Code, this Mac's model or a server).
 - "Isn't used": the relevance filter is On this Mac or off, or no TypeSafe key is saved.
@@ -23,7 +23,7 @@ The case that prompted it: "What time is it again?" missed the clock's phrase li
 - turning a chosen label into hours;
 - reading and cleaning a model's reply;
 - the hold and the voice;
-- rules over facts already decided, such as no web marker when a session is among the rows.
+- rules over facts already decided, such as no web for a request that stays local.
 
 **What Jev can be asked** (the TypeSafe SDK's types, 0.6.0):
 - three kinds of question: yes/no (`noul`), `choice` among labels the caller builds at each call, and `score` on an ordered rubric;
