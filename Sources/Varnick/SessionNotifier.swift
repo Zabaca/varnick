@@ -9,7 +9,7 @@ extension NoticeKind {
         case .done: "Done"
         case .needsYou(let turn): turn.mark ?? "Needs you"
         case .failed(let failure): "Stopped on an error (\((failure ?? .other).word))"
-        case .said(let title): title
+        case .message(let title): title
         }
     }
 
@@ -28,7 +28,7 @@ extension NoticeKind {
         case .done: .waiting
         case .needsYou(let turn): turn
         case .failed: .failed
-        case .said: nil
+        case .message: nil
         }
     }
 
@@ -36,7 +36,7 @@ extension NoticeKind {
     /// background work or an API error goes with the waiting.
     var settles: Bool {
         switch self {
-        case .needsYou, .said: false
+        case .needsYou, .message: false
         case .done, .failed: true
         }
     }
@@ -109,14 +109,14 @@ final class SessionNotifier: ObservableObject {
         }
     }
 
-    /// A pane's message changed (`ClaudeSession.onSaidChange`): a new one raises Said, replacing what stands; one that is gone clears a standing Said.
+    /// A pane's message changed (`ClaudeSession.onMessageChange`): a new one raises a Message, replacing what stands; one that is gone clears a standing Message.
     func messageChanged(in pane: ClaudeSession, from old: PaneMessage?, to new: PaneMessage?, first: Bool) {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
-        switch NoticeRule.decide(said: new, from: old, first: first, inControl: pane.away == nil, onScreen: model.isOnScreen(pane),
+        switch NoticeRule.decide(message: new, from: old, first: first, inControl: pane.away == nil, onScreen: model.isOnScreen(pane),
                                  switches: Settings.shared.noticeSwitches) {
         case .none: break
         case .clear:
-            if case .said? = notices.first(where: { $0.id == pane.id })?.kind { clear(pane.id) }
+            if case .message? = notices.first(where: { $0.id == pane.id })?.kind { clear(pane.id) }
         case .raise(let kind):
             // It supersedes a Done or an error still waiting to be confirmed.
             unsettled[pane.id] = nil
@@ -168,7 +168,7 @@ final class SessionNotifier: ObservableObject {
             let status = await Task.detached { Zmx.status(of: id) }.value
             guard let self, let model = self.model, let pane = model.claudePane(id), status.running,
                   status.control == nil || Zmx.sameID(status.control, PeerIdentity.id),
-                  kind.turn.map({ pane.turn?.turn == $0 }) ?? (pane.said != nil), pane.away == nil, !model.isOnScreen(pane) else { return }
+                  kind.turn.map({ pane.turn?.turn == $0 }) ?? (pane.message != nil), pane.away == nil, !model.isOnScreen(pane) else { return }
             self.post(kind, for: id)
         }
     }
@@ -176,7 +176,7 @@ final class SessionNotifier: ObservableObject {
     private func post(_ kind: NoticeKind, for id: UUID) {
         // A message alerts at most once a minute a pane; one within the minute replaces the standing notice and its menu line quietly.
         var quiet = false
-        if case .said = kind {
+        if case .message = kind {
             quiet = lastMessageAlert[id].map { Date().timeIntervalSince($0) < Self.messageAlertEvery } ?? false
             if !quiet { lastMessageAlert[id] = Date() }
         }

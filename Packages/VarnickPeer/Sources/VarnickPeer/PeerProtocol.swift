@@ -470,15 +470,15 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
     public var work: PeerWork?
     /// The pane's standing message from its file on the host (`PaneMessage`, protocol 28). The words go only to the Macs that follow the pane and
     /// the host's own page server, never in a push.
-    public var said: PeerSaid?
+    public var message: PeerMessage?
 
     private enum CodingKeys: String, CodingKey {
-        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work, said
+        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work, message
     }
 
     public init(running: Bool, clients: Int? = nil, control: String? = nil, controlName: String? = nil, conversation: String? = nil,
                 title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil,
-                said: PeerSaid? = nil) {
+                message: PeerMessage? = nil) {
         self.running = running
         self.clients = clients
         self.control = control
@@ -490,7 +490,7 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         self.failureWord = failure?.wire
         self.esc = esc
         self.work = work
-        self.said = said
+        self.message = message
     }
 
     /// Takes in a host's reading of the pane's turn.

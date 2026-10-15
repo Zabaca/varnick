@@ -223,7 +223,7 @@ public struct PeerPane: Codable, Equatable, Sendable {
     }
     public var work: PeerWork?
     /// Claude: the pane's standing message, as in `PeerSessionStatus` (protocol 28).
-    public var said: PeerSaid?
+    public var message: PeerMessage?
     /// Claude and terminal: why the pane doesn't run, when the host knows (a terminal on a Mac with Keep sessions running off).
     public var note: String?
     /// Web: the address it shows. App: the app's address on the host. File: its path. App: the app's name and its port.
@@ -238,12 +238,12 @@ public struct PeerPane: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge,
-             failureWord = "failure", esc, work, said, note, url, app, port, file, proxy, proxyNote
+             failureWord = "failure", esc, work, message, note, url, app, port, file, proxy, proxyNote
     }
 
     public init(id: String, kind: PeerPaneKind, title: String, folder: String, running: Bool? = nil, clients: Int? = nil, control: String? = nil,
                 controlName: String? = nil, agent: String? = nil, conversation: String? = nil, turn: Turn? = nil, turnAge: Int? = nil,
-                failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil, said: PeerSaid? = nil, note: String? = nil, url: String? = nil, app: String? = nil,
+                failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil, message: PeerMessage? = nil, note: String? = nil, url: String? = nil, app: String? = nil,
                 port: Int? = nil, file: String? = nil, proxy: String? = nil, proxyNote: String? = nil) {
         self.id = id
         self.kindWord = kind.rawValue
@@ -260,7 +260,7 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.failureWord = failure?.wire
         self.esc = esc
         self.work = work
-        self.said = said
+        self.message = message
         self.note = note
         self.url = url
         self.app = app

@@ -15,7 +15,7 @@ import VarnickPeer
 //   varnick-peer end <session>             kills one (its name or id), whoever controls it, and ends its record
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session>\n".utf8))
+    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | --mcp --pane <id> --notify | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session>\n".utf8))
     exit(2)
 }
 

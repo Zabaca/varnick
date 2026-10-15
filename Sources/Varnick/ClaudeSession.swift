@@ -240,13 +240,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private(set) var turnHeardAt = Date.distantPast
     /// The pane's standing message (option 04 of `phone-page-is-only-a-browser-tab`), read by `checkMessage` when its file's date changes, or for
     /// a session on a peer taken from the host's `status` (`follow`); nil when there is none.
-    private(set) var said: PaneMessage?
+    private(set) var message: PaneMessage?
     /// Whether a reading of the message has been taken yet: the first is a starting point and raises nothing.
-    private var saidKnown = false
-    private var saidStamp: Date?
+    private var messageKnown = false
+    private var messageStamp: Date?
     /// Called when the message changes, with the one before, and whether this is the first reading (`SessionNotifier`). A message is read before
     /// the turn it comes with, so a Done that follows it is folded into it.
-    var onSaidChange: (_ old: PaneMessage?, _ new: PaneMessage?, _ first: Bool) -> Void = { _, _, _ in }
+    var onMessageChange: (_ old: PaneMessage?, _ new: PaneMessage?, _ first: Bool) -> Void = { _, _, _ in }
     /// What the turn file held when `checkTurn` last read it, before the transcript's correction, and the
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
@@ -1254,17 +1254,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func checkMessage() {
         guard isClaude, !isOnPeer else { return }
         let stamp = PaneFolder.modificationDate(PaneFolder.messageFile(for: record.id).path)
-        guard !saidKnown || stamp != saidStamp else { return }
-        saidStamp = stamp
-        take(said: stamp == nil ? nil : PaneFolder.message(for: record.id))
+        guard !messageKnown || stamp != messageStamp else { return }
+        messageStamp = stamp
+        take(message: stamp == nil ? nil : PaneFolder.message(for: record.id))
     }
 
-    private func take(said new: PaneMessage?) {
-        let first = !saidKnown
-        saidKnown = true
-        let old = said
-        said = new
-        if first || new != old { onSaidChange(old, new, first) }
+    private func take(message new: PaneMessage?) {
+        let first = !messageKnown
+        messageKnown = true
+        let old = message
+        message = new
+        if first || new != old { onMessageChange(old, new, first) }
     }
 
     /// Reads the work records and the log when the log's date changes: every hook that changes a record appends to it, so otherwise this
@@ -1309,7 +1309,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         guard isClaude, isOnPeer else { return false }
         turnHeardAt = Date()
         // Its message, before the turn (protocol 28): a Done that comes with it is folded into it.
-        take(said: status.running ? status.said?.message() : nil)
+        take(message: status.running ? status.message?.paneMessage : nil)
         // The host's Esc mark and error kind come with the word (protocol 27): its Esc raises no Done here, and its error names its kind.
         turn = status.running ? status.turn.map {
             PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date()), failure: status.failure, interrupted: status.esc == true)
@@ -1339,8 +1339,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func clearHostTurn() {
         turn = nil
         // Not known to hold either; the next reply is a starting point again, as for the turn.
-        said = nil
-        saidKnown = false
+        message = nil
+        messageKnown = false
         dropHostLive()
     }
 

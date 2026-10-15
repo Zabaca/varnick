@@ -117,7 +117,7 @@ public enum ClaudeCommand {
     /// stop file beside the turn file, by rename. `PaneFolder.runningTasks` reads it.
     static let stopInputCommand =
         #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.stopFileName)"; "#
-        + #"[ -n "$VARNICK_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f"; } 2>/dev/null; exit 0"#
+        + #"[ -n "$VARNICK_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f" || rm -f "$f.$$"; } 2>/dev/null; exit 0"#
 
     /// `StopFailure`'s input has no task list, and a turn that ends on an API error leaves the shells of the turn before
     /// running: the stop file is kept by dating it again, so the reader doesn't drop it as an earlier turn's.
@@ -133,7 +133,7 @@ public enum ClaudeCommand {
     /// rename. It is the only writer of that file, and `PaneMessage` reads it. A call that fails fires `PostToolUseFailure`, not this.
     static let messageInputCommand =
         #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.messageFileName)"; "#
-        + #"[ -n "$VARNICK_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f"; } 2>/dev/null; exit 0"#
+        + #"[ -n "$VARNICK_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f" || rm -f "$f.$$"; } 2>/dev/null; exit 0"#
 
     /// `UserPromptSubmit` and a `/clear`: a message lasts until the user's next prompt or the conversation is cleared.
     static let messageClearCommand =

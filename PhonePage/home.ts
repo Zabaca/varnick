@@ -36,11 +36,11 @@ export interface HomePane {
   /** Why it has none, in the host's words. */
   proxyNote: string | null;
   /** A Claude pane's standing message (option 04), for the push worker's notification. The page shows nothing of it: a tap lands on the terminal. */
-  said: HomeSaid | null;
+  message: HomeMessage | null;
 }
 
 /** A message's words as the worker shows them: the title one line of at most 80 characters, the body at most 300 (`PaneMessage` cuts the same). */
-export interface HomeSaid {
+export interface HomeMessage {
   title: string;
   body: string | null;
 }
@@ -54,7 +54,7 @@ const cleaned = (value: unknown, limit: number, lines: boolean): string | null =
   return kept.length > limit ? `${kept.slice(0, limit - 1)}…` : kept;
 };
 
-export function shapeSaid(value: unknown): HomeSaid | null {
+export function shapeMessage(value: unknown): HomeMessage | null {
   if (!isObject(value)) return null;
   const title = cleaned(value.title, 80, false);
   return title === null ? null : { title, body: cleaned(value.body, 300, true) };
@@ -150,7 +150,7 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     file: optional(pane.file),
     proxy: httpsAddress(pane.proxy),
     proxyNote: optional(pane.proxyNote),
-    said: kind === "claude" ? shapeSaid(pane.said) : null,
+    message: kind === "claude" ? shapeMessage(pane.message) : null,
   };
 }
 

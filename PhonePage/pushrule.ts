@@ -13,10 +13,10 @@ export const isTurnWord = (word: unknown): word is TurnWord => typeof word === "
 export type Waiting = "permission" | "question" | "plan" | "input";
 
 /**
- * What a change of turn tells the user (Swift's `NoticeKind`). `failure` is the kind's word ("rate limit"), null when the host didn't say. `said` is a
+ * What a change of turn tells the user (Swift's `NoticeKind`). `failure` is the kind's word ("rate limit"), null when the host didn't say. `message` is a
  * message the session sent itself (option 04); its words are never in the notice, only in the tabs the worker asks for.
  */
-export type Notice = { kind: "done" } | { kind: "needs"; turn: Waiting } | { kind: "failed"; failure: string | null } | { kind: "said" };
+export type Notice = { kind: "done" } | { kind: "needs"; turn: Waiting } | { kind: "failed"; failure: string | null } | { kind: "message" };
 
 export type Decision = { action: "none" } | { action: "clear" } | { action: "raise"; notice: Notice };
 
@@ -59,36 +59,33 @@ export function decide(input: { old: TurnWord | null; next: TurnWord; failure?: 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// A message the session sent itself (option 04 of phone-page-is-only-a-browser-tab): `NoticeRule.decide(said:)` and `NoticeRule.merge` in Swift.
-
-/** Two readings of one message differ by less than this: a host's age is whole seconds counted at the relay's run, and an answer may be 1.5 s old. */
-export const sameMessageMs = 5000;
+// A message the session sent itself (option 04 of phone-page-is-only-a-browser-tab): `NoticeRule.decide(message:)` and `NoticeRule.merge` in Swift.
 
 /**
- * What a change of a pane's message tells the user. `old` and `next` are when the message was recorded, in ms on the host's clock, null for none.
+ * What a change of a pane's message tells the user. `old` and `next` are the message's id, the message file's date on the host's clock in ms (the
+ * same number every time the message is read, a new one for the next), null for none.
  *
  * | What happens | Notice |
  * |---|---|
  * | the first message read for the pane (`first`: a start of the server, a pane that appeared) | none: a starting point |
- * | a message newer than the last by more than `sameMessageMs` | Said, replacing what stands |
- * | the message is gone (the next prompt, `/clear`, a start) | none, clears a standing Said |
+ * | a message whose id is not the last one's | Message, replacing what stands |
+ * | the message is gone (the next prompt, `/clear`, a start), also at the first reading | none, clears a standing message |
  *
- * `clear` is for a standing Said only: the caller keeps any other notice.
+ * `clear` is for a standing Message only: the caller keeps any other notice.
  */
-export function decideSaid(input: { old: number | null; next: number | null; first: boolean }): Decision {
-  if (input.first) return { action: "none" };
-  if (input.next === null) return input.old === null ? { action: "none" } : { action: "clear" };
-  if (input.old !== null && Math.abs(input.next - input.old) <= sameMessageMs) return { action: "none" };
-  return { action: "raise", notice: { kind: "said" } };
+export function decideMessage(input: { old: number | null; next: number | null; first: boolean }): Decision {
+  if (input.next === null) return input.first || input.old !== null ? { action: "clear" } : { action: "none" };
+  if (input.first || input.old === input.next) return { action: "none" };
+  return { action: "raise", notice: { kind: "message" } };
 }
 
 /**
- * A turn's decision over the notice that stands (`NoticeRule.merge`). A standing Said is folded into by a Done (nothing is raised: the turn's end
- * is what the message announced) and stays when the turn goes on or a dialog is answered; Needs you and an error replace it. Any other standing
- * notice is the turn's decision alone.
+ * A turn's decision over the notice that stands (`NoticeRule.merge`). A standing Message is folded into by a Done (nothing is raised: the turn's
+ * end is what the message announced) and stays when the turn goes on or a dialog is answered; Needs you and an error replace it. Any other
+ * standing notice is the turn's decision alone.
  */
 export function merge(decision: Decision, standing: Notice | undefined): Decision {
-  if (standing?.kind !== "said") return decision;
+  if (standing?.kind !== "message") return decision;
   if (decision.action === "raise" && decision.notice.kind !== "done") return decision;
   return { action: "none" };
 }
@@ -234,7 +231,7 @@ export const defaultSwitches: Switches = { needsMe: true, done: true, errors: tr
 
 /** The switch a notice belongs to (Swift's `NoticeSwitches.allows`). */
 export const allows = (switches: Switches, notice: Notice): boolean =>
-  notice.kind === "needs" ? switches.needsMe : notice.kind === "done" ? switches.done : notice.kind === "said" ? switches.messages : switches.errors;
+  notice.kind === "needs" ? switches.needsMe : notice.kind === "done" ? switches.done : notice.kind === "message" ? switches.messages : switches.errors;
 
 /** What a push carries (version 1): ids and the kind, and for an error its kind's word. Never a title, prompt, folder, screen or a message's words (ADR 0038). */
 export type PushPayload =
@@ -244,7 +241,7 @@ export type PushPayload =
 
 export function payloadOf(notice: Notice, tab: string, pane: string): PushPayload {
   if (notice.kind === "done") return { v: 1, kind: "done", tab, pane };
-  if (notice.kind === "said") return { v: 1, kind: "message", tab, pane };
+  if (notice.kind === "message") return { v: 1, kind: "message", tab, pane };
   if (notice.kind === "needs") return { v: 1, kind: notice.turn, tab, pane };
   return notice.failure ? { v: 1, kind: "failed", tab, pane, failure: notice.failure } : { v: 1, kind: "failed", tab, pane };
 }

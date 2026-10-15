@@ -5,7 +5,7 @@
 import { isObject, objects } from "./json";
 import type { RelayResult } from "./home";
 import {
-  allows, decide, decideRoute, decideSaid, failureWord, isTurnWord, macView, merge, messageGapMs, payloadOf, presenceOf, seenAfterMs, settleOf, type Controller,
+  allows, decide, decideMessage, decideRoute, failureWord, isTurnWord, macView, merge, messageGapMs, payloadOf, presenceOf, seenAfterMs, settleOf, type Controller,
   type Decision, type Notice, type Presence, type PresenceReport, type PushPayload, type Route, type TurnWord, type View, type Why,
 } from "./pushrule";
 import type { SendOptions, SendResult } from "./pushsend";
@@ -88,6 +88,11 @@ interface Standing {
   handled: Set<string>;
   /** A message held back by its minute (`messageGapMs`), said once in the log. */
   heldBack: boolean;
+  /**
+   * The Done a message folded in (`merge`), kept for the subscriptions that don't allow messages: they get the Done, which the fold would otherwise
+   * have swallowed for them. A subscription gets the message or the Done, never both.
+   */
+  folded?: { notice: Notice; raisedAt: number };
 }
 
 export class PushWatcher {
@@ -95,8 +100,8 @@ export class PushWatcher {
   private facts = new Map<string, PaneFacts>();
   private standing = new Map<string, Standing>();
   private lastPush = new Map<string, number>();
-  /** Each pane's message as last read (when it was recorded, ms on the host's clock; null for none): a pane in it has been read once. */
-  private saids = new Map<string, number | null>();
+  /** Each pane's message as last read (its id, the file's date on the host's clock in ms; null for none): a pane in it has been read once. */
+  private messages = new Map<string, number | null>();
   /** When a message was last pushed for a pane: a message pushes at most once a minute. */
   private lastMessagePush = new Map<string, number>();
   private sent = new Map<string, number[]>();
@@ -176,7 +181,7 @@ export class PushWatcher {
 
   private reset(): void {
     this.readings.clear();
-    this.saids.clear();
+    this.messages.clear();
     this.lastMessagePush.clear();
     this.facts.clear();
     this.standing.clear();
@@ -239,8 +244,8 @@ export class PushWatcher {
           clients: typeof pane.clients === "number" ? pane.clients : null,
         });
         // The message first, whatever the turn says: a Done that comes with it is folded into it (`merge`). A host before protocol 28 says none.
-        this.observeSaid(id, tab.tab.toLowerCase(), isObject(pane.said) && typeof pane.said.title === "string" && typeof pane.said.age === "number"
-          ? startedAt - Math.max(0, pane.said.age) * 1000 : null, now);
+        this.observeMessage(id, tab.tab.toLowerCase(), isObject(pane.message) && typeof pane.message.title === "string" && typeof pane.message.id === "number"
+          ? pane.message.id : null, now);
         // A word this watcher doesn't know is a newer host's: the pane stays as it was.
         if (!isTurnWord(pane.turn)) continue;
         if (pane.turn === "background") this.busy = true;
@@ -251,14 +256,23 @@ export class PushWatcher {
         const between = before !== undefined && before.turn === pane.turn && since - before.since > sameTurnMs;
         if (between) this.world.log(`push watch: a turn ran between two looks (${pane.turn} again, ${Math.round((since - before!.since) / 1000)} s later)`);
         // A standing message folds a Done into itself, and an error or Needs you replaces it; otherwise the turn's decision alone.
-        const decision = merge(decide({
+        const turnDecision = decide({
           old: between ? "working" : before?.turn ?? null,
           next: pane.turn,
           failure: pane.turn === "failed" && typeof pane.failure === "string" ? failureWord(pane.failure) : null,
           interrupted: pane.esc === true,
           sameTurn: !between && before !== undefined && Math.abs(before.since - since) <= sameTurnMs,
-        }), this.standing.get(id)?.notice);
-        if (decision.action === "raise") {
+        });
+        const decision = merge(turnDecision, this.standing.get(id)?.notice);
+        if (turnDecision.action === "raise" && turnDecision.notice.kind === "done" && decision.action === "none") {
+          // Folded into the message, for the subscriptions that allow messages; the others still get the Done (`effective`).
+          const standing = this.standing.get(id)!;
+          if (standing.folded === undefined) {
+            standing.folded = { notice: turnDecision.notice, raisedAt: now };
+            // A subscription that doesn't allow messages dropped the message at once; the Done is its notice, so it is looked at again.
+            for (const subscription of this.store.all()) if (!allows(subscription.switches, standing.notice)) standing.handled.delete(subscription.endpoint);
+          }
+        } else if (decision.action === "raise") {
           // An error that follows its waiting in the same turn takes over the Done's wait: the settle is for the turn, not for each word.
           const standing = this.standing.get(id);
           const replaces = !between && before!.turn === "waiting" && decision.notice.kind === "failed" && standing?.notice.kind === "done" ? standing : undefined;
@@ -273,7 +287,7 @@ export class PushWatcher {
     }
     // A pane that is gone from the listing takes what it had with it.
     for (const id of [...this.readings.keys()]) {
-      if (!seen.has(id)) { this.readings.delete(id); this.standing.delete(id); this.lastPush.delete(id); this.saids.delete(id); this.lastMessagePush.delete(id); }
+      if (!seen.has(id)) { this.readings.delete(id); this.standing.delete(id); this.lastPush.delete(id); this.messages.delete(id); this.lastMessagePush.delete(id); }
     }
     this.facts = facts;
     // The dates read before the ask; a pane the ask found that wasn't known before is a starting point and is read now.
@@ -284,28 +298,38 @@ export class PushWatcher {
   }
 
   private raise(pane: string, tab: string, notice: Notice, raisedAt: number): void {
+    // A message that replaces a message keeps the Done folded into the first: that turn did end.
+    const previous = this.standing.get(pane);
+    const folded = notice.kind === "message" && previous?.notice.kind === "message" ? previous.folded : undefined;
     this.standing.set(pane, {
       notice, tab, raisedAt, held: false, seen: false, viewing: new Map(), looked: new Set(), logged: new Map(), confirmed: false,
-      pushed: new Set(), handled: new Set(), heldBack: false,
+      pushed: new Set(), handled: new Set(), heldBack: false, ...(folded ? { folded } : {}),
     });
     this.world.log(`push notice ${noticeLabel(notice)} raised`);
   }
 
   /**
-   * A pane's message as the host's tabs say it (`since`: when it was recorded, ms on the host's clock; null for none). A new one raises Said,
-   * replacing what stands; one that is gone clears a standing Said and nothing else. The first reading of a pane is a starting point.
+   * A pane's message as the host's tabs say it (`id`: the message file's date on the host's clock; null for none). A message whose id isn't the last
+   * one's raises Message, replacing what stands; one that is gone clears a standing Message and nothing else. The first reading of a pane is a
+   * starting point, or a clear when it holds none.
    */
-  private observeSaid(pane: string, tab: string, since: number | null, now: number): void {
-    const decision: Decision = decideSaid({ old: this.saids.get(pane) ?? null, next: since, first: !this.saids.has(pane) });
-    this.saids.set(pane, since);
+  private observeMessage(pane: string, tab: string, id: number | null, now: number): void {
+    const decision: Decision = decideMessage({ old: this.messages.get(pane) ?? null, next: id, first: !this.messages.has(pane) });
+    this.messages.set(pane, id);
     if (decision.action === "raise") {
       this.raise(pane, tab, decision.notice, now);
     } else if (decision.action === "clear") {
       const gone = this.standing.get(pane);
-      if (gone?.notice.kind !== "said") return;
+      if (gone?.notice.kind !== "message") return;
       this.world.log(`push notice ${noticeLabel(gone.notice)} cleared`);
       this.standing.delete(pane);
     }
+  }
+
+  /** What a subscription is owed of the standing notice: the message, or for one that doesn't allow messages the Done the message folded in. */
+  private effective(standing: Standing, subscription: Subscription): { notice: Notice; raisedAt: number } {
+    if (standing.notice.kind === "message" && standing.folded && !allows(subscription.switches, standing.notice)) return standing.folded;
+    return { notice: standing.notice, raisedAt: standing.raisedAt };
   }
 
   private controllerOf(pane: PaneFacts): Controller {
@@ -329,27 +353,36 @@ export class PushWatcher {
       standing.held = view.held;
       standing.seen ||= view.seen;
     }
-    const due: Subscription[] = [];
+    const due: Array<{ subscription: Subscription; notice: Notice }> = [];
     for (const subscription of this.store.all()) {
       if (standing.pushed.has(subscription.endpoint) || standing.handled.has(subscription.endpoint)) continue;
+      const owed = this.effective(standing, subscription);
       const decision = decideRoute({
-        controller, presence, notice: standing.notice, elapsedMs: now - standing.raisedAt, seen: standing.seen,
-        view: this.viewOf(standing, subscription.device, id, now), allowed: allows(subscription.switches, standing.notice),
+        controller, presence, notice: owed.notice, elapsedMs: now - owed.raisedAt, seen: standing.seen,
+        view: this.viewOf(standing, subscription.device, id, now), allowed: allows(subscription.switches, owed.notice),
       });
-      this.logDecision(standing, subscription, decision, controller, presence);
+      this.logDecision(owed.notice, standing, subscription, decision, controller, presence);
       if (decision.route === "drop") standing.handled.add(subscription.endpoint);
-      else if (decision.route === "push") due.push(subscription);
+      else if (decision.route === "push") due.push({ subscription, notice: owed.notice });
     }
-    if (due.length === 0) return;
     // At most one push per pane per settle, and for a message one a minute: the newest words are pushed at the end of it, if the message still stands.
-    const said = standing.notice.kind === "said";
-    if (now - ((said ? this.lastMessagePush : this.lastPush).get(id) ?? -Infinity) < (said ? messageGapMs : settleOf(standing.notice))) {
-      if (said && !standing.heldBack) {
-        standing.heldBack = true;
-        this.world.log("push message held back: one a minute for a pane");
-      }
-      return;
+    const groups = new Map<string, { notice: Notice; subscriptions: Subscription[] }>();
+    for (const { subscription, notice } of due) {
+      const group = groups.get(notice.kind) ?? { notice, subscriptions: [] };
+      group.subscriptions.push(subscription);
+      groups.set(notice.kind, group);
     }
+    for (const [kind, group] of [...groups]) {
+      const message = kind === "message";
+      if (now - ((message ? this.lastMessagePush : this.lastPush).get(id) ?? -Infinity) < (message ? messageGapMs : settleOf(group.notice))) {
+        if (message && !standing.heldBack) {
+          standing.heldBack = true;
+          this.world.log("push message held back: one a minute for a pane");
+        }
+        groups.delete(kind);
+      }
+    }
+    if (groups.size === 0) return;
     // The read after the settle, for every kind: a Done that background work or an error was about to replace, or a dialog answered since, isn't pushed.
     if (!standing.confirmed) {
       standing.confirmed = true;
@@ -357,12 +390,14 @@ export class PushWatcher {
       if (this.standing.get(id) === standing) return this.deliver(id);
       return;
     }
-    (said ? this.lastMessagePush : this.lastPush).set(id, now);
-    const payload = payloadOf(standing.notice, standing.tab, id);
-    // Not awaited: a retry inside a send waits for the push service, and nothing else may wait with it.
-    for (const subscription of due) {
-      const sending = this.push(standing, subscription, payload).finally(() => this.inFlight.delete(sending));
-      this.inFlight.add(sending);
+    for (const [kind, group] of groups) {
+      (kind === "message" ? this.lastMessagePush : this.lastPush).set(id, now);
+      const payload = payloadOf(group.notice, standing.tab, id);
+      // Not awaited: a retry inside a send waits for the push service, and nothing else may wait with it.
+      for (const subscription of group.subscriptions) {
+        const sending = this.push(standing, subscription, payload).finally(() => this.inFlight.delete(sending));
+        this.inFlight.add(sending);
+      }
     }
   }
 
@@ -387,14 +422,14 @@ export class PushWatcher {
    * One line when a subscription's decision for a standing notice changes, so a hand test can tell why a push did or didn't come. The kind,
    * the device's name, the controller's kind and what the report said, never a pane's or tab's id, a title or the report's numbers.
    */
-  private logDecision(standing: Standing, subscription: Subscription, decision: { route: Route; why: Why }, controller: Controller, presence: Presence): void {
+  private logDecision(notice: Notice, standing: Standing, subscription: Subscription, decision: { route: Route; why: Why }, controller: Controller, presence: Presence): void {
     const outcome = {
       drop: `suppressed(${decision.why})`,
       wait: `waiting(${decision.why})`,
       push: "pushing",
     }[decision.route];
     const by = controller.kind === "mac" ? (controller.detached ? "mac-detached" : "mac") : controller.kind;
-    const line = `push decide ${noticeLabel(standing.notice)} ${this.world.devices().get(subscription.device) ?? "device"} -> ${outcome} controller=${by}${controller.kind === "device" ? "" : ` presence=${presence}`}`;
+    const line = `push decide ${noticeLabel(notice)} ${this.world.devices().get(subscription.device) ?? "device"} -> ${outcome} controller=${by}${controller.kind === "device" ? "" : ` presence=${presence}`}`;
     if (standing.logged.get(subscription.endpoint) === line) return;
     standing.logged.set(subscription.endpoint, line);
     this.world.log(line);

@@ -73,17 +73,17 @@ function readPayload(event) {
 
 /**
  * The notification's title and body. `pane` is what the host said of the session, when it could be asked: its title and, for a message, the
- * words (`said`, which only the host's tabs carry: a push never does, ADR 0038).
+ * words (`message`, which only the host's tabs carry: a push never does, ADR 0038).
  */
 function noticeText(payload, hostName, pane) {
   if (!payload) return { title: hostName, body: "A session needs a look" };
   if (payload.kind === "test") return { title: hostName, body: "Notifications work" };
   const title = pane ? pane.title : null;
   const named = typeof title === "string" && title.trim() !== "";
-  if (payload.kind === "message" && pane && pane.said) {
+  if (payload.kind === "message" && pane && pane.message) {
     // The message's own title leads, then its body, then which session and host.
     const where = named ? `${title.trim()} · ${hostName}` : hostName;
-    return { title: pane.said.title, body: pane.said.body ? `${pane.said.body}\n${where}` : where };
+    return { title: pane.message.title, body: pane.message.body ? `${pane.message.body}\n${where}` : where };
   }
   if (payload.kind === "failed") {
     const said = `Stopped on an error: ${payload.failure}`;
@@ -106,10 +106,10 @@ async function readPane(payload) {
     const body = await response.json();
     const pane = body && body.tab && Array.isArray(body.tab.panes) ? body.tab.panes.find((candidate) => candidate && candidate.id === payload.pane) : null;
     if (!pane) return null;
-    const said = pane.said && typeof pane.said.title === "string" && pane.said.title.trim() !== ""
-      ? { title: pane.said.title.trim().slice(0, 80), body: typeof pane.said.body === "string" && pane.said.body.trim() !== "" ? pane.said.body.trim().slice(0, 300) : null }
+    const message = pane.message && typeof pane.message.title === "string" && pane.message.title.trim() !== ""
+      ? { title: pane.message.title.trim().slice(0, 80), body: typeof pane.message.body === "string" && pane.message.body.trim() !== "" ? pane.message.body.trim().slice(0, 300) : null }
       : null;
-    return { title: typeof pane.title === "string" && pane.title.trim() !== "" ? pane.title.trim().slice(0, 120) : null, said };
+    return { title: typeof pane.title === "string" && pane.title.trim() !== "" ? pane.title.trim().slice(0, 120) : null, message };
   } catch {
     return null;
   } finally {

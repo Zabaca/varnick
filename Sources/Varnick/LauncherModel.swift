@@ -2287,7 +2287,7 @@ final class LauncherModel: ObservableObject {
             guard let self, let pane = ref else { return }
             self.notifier.turnChanged(in: pane, from: old, to: new)
         }
-        session.onSaidChange = { [weak self] old, new, first in
+        session.onMessageChange = { [weak self] old, new, first in
             guard let self, let pane = ref else { return }
             self.notifier.messageChanged(in: pane, from: old, to: new, first: first)
         }

@@ -96,7 +96,7 @@ describe("RFC 8291 aes128gcm", () => {
     const auth = crypto.getRandomValues(new Uint8Array(16));
     const subscription = { p256dh: b64u.encode(publicKeyBytes(receiver)), auth: b64u.encode(auth) };
     const tab = crypto.randomUUID(), pane = crypto.randomUUID();
-    const payload = payloadOf({ kind: "said" }, tab, pane);
+    const payload = payloadOf({ kind: "message" }, tab, pane);
     const message = await encryptPayload(payload, subscription);
     const done = await encryptPayload(payloadOf({ kind: "done" }, tab, pane), subscription);
     expect(message.length).toBe(done.length);

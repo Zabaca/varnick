@@ -256,7 +256,7 @@ enum ScreenMCP {
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
     /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
     static func configuration(pane: UUID, screen: Bool, panel: Bool) -> String {
-        NotifyTool.configuration(command: PeerLink.mcpCommand,
+        MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : []) + [NotifyTool.argument])
     }

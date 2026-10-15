@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-  allows, awayAfterSeconds, decide, decideSaid, defaultSwitches, decideRoute, failureWord, macView, merge, messageGapMs, payloadOf, presenceOf, route, sameMessageMs, seenAfterMs, doneSettleMs, settleOf, urgentSettleMs, staleAfterSeconds, turnWords,
+  allows, awayAfterSeconds, decide, decideMessage, defaultSwitches, decideRoute, failureWord, macView, merge, messageGapMs, payloadOf, presenceOf, route, seenAfterMs, doneSettleMs, settleOf, urgentSettleMs, staleAfterSeconds, turnWords,
   type Controller, type Decision, type Notice, type Presence, type TurnWord, type View,
 } from "./pushrule";
 
@@ -80,44 +80,46 @@ describe("the table (NoticeRule.decide)", () => {
   });
 });
 
-describe("a message the session sent itself (NoticeRule.decide(said:) and merge)", () => {
-  const said = raise({ kind: "said" });
+describe("a message the session sent itself (NoticeRule.decide(message:) and merge)", () => {
+  const message = raise({ kind: "message" });
   const t = 1_000_000;
 
-  test("the first message read for a pane is a starting point, whatever it is", () => {
-    expect(decideSaid({ old: null, next: t, first: true })).toEqual(none);
-    expect(decideSaid({ old: null, next: null, first: true })).toEqual(none);
+  test("the first message read for a pane is a starting point", () => {
+    expect(decideMessage({ old: null, next: t, first: true })).toEqual(none);
   });
 
-  test("a message after a reading is Said, and a newer one replaces it", () => {
-    expect(decideSaid({ old: null, next: t, first: false })).toEqual(said);
-    expect(decideSaid({ old: t, next: t + 30_000, first: false })).toEqual(said);
+  test("the first reading with no message clears a standing one: a host that answers again may have lost it", () => {
+    expect(decideMessage({ old: null, next: null, first: true })).toEqual(clear);
   });
 
-  test("the same message read again is nothing: a host's age wobbles by whole seconds and a relay's run", () => {
-    expect(decideSaid({ old: t, next: t, first: false })).toEqual(none);
-    expect(decideSaid({ old: t, next: t + sameMessageMs, first: false })).toEqual(none);
-    expect(decideSaid({ old: t, next: t - sameMessageMs, first: false })).toEqual(none);
-    expect(decideSaid({ old: t, next: t + sameMessageMs + 1, first: false })).toEqual(said);
+  test("a message after a reading is a Message, and another replaces it", () => {
+    expect(decideMessage({ old: null, next: t, first: false })).toEqual(message);
+    expect(decideMessage({ old: t, next: t + 30_000, first: false })).toEqual(message);
+  });
+
+  test("a message is the same exactly when its id is: a second one close behind the first is another", () => {
+    expect(decideMessage({ old: t, next: t, first: false })).toEqual(none);
+    expect(decideMessage({ old: t, next: t + 1, first: false })).toEqual(message);
+    expect(decideMessage({ old: t, next: t - 1, first: false })).toEqual(message);
   });
 
   test("a message that is gone clears, and nothing to clear is nothing", () => {
-    expect(decideSaid({ old: t, next: null, first: false })).toEqual(clear);
-    expect(decideSaid({ old: null, next: null, first: false })).toEqual(none);
+    expect(decideMessage({ old: t, next: null, first: false })).toEqual(clear);
+    expect(decideMessage({ old: null, next: null, first: false })).toEqual(none);
   });
 
   test("a Done folds into a standing message, whatever the turn did", () => {
-    expect(merge(raise({ kind: "done" }), { kind: "said" })).toEqual(none);
+    expect(merge(raise({ kind: "done" }), { kind: "message" })).toEqual(none);
   });
 
   test("the turn going on, or a dialog answered, leaves the message standing", () => {
-    expect(merge(clear, { kind: "said" })).toEqual(none);
-    expect(merge(none, { kind: "said" })).toEqual(none);
+    expect(merge(clear, { kind: "message" })).toEqual(none);
+    expect(merge(none, { kind: "message" })).toEqual(none);
   });
 
   test("Needs you and an error replace a message", () => {
-    expect(merge(raise({ kind: "needs", turn: "plan" }), { kind: "said" })).toEqual(raise({ kind: "needs", turn: "plan" }));
-    expect(merge(raise({ kind: "failed", failure: null }), { kind: "said" })).toEqual(raise({ kind: "failed", failure: null }));
+    expect(merge(raise({ kind: "needs", turn: "plan" }), { kind: "message" })).toEqual(raise({ kind: "needs", turn: "plan" }));
+    expect(merge(raise({ kind: "failed", failure: null }), { kind: "message" })).toEqual(raise({ kind: "failed", failure: null }));
   });
 
   test("with no message standing the turn's decision is the only one", () => {
@@ -127,7 +129,7 @@ describe("a message the session sent itself (NoticeRule.decide(said:) and merge)
   });
 
   test("a message settles as Needs you does, and pushes at most once a minute", () => {
-    expect(settleOf({ kind: "said" })).toBe(urgentSettleMs);
+    expect(settleOf({ kind: "message" })).toBe(urgentSettleMs);
     expect(messageGapMs).toBe(60_000);
   });
 
@@ -137,7 +139,7 @@ describe("a message the session sent itself (NoticeRule.decide(said:) and merge)
     expect(rows).toEqual([
       "Notice",
       "none: a starting point",
-      "Said, replacing what stands",
+      "Message, replacing what stands",
       "none, clears a standing message",
     ]);
     // The fold is the same rows in both languages.
@@ -157,8 +159,8 @@ describe("the switches", () => {
   });
 
   test("a message has its own, and no other switch decides it", () => {
-    expect(allows({ needsMe: true, done: true, errors: true, messages: false }, { kind: "said" })).toBe(false);
-    expect(allows({ needsMe: false, done: false, errors: false, messages: true }, { kind: "said" })).toBe(true);
+    expect(allows({ needsMe: true, done: true, errors: true, messages: false }, { kind: "message" })).toBe(false);
+    expect(allows({ needsMe: false, done: false, errors: false, messages: true }, { kind: "message" })).toBe(true);
     expect(allows({ needsMe: true, done: true, errors: true, messages: false }, { kind: "done" })).toBe(true);
   });
 });
@@ -352,7 +354,7 @@ describe("the payload and the words", () => {
   });
 
   test("a message's payload is its kind and the ids: the words never travel in a push (ADR 0038)", () => {
-    expect(payloadOf({ kind: "said" }, "t", "p")).toEqual({ v: 1, kind: "message", tab: "t", pane: "p" });
+    expect(payloadOf({ kind: "message" }, "t", "p")).toEqual({ v: 1, kind: "message", tab: "t", pane: "p" });
   });
 
   test("the error kinds are the Mac's words", () => {

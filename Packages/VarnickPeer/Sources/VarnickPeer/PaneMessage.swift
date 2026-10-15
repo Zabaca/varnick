@@ -4,16 +4,17 @@ import Foundation
 // MCP server (`NotifyTool`) or Claude Code's own PushNotification, recorded by one PostToolUse hook (`ClaudeCommand.messageInputCommand`) as the
 // hook's raw input in the pane's message file. This reads it; nothing here acts on it.
 
-/// What a message says and when it was recorded (the file's date).
+/// What a message says and which it is: `id` is the message file's date on the host's clock in milliseconds, the same number every time the
+/// message is read and a new one for the next, so two readings are the same message exactly when their ids are equal.
 public struct PaneMessage: Equatable, Sendable {
     public var title: String
     public var body: String?
-    public var since: Date
+    public var id: Int
 
-    public init(title: String, body: String? = nil, since: Date) {
+    public init(title: String, body: String? = nil, id: Int) {
         self.title = title
         self.body = body
-        self.since = since
+        self.id = id
     }
 
     public static let titleLimit = 80
@@ -22,34 +23,46 @@ public struct PaneMessage: Equatable, Sendable {
     public static let fileLimit = 64 * 1024
     /// What a PushNotification call whose fields can't be placed says (its input is undocumented).
     public static let unplacedTitle = "Claude sent a notification"
-    /// Two readings of one message differ by less than this: a peer's age is whole seconds counted at each reply.
-    public static let sameMessage: TimeInterval = 2
 
-    /// The message the hook's input holds, dated `since`. Nil for a file too large, one that isn't a tool call of `notify` or PushNotification,
+    /// The message the hook's input holds, identified by `id`. Nil for a file too large, one that isn't a tool call of `notify` or PushNotification,
     /// one with an empty title, and a PushNotification that Claude Code did not send because the user has Push when Claude decides off.
-    public static func parse(_ data: Data, since: Date) -> PaneMessage? {
+    public static func parse(_ data: Data, id: Int) -> PaneMessage? {
         guard data.count <= fileLimit, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tool = json["tool_name"] as? String else { return nil }
         let input = json["tool_input"] as? [String: Any] ?? [:]
         if tool == NotifyTool.qualifiedName {
             guard let title = oneLine(input["title"], limit: titleLimit) else { return nil }
-            return PaneMessage(title: title, body: text(input["body"], limit: bodyLimit), since: since)
+            return PaneMessage(title: title, body: text(input["body"], limit: bodyLimit), id: id)
         }
         guard tool == pushNotificationTool else { return nil }
         // Claude Code's own result says when it sent nothing because the user turned its proactive pushes off: not a message to tell of.
-        if let response = json["tool_response"] as? [String: Any], response["disabledReason"] as? String == "config_off" { return nil }
+        if refusedByConfig(json["tool_response"]) { return nil }
         // The tool's input is a `message` and a `status`; a release that names its fields otherwise still reads, and one that is unreadable says so.
         if let title = oneLine(input["title"], limit: titleLimit) {
-            return PaneMessage(title: title, body: text(input["body"], limit: bodyLimit), since: since)
+            return PaneMessage(title: title, body: text(input["body"], limit: bodyLimit), id: id)
         }
-        guard let whole = text(input["message"], limit: bodyLimit) else { return PaneMessage(title: unplacedTitle, since: since) }
+        guard let whole = text(input["message"], limit: bodyLimit) else { return PaneMessage(title: unplacedTitle, id: id) }
         let first = oneLine(whole.split(whereSeparator: \.isNewline).first.map(String.init), limit: titleLimit) ?? unplacedTitle
         let single = whole.range(of: "\n") == nil
-        return PaneMessage(title: first, body: single && first == whole ? nil : whole, since: since)
+        return PaneMessage(title: first, body: single && first == whole ? nil : whole, id: id)
     }
 
     /// Claude Code's tool, by the name its hooks give it.
     public static let pushNotificationTool = "PushNotification"
+
+    /// Whether the tool's result says the user's setting stopped it: the result object's `disabledReason` (`config_off`), or its text where the
+    /// hook gets the result as a string or as content blocks ("Push not sent — mobile push is disabled in /config."). Searched whole, since the
+    /// shape the hook sees is unverified.
+    static func refusedByConfig(_ response: Any?) -> Bool {
+        let text: String
+        switch response {
+        case let string as String: text = string
+        case let value? where JSONSerialization.isValidJSONObject(value):
+            text = (try? JSONSerialization.data(withJSONObject: value, options: [.withoutEscapingSlashes])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        default: return false
+        }
+        return text.contains("config_off") || text.contains("disabled in /config")
+    }
 
     /// A value as one line of at most `limit` characters: control and formatting characters dropped, white space made single spaces, a cut
     /// marked with an ellipsis. Nil for anything but a string with something in it.
@@ -104,13 +117,13 @@ extension PaneFolder {
 
     /// The pane's standing message; nil without a file, with one that is too large or unreadable, or with an empty title. The date is read
     /// first, so a hook writing in between leaves an old date with the new text, never the reverse.
-    public static func message(for id: UUID) -> PaneMessage? {
-        let file = messageFile(for: id)
-        guard let since = modificationDate(file.path), let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+    public static func message(for pane: UUID) -> PaneMessage? {
+        let file = messageFile(for: pane)
+        guard let date = modificationDate(file.path), let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
         // One byte past the cap tells a file that is too large from one that is not.
         guard let data = try? handle.read(upToCount: PaneMessage.fileLimit + 1) else { return nil }
-        return PaneMessage.parse(data, since: since)
+        return PaneMessage.parse(data, id: Int(date.timeIntervalSince1970 * 1000))
     }
 
     /// Removed when a pane starts claude, so a session started again isn't read as having its last run's message.
@@ -119,32 +132,32 @@ extension PaneFolder {
     }
 }
 
-/// A pane's message as a host sends it in `status` and `tabs` (protocol 28): the words and how many seconds ago it was recorded by the host's
-/// clock, so two Macs' clocks needn't agree. The words travel only over the user's own links (ADR 0038): never in a push.
-public struct PeerSaid: Codable, Equatable, Sendable {
+/// A pane's message as a host sends it in `status` and `tabs` (protocol 28): the words and the message's id, the file's date on the host's clock
+/// in milliseconds. The id is the same on every reply until the next message, so the Macs and the page server tell messages apart by it and not
+/// by a time they would have to work out. The words travel only over the user's own links (ADR 0038): never in a push.
+public struct PeerMessage: Codable, Equatable, Sendable {
     public var title: String
     public var body: String?
-    public var age: Int
+    public var id: Int
 
-    public init(title: String, body: String? = nil, age: Int) {
+    public init(title: String, body: String? = nil, id: Int) {
         self.title = title
         self.body = body
-        self.age = age
+        self.id = id
     }
 
-    public init(_ message: PaneMessage, now: Date = Date()) {
-        self.init(title: message.title, body: message.body, age: Int(max(0, now.timeIntervalSince(message.since))))
+    public init(_ message: PaneMessage) {
+        self.init(title: message.title, body: message.body, id: message.id)
     }
 
     /// The pane's standing message from its folder, as the host sends it; nil when there is none.
-    public static func read(for pane: UUID, now: Date = Date()) -> PeerSaid? {
-        PaneFolder.message(for: pane).map { PeerSaid($0, now: now) }
+    public static func read(for pane: UUID) -> PeerMessage? {
+        PaneFolder.message(for: pane).map(PeerMessage.init)
     }
 
     /// What the asking Mac keeps of it, cut again to the limits so a host's words can't be longer than a local message's.
-    public func message(before now: Date = Date()) -> PaneMessage? {
+    public var paneMessage: PaneMessage? {
         guard let title = PaneMessage.oneLine(title, limit: PaneMessage.titleLimit) else { return nil }
-        return PaneMessage(title: title, body: PaneMessage.text(body, limit: PaneMessage.bodyLimit),
-                           since: now.addingTimeInterval(-TimeInterval(max(0, age))))
+        return PaneMessage(title: title, body: PaneMessage.text(body, limit: PaneMessage.bodyLimit), id: id)
     }
 }
