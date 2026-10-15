@@ -225,7 +225,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private var conversationStamp: Date?
     /// The pane's turn and when it began, read by `checkTurn`, or for a session on a peer taken from the
     /// host's `status` by `follow`; nil without a file.
-    private(set) var turn: PaneTurn?
+    private(set) var turn: PaneTurn? {
+        didSet {
+            // Only a change of word counts: a peer's date moves with every reply, and background counts move within a word.
+            if let turn, turn.turn != oldValue?.turn { onTurnWordChange(oldValue, turn) }
+        }
+    }
+    /// Called when the turn's word changes, with the turn before (nil for the first one read: a launch, a restored pane, or a host that answers
+    /// again), from the pane's own file read or its host's reply (`SessionNotifier`).
+    var onTurnWordChange: (_ old: PaneTurn?, _ new: PaneTurn) -> Void = { _, _ in }
+    /// When a pane on a peer last took in its host's reply: a change of the turn's word is settled by a reply after it (`SessionNotifier`).
+    private(set) var turnHeardAt = Date.distantPast
     /// What the turn file held when `checkTurn` last read it, before the transcript's correction, and the
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
@@ -1262,6 +1272,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// behind goes to the host's Recent, which its own pane sees. Returns whether the record changed.
     func follow(_ status: PeerSessionStatus) -> Bool {
         guard isClaude, isOnPeer else { return false }
+        turnHeardAt = Date()
         turn = status.running ? status.turn.map { PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date())) } : nil
         // Its work links are the host's (ADR 0020). Once it isn't running there, the history stays for the closing pane to save and
         // the live records go, so the card leaves Building.

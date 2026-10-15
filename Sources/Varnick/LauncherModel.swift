@@ -2248,6 +2248,10 @@ final class LauncherModel: ObservableObject {
         // Closed on this Mac, but the host released the session and it runs on: not an ended session, and no ended card.
         session.onReleased = { [weak self] record in self?.noteReleased(record) }
         session.onConversationChange = { [weak self] left, now in self?.conversationChanged(in: ref, left: left, now: now) }
+        session.onTurnWordChange = { [weak self] old, new in
+            guard let self, let pane = ref else { return }
+            self.notifier.turnChanged(in: pane, from: old, to: new)
+        }
         // A close that doesn't happen (the question answered No, the pane taken over): the tab isn't closing any more, Done or ×.
         session.onKept = { [weak self] in
             guard let self, let kept = ref, let tab = self.tabs.first(where: { $0.contains(kept) }) else { return }
@@ -3138,6 +3142,29 @@ final class LauncherModel: ObservableObject {
     /// only for tabs that have one. A row of the session list and of the hidden tabs' list shows it, and the strip's chip is orange for it.
     @Published private(set) var tabMarks: [UUID: String] = [:]
     private var summaryTicker: Task<Void, Never>?
+
+    /// The notices of sessions that need a look, and the clock that reads the turns of the panes nothing else reads (`SessionNotifier`).
+    let notifier = SessionNotifier()
+
+    /// A Claude pane of any tab, by its id.
+    func claudePane(_ id: UUID) -> ClaudeSession? {
+        tabs.lazy.flatMap(\.sessions).first { $0.id == id && $0.isClaude }
+    }
+
+    /// Whether the user is looking at `pane`: the panel is the key window and shows the session board's Sessions tab, or a tab (not
+    /// Settings) whose focused pane this is. A pinned panel behind another app isn't key.
+    func isOnScreen(_ pane: ClaudeSession) -> Bool {
+        guard SessionBoard.panelIsKey, !showingSettings else { return false }
+        return (showingBoard && board.tab == .sessions) || (showsTerminal && activeTab?.focused === pane)
+    }
+
+    /// Reads the turn files of the panes on this Mac that haven't started since a restart, which a zmx session may still be running Claude for, as
+    /// the board does. Started panes read their own and a pane on a peer takes its host's.
+    func readDormantTurns() {
+        for tab in tabs {
+            for pane in tab.claudeSessions where !pane.readsOwnTurn && !pane.isOnPeer && turnIsLive(pane) { pane.checkTurn() }
+        }
+    }
 
     /// Reads each tab's Claude panes' turns (one stat a pane, none for a pane that reads its own) and publishes what changed.
     func refreshTabSummaries() {

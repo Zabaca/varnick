@@ -82,6 +82,28 @@ it was restarted from. If a build has run since Varnick started, the restart sta
 macOS asks for the permissions again, and the question says so. The item is hidden when the checkout's `scripts/restart.sh` or the
 database can't be found from where Varnick runs, and a restart waits while a build is running.
 
+## Notices
+
+Varnick tells you when a Claude session needs a look, without a macOS notification, so nothing asks for a permission. When
+a session's turn ends, stops on a permission dialog, a question, a plan to approve or an MCP request, or stops on an API
+error (a rate limit, say), the menu bar icon gets a dot (orange for a dialog or an error), a system sound plays (softer for
+a finished turn) and the menu lists the session at the top, newest first, with its Mac when it runs on another one and what
+happened. Choosing it shows the panel on that pane.
+
+- **Not for what you are looking at.** Nothing is raised for the pane on screen when the panel is the key window, nor
+  for any pane while the session board shows. A notice is cleared when its pane comes on screen or closes, or when the
+  session's turn moves on (you answered a dialog, or sent a prompt). A pane has one notice at most.
+- **Done means done.** A turn that leaves background agents, teammates, workflows or shells running stays quiet until they
+  have all ended. Stopping Claude yourself with Esc gives no notice.
+- **One Mac.** A session raises its notice on the Mac that is in control of it. A pane that shows a card (another Mac or the
+  phone is in control, or its host doesn't answer) is silent. A session on a paired Mac is read every 5 seconds, so Done can
+  come up to 5 seconds late. Sessions already waiting when Varnick starts, or when a Mac comes back, raise nothing, and
+  notices are not kept across a restart.
+- **Switches.** Settings › Claude › **Notify me when a session…** has one for each of needs me, is done and stops on an
+  error, all on by default.
+- **A session that stopped on an error** shows "API error" on its board card, in Stopped. A paired Mac on an older build
+  shows "Turn not known" for it, and a headless host raises Done for it until its relay is reinstalled.
+
 ## Tabs that don't fit
 
 The tabs sit in a strip across the top of a tab. Settings › Claude › **Tabs that don't fit** says what it does when

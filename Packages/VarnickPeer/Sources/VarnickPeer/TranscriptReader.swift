@@ -288,6 +288,25 @@ extension TranscriptReader {
         return stop
     }
 
+    /// The kind of API error if the tail's last conversation entry is Claude Code's API-error entry, dated no earlier than
+    /// `PaneFolder.staleWindow` before `since` (the hook writes the turn file just after the entry).
+    static func apiFailure(tail: Data, startsMidLine: Bool, since: Date) -> TurnFailure? {
+        var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
+        if startsMidLine, !lines.isEmpty { lines.removeFirst() }
+        let dates = dateParser()
+        for line in lines.reversed() {
+            // A line that doesn't parse may be one being written, so the end isn't known.
+            guard let entry = line.withUnsafeBytes({ object($0) }) else { return nil }
+            guard let type = entry["type"] as? String, type == "user" || type == "assistant",
+                  entry["isSidechain"] as? Bool != true, !isLocalOrMeta(entry) else { continue }
+            guard type == "assistant", entry["isApiErrorMessage"] as? Bool == true,
+                  let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)), at >= since - PaneFolder.staleWindow
+            else { return nil }
+            return TurnFailure(error: entry["error"] as? String)
+        }
+        return nil
+    }
+
     /// Entries the transcript keeps for context, not for Claude: a skill's text, and a slash or `!` command
     /// the user ran (typing it is no new turn, so an Esc before it still stands).
     private static func isLocalOrMeta(_ entry: [String: Any]) -> Bool {
@@ -350,11 +369,12 @@ extension TranscriptReader {
     /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's tasks,
     /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`), which reads the
     /// pane's `earlier` conversations too.
-    static func pendingBackground(path: String, since: Date, input: StopInput, earlier: [String]) -> BackgroundWork {
-        guard let (tail, startsMidLine) = readTail(path) else { return BackgroundWork() }
+    /// The same tail read gives the API error (`apiFailure`), which counts only with no background work.
+    static func endOfWaitingTurn(path: String, since: Date, input: StopInput, earlier: [String]) -> (work: BackgroundWork, failure: TurnFailure?) {
+        guard let (tail, startsMidLine) = readTail(path) else { return (BackgroundWork(), nil) }
         var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)
         if !teammates.isEmpty { work.teammates = busyTeammates(path: path, earlier: earlier, among: teammates) }
-        return work
+        return (work, work.isEmpty ? apiFailure(tail: tail, startsMidLine: startsMidLine, since: since) : nil)
     }
 
     /// The count without teammates, which need the rest of the transcript, and the teammates not notified ended. A shell's
