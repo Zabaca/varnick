@@ -154,8 +154,8 @@ enum SpokenText {
         namesFolder || sources.map { $0.sessions >= max($0.history, $0.bookmarks) } == true
     }
 
-    /// The rows read when nothing judged them (the filter is off, the words too short, or the judge failed): sessions and pages both,
-    /// the likelier kind first, at most `maxPages`. Sessions lead when Jev's route does or the request names a session folder, and
+    /// The rows read when nothing judged them (On this Mac wasn't ready or the words were too short, or Text generation failed too):
+    /// sessions and pages both, the likelier kind first, at most `maxPages`. Sessions lead when Jev's route does or the request names a session folder, and
     /// bookmarks go ahead of the other pages when they lead. Behind pages, sessions get what the pages leave of `maxPages`, and
     /// two places are kept for them.
     static func topRows(_ rows: [SearchResult], sources: SpokenRouter.Sources?, namesFolder: Bool) -> [SearchResult] {
@@ -236,16 +236,15 @@ enum SpokenText {
         }
     }
 
-    /// **The judge's fallback** (option 07 follow-up, ADR 0037): when TypeSafe isn't used or fails, the Text generation model the user
-    /// set scores the same rows, with one prompt and one line of JSON back. It sends exactly the fields `judgeRows` describes (the
-    /// request, today's date and the rows), now to Text generation, which is where the writer's rows already go; so does
-    /// `docs/privacy-and-security.md`. The question is worded as Jev's is (`SpokenJudge`), so the threshold keeps its meaning.
+    /// The prompt the Text generation model judges the rows by when TypeSafe can't (ADR 0037): the same request, date and `judgeRows`
+    /// fields, worded as `SpokenJudge` asks, but answered as a list of ids, so the 0.5 threshold's meaning does not carry over.
     static func judgePrompt(request: String, today: String, rows: [[String: String]]) -> String {
         let listed = rows.map { row -> String in
+            let session = row["kind"] == Kind.session.label
             var line = "\(row["id"] ?? "") | \(row["kind"] ?? "") | \(oneLine(row["title"] ?? ""))"
             if let place = row["folder"] ?? row["site"], !place.isEmpty { line += " | \(place)" }
-            if let when = row["when"] { line += " | \(row["kind"] == "Claude session" ? "last used" : "last visited") \(when)" }
-            if let text = row["text"] { line += " | \(row["kind"] == "Claude session" ? "prompts" : "about"): \(text)" }
+            if let when = row["when"] { line += " | \(session ? "last used" : "last visited") \(when)" }
+            if let text = row["text"] { line += " | \(session ? "prompts" : "about"): \(text)" }
             return line
         }
         return [
@@ -262,15 +261,19 @@ enum SpokenText {
         ].joined(separator: "\n")
     }
 
-    /// The fallback's reply as scores in row order: 1 for a row whose id is listed, 0 for the others. Nil when the reply holds no
-    /// object with a `helps` list, which is a failure; an id that names no row is ignored, and a reply that lists none keeps none.
+    /// The reply as scores in row order, 1 for a listed row and 0 for the rest; an id is `r3` or a bare `3`. Nil when there is no
+    /// `helps` list, or it lists something but names no row (titles, numbers past the last): that is a failure, not "nothing helps".
     static func scores(fromJudgeReply reply: String, count: Int) -> [Double]? {
         guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close,
               let object = try? JSONSerialization.jsonObject(with: Data(reply[open...close].utf8)) as? [String: Any],
               let helps = object["helps"] as? [Any]
         else { return nil }
-        let ids = Set(helps.map { "\($0)".trimmingCharacters(in: .whitespaces).lowercased() })
-        return (0..<count).map { ids.contains("r\($0 + 1)") ? 1.0 : 0.0 }
+        let named = Set(helps.compactMap { item -> Int? in
+            let id = "\(item)".trimmingCharacters(in: .whitespaces).lowercased()
+            return Int(id.hasPrefix("r") ? String(id.dropFirst()) : id)
+        }).filter { (1...max(count, 1)).contains($0) }
+        if !helps.isEmpty, named.isEmpty { return nil }
+        return (0..<count).map { named.contains($0 + 1) ? 1.0 : 0.0 }
     }
 
     private static func oneLine(_ text: String) -> String {
@@ -332,13 +335,11 @@ enum SpokenText {
 
     private static let escalationLine = "If these results don't hold what the request asks for, reply with only \(escalation)."
     private static let plainlyLine = "If none of the results fits the request, say so plainly instead of guessing."
-    private static let sessionOfferedLine = "A Claude session whose prompts only ask the request's own question doesn't hold its answer. For a session that does, say what it shows."
+    private static let sessionOfferedLine = "A Claude session whose prompts only ask the request's own question doesn't hold its answer. For a session that does, say what it shows; if it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
     private static let sessionLine = "For a Claude session, say what it shows. If it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
 
-    /// Whether the writer may hand the request to the web: Answer from the web is on and the request doesn't stay local. Which rows
-    /// are read doesn't matter: the writer is told to use the marker when they don't hold the answer, and a kept session that only
-    /// asked the same question doesn't (the model decides, ADR 0037; no word list does). Offered always, rather than left out when a
-    /// session is read, because rows kept for want of a judge (`SpokenPipeline.prepare`) are only the search's best guess.
+    /// Whether the writer may hand the request to the web, whichever rows it reads: the prompt has it decide if they hold the answer
+    /// (ADR 0037), and unjudged rows are only the search's guess.
     static func offersEscalation(web: Bool, scope: Scope) -> Bool {
         web && !scope.staysLocal
     }
@@ -519,6 +520,8 @@ enum SpokenPipeline {
         /// How long the judge took, and who judged or why nobody did ("off", "words too short", "TypeSafe failed: …").
         var judge: Duration = .zero
         var judgedBy = "-"
+        /// The kind of the failure when the route's Jev call failed: the judge doesn't ask TypeSafe again in the same run.
+        var typesafeFailure: String?
         /// Answer from the web was on (its other needs held) when the request was prepared.
         var web = false
         var writer: WriterNote?
@@ -547,8 +550,8 @@ enum SpokenPipeline {
     /// One reply from Text generation. A cancelled local generation ends early and returns what it had, so a cancel is checked
     /// for here rather than read as an answer.
     private static func generate(_ prompt: String, _ maxTokens: Int, on model: LauncherModel,
-                                 places: inout [String]) async throws -> String {
-        let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens)
+                                 places: inout [String], deadline: TimeInterval? = nil) async throws -> String {
+        let reply = try await model.textGeneration.generateNow(prompt, maxTokens: maxTokens, deadline: deadline)
         try Task.checkCancellation()
         places.append(reply.because.map { "\(reply.place) after Claude Code failed: \($0)" } ?? "\(reply.place)")
         return reply.text
@@ -599,7 +602,7 @@ enum SpokenPipeline {
         // The judge: the first `judgedPages` pages and the sessions, scored for the request.
         var rows = Array(found.pages.prefix(RelevanceSearch.judgedPages)) + found.sessions
         let judging = clock.now
-        let verdict = try await judge(request, words: run.words, rows: rows, context: run.context, on: model)
+        let verdict = try await judge(request, words: run.words, rows: rows, context: run.context, typesafeFailure: run.typesafeFailure, on: model)
         run.judge = judging.duration(to: clock.now)
         run.judgedBy = verdict.by
         if let scores = verdict.scores {
@@ -607,9 +610,8 @@ enum SpokenPipeline {
         }
         run.judged = rows
 
-        // Kept: those the judge scored at the threshold or more, and the sessions a project or a filtering window selected whatever it
-        // scored them. Unjudged (nobody could score them, the Text generation model included), the top rows are read, as a typed
-        // search shows them, and the writer is still offered the web (`SpokenText.offersEscalation`): they are only the search's guess.
+        // Kept: those scored at the threshold or more, and the sessions a project or a filtering window selected whatever they scored.
+        // Unjudged rows are the search's top, as a typed search shows them; the writer is still offered the web.
         let namesProject = scope.project != nil
         if verdict.scores == nil {
             run.rows = SpokenText.topRows(rows, sources: route.sources, namesFolder: namesProject)
@@ -648,6 +650,7 @@ enum SpokenPipeline {
                 } catch {
                     try Task.checkCancellation()
                     why = "Jev failed: \(error.logKind)"
+                    run.typesafeFailure = error.logKind
                 }
             } else {
                 why = "no TypeSafe key"
@@ -721,58 +724,60 @@ enum SpokenPipeline {
                      meaningBy: meaningBy, sessionsBy: sessionsBy)
     }
 
-    /// Who scored the rows, or why nobody did, and whether the Text generation model is to try (`judgeByTextGeneration`).
+    /// Who scored the rows (`scores`), or why nobody did (`by`).
     private struct Verdict {
         var scores: [Double]?
         var by: String
-        var fallBack = false
     }
 
-    /// Scores `rows` for the request wherever Settings › Search says: TypeSafe with its key, or the on-device reranker. When that
-    /// isn't used or fails, the Text generation model scores them, as it routes when Jev doesn't (ADR 0037); only when it fails too do
-    /// the rows go unjudged. No rows to score, and words too short to search by, skip a judge altogether.
+    /// Scores `rows` wherever Settings › Search says: TypeSafe with its key, or the on-device reranker. When the filter is TypeSafe
+    /// (no key, a failure, or `typesafeFailure`: the route's Jev call failed this run) or off, the Text generation model scores them
+    /// instead (ADR 0037). On this Mac never falls back: the rows stay on this Mac, and unjudged ones are read.
     private static func judge(_ request: String, words: String, rows: [SearchResult], context: SpokenText.RowContext,
-                              on model: LauncherModel) async throws -> Verdict {
+                              typesafeFailure: String?, on model: LauncherModel) async throws -> Verdict {
         guard !rows.isEmpty else { return Verdict(scores: nil, by: "no rows") }
-        guard words.count >= RelevanceSearch.minFilteredLength else { return Verdict(scores: nil, by: "words too short") }
-        let first = try await judgeByBackend(request, words: words, rows: rows, context: context, on: model)
-        guard first.scores == nil, first.fallBack else { return first }
+        let backend = Settings.shared.activeRelevanceFilter
+        let first: Verdict
+        if backend != nil, words.count < RelevanceSearch.minFilteredLength {
+            first = Verdict(scores: nil, by: "words too short")
+        } else {
+            first = try await judgeByBackend(request, words: words, rows: rows, context: context, typesafeFailure: typesafeFailure, on: model)
+        }
+        guard first.scores == nil, backend != .local else { return first }
         return try await judgeByTextGeneration(request, rows: rows, context: context, after: first.by, on: model)
     }
 
-    /// The backend Settings › Search names. Nil scores say why nobody scored them, and ask for the fallback.
     private static func judgeByBackend(_ request: String, words: String, rows: [SearchResult], context: SpokenText.RowContext,
-                                       on model: LauncherModel) async throws -> Verdict {
-        guard let backend = Settings.shared.activeRelevanceFilter else { return Verdict(scores: nil, by: "off", fallBack: true) }
+                                       typesafeFailure: String?, on model: LauncherModel) async throws -> Verdict {
+        guard let backend = Settings.shared.activeRelevanceFilter else { return Verdict(scores: nil, by: "off") }
         do {
             switch backend {
             case .typesafe:
-                guard let key = Settings.shared.typesafeKey else { return Verdict(scores: nil, by: "no TypeSafe key", fallBack: true) }
+                guard let key = Settings.shared.typesafeKey else { return Verdict(scores: nil, by: "no TypeSafe key") }
+                if let typesafeFailure { return Verdict(scores: nil, by: "TypeSafe failed: \(typesafeFailure)") }
                 let scores = try await SpokenJudge(apiKey: key).scores(request: request, today: SpokenTime.today(now: context.now, calendar: context.calendar),
                                                                        rows: SpokenText.judgeRows(rows, context: context))
                 try Task.checkCancellation()
-                guard scores.count == rows.count else { return Verdict(scores: nil, by: "TypeSafe failed: wrong count", fallBack: true) }
+                guard scores.count == rows.count else { return Verdict(scores: nil, by: "TypeSafe failed: wrong count") }
                 return Verdict(scores: scores, by: backend.title)
             case .local:
                 let reranker = model.search.localReranker
-                guard reranker.isReady else { return Verdict(scores: nil, by: "On this Mac not ready", fallBack: true) }
+                guard reranker.isReady else { return Verdict(scores: nil, by: "On this Mac not ready") }
                 let scores = try await reranker.relevance(query: words, candidates: rows)
                 try Task.checkCancellation()
                 return Verdict(scores: scores, by: backend.title)
             }
         } catch {
             try Task.checkCancellation()
-            return Verdict(scores: nil, by: "\(backend.title) failed: \(error.logKind)", fallBack: true)
+            return Verdict(scores: nil, by: "\(backend.title) failed: \(error.logKind)")
         }
     }
 
-    /// The fallback judge's reply is the ids of the rows that help, as one line of JSON.
+    /// The reply is the ids of the rows that help, as one JSON line.
     static let judgeFallbackTokens = 200
 
-    /// The Text generation model the user set scores the rows with one prompt (`SpokenText.judgePrompt`): Claude Code, this Mac's
-    /// model or a server, as `generateNow` picks. `why` is what the first judge said, and the log names who judged after it, as the
-    /// route's does ("claudeCode (TypeSafe failed: HTTP 402)"). When this fails too the rows go unjudged, with both reasons named,
-    /// and the request still ends in an answer: the writer is offered the web (`SpokenText.offersEscalation`).
+    /// The Text generation model scores the rows (`SpokenText.judgePrompt`). Logged as the route is: "claudeCode (TypeSafe failed: HTTP 402)".
+    /// A failure leaves the rows unjudged, with both reasons; Claude Code isn't rested by a slow reply (`TextHelper.judgeDeadline`).
     private static func judgeByTextGeneration(_ request: String, rows: [SearchResult], context: SpokenText.RowContext, after why: String,
                                               on model: LauncherModel) async throws -> Verdict {
         let prompt = SpokenText.judgePrompt(request: request, today: SpokenTime.today(now: context.now, calendar: context.calendar),
@@ -780,7 +785,7 @@ enum SpokenPipeline {
         var places: [String] = []
         let reply: String
         do {
-            reply = try await generate(prompt, judgeFallbackTokens, on: model, places: &places)
+            reply = try await generate(prompt, judgeFallbackTokens, on: model, places: &places, deadline: TextHelper.judgeDeadline)
         } catch {
             try Task.checkCancellation()
             return Verdict(scores: nil, by: "\(why); Text generation failed: \(error.logKind)")
@@ -1012,6 +1017,7 @@ extension Error {
     /// What a log may say of a failure: the kind, never a message that could hold what was said.
     var logKind: String {
         if let status = self as? JevStatus { return status.description }
+        if let failure = self as? ClaudeCodeState.Failure { return failure.kind }
         if let urlError = self as? URLError { return "URLError \(urlError.code.rawValue)" }
         if let failure = self as? ScreenText.Failure { return failure.logKind }
         return (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"

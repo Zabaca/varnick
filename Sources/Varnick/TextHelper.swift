@@ -95,6 +95,11 @@ enum TextHelper {
     /// From the start of `bun` to the `result`: a reply takes 1.3 s and under 2 s at worst (eval phase 2), and a failing login retries
     /// for minutes. Past it the call is killed and this Mac's model answers.
     static let deadline: TimeInterval = 4
+    /// The spoken judge's (option 07): 23 rows in, a line of ids out. Not measured through the helper; one `claude -p` took 4.7 s
+    /// with its start-up. A miss rests nothing (`TextGeneration.generateNow`).
+    static let judgeDeadline: TimeInterval = 8
+    /// What a call that outlives its deadline fails with.
+    static let deadlineKind = "deadline passed"
 
     /// Claude Code older than this ignores the reminders filter and sends every reminder, the account's email address among them.
     static let minimumClaude = [2, 1, 291]
@@ -286,7 +291,7 @@ enum TextHelper {
         // A result that arrived is the answer even when the deadline fell just after it. A failed one that the deadline's SIGTERM
         // made the helper send ("aborted") is the deadline's.
         else if let reply = found.reply, reply.ok { outcome.text = reply.text }
-        else if result?.timedOut == true { outcome.end = .failed("deadline passed") }
+        else if result?.timedOut == true { outcome.end = .failed(deadlineKind) }
         else if let reply = found.reply { outcome.end = .failed(reply.kind ?? "failed") }
         else if found.unreadable > 0 { outcome.end = .failed("output unreadable") }
         else { outcome.end = .failed("helper ended without a result") }

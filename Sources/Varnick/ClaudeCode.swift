@@ -171,10 +171,15 @@ final class ClaudeCodeState: ObservableObject, TextGenerating {
     /// One reply to `prompt` through the helper (`maxTokens` is the prompts' sentence limits' business here). Throws `Failure` with a
     /// kind, or `CancellationError`. Resting and the status are `failed(_:)` and this method's, not the caller's.
     func generate(_ prompt: String, maxTokens: Int) async throws -> String {
+        try await generate(prompt, maxTokens: maxTokens, deadline: TextHelper.deadline)
+    }
+
+    /// As above, with `deadline` for the helper in place of `TextHelper.deadline`.
+    func generate(_ prompt: String, maxTokens: Int, deadline: TimeInterval) async throws -> String {
         let found = await environment()
         guard let claude = found.claude else { throw Failure(kind: "claude not found") }
         guard TextHelper.isInstalled else { throw Failure(kind: "text helper missing") }
-        let outcome = await TextHelper.run(prompt, claude: claude, environment: found.variables)
+        let outcome = await TextHelper.run(prompt, claude: claude, environment: found.variables, deadline: deadline)
         try Task.checkCancellation()
         lastOutcome = outcome
         switch outcome.end {
