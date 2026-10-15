@@ -2,11 +2,11 @@
 // what carries them out against a clock, the host's own `tabs` listing, the presence files and the subscriptions. All of it is behind `PushWorld`,
 // so `bun test` runs it on a fake clock. Nothing here is logged but a device's name, a kind, a status and a time.
 
-import { objects } from "./json";
+import { isObject, objects } from "./json";
 import type { RelayResult } from "./home";
 import {
-  allows, decide, decideRoute, failureWord, isTurnWord, macView, payloadOf, presenceOf, seenAfterMs, settleOf, type Controller, type Notice, type Presence,
-  type PresenceReport, type PushPayload, type Route, type TurnWord, type View, type Why,
+  allows, decide, decideRoute, decideSaid, failureWord, isTurnWord, macView, merge, messageGapMs, payloadOf, presenceOf, seenAfterMs, settleOf, type Controller,
+  type Decision, type Notice, type Presence, type PresenceReport, type PushPayload, type Route, type TurnWord, type View, type Why,
 } from "./pushrule";
 import type { SendOptions, SendResult } from "./pushsend";
 import type { Subscription, SubscriptionStore } from "./pushstore";
@@ -34,7 +34,7 @@ export interface PushWorld {
   ownID: string;
   /** `tabs` asked as the host itself; one ask serves this and the port proxy when both want one. `startedAt` is when that ask began (unix ms). */
   askTabs(notBefore: number): Promise<{ result: RelayResult; startedAt: number }>;
-  /** The date (unix ms) of each pane's turn file, 0 for a pane with none. */
+  /** The newest write (unix ms) of each pane's turn file or message file, 0 for a pane with neither. */
   turnDates(panes: string[]): Map<string, number>;
   /** Whether a pane folder has appeared since the last call (a pane started that the listing may not have). */
   newPaneFolder(): boolean;
@@ -43,6 +43,11 @@ export interface PushWorld {
   /** The devices the host lists, by id, and their names. */
   devices(): ReadonlyMap<string, string>;
   presence(controller: string): PresenceReport | null;
+  /**
+   * Keeps Claude Code's client-presence marker while the host has a push subscription (option 04): Claude Code skips its own Remote Control mobile
+   * pushes while the file exists, so Varnick's routing alone decides. Called at every tick with whether there is a subscription, and idempotent.
+   */
+  presenceMarker(on: boolean): void;
   /** Whether the device has the pane's terminal or live view open. */
   hasPaneOpen(device: string, pane: string): boolean;
   send(subscription: Subscription, payload: PushPayload, options?: SendOptions): Promise<SendResult>;
@@ -81,6 +86,8 @@ interface Standing {
   /** The subscriptions (by endpoint) it was pushed to, and those it was dropped for. */
   pushed: Set<string>;
   handled: Set<string>;
+  /** A message held back by its minute (`messageGapMs`), said once in the log. */
+  heldBack: boolean;
 }
 
 export class PushWatcher {
@@ -88,6 +95,10 @@ export class PushWatcher {
   private facts = new Map<string, PaneFacts>();
   private standing = new Map<string, Standing>();
   private lastPush = new Map<string, number>();
+  /** Each pane's message as last read (when it was recorded, ms on the host's clock; null for none): a pane in it has been read once. */
+  private saids = new Map<string, number | null>();
+  /** When a message was last pushed for a pane: a message pushes at most once a minute. */
+  private lastMessagePush = new Map<string, number>();
   private sent = new Map<string, number[]>();
   private dates = new Map<string, number>();
   private stamp = "";
@@ -129,6 +140,7 @@ export class PushWatcher {
     try {
       this.store.dropUnlisted(new Set(this.world.devices().keys()));
       this.reportSubscriptions();
+      this.world.presenceMarker(this.store.all().length > 0);
       if (this.store.all().length === 0) return this.reset();
       if (this.shouldAsk()) await this.refresh();
       for (const pane of [...this.standing.keys()]) await this.deliver(pane);
@@ -164,6 +176,8 @@ export class PushWatcher {
 
   private reset(): void {
     this.readings.clear();
+    this.saids.clear();
+    this.lastMessagePush.clear();
     this.facts.clear();
     this.standing.clear();
     this.dates.clear();
@@ -224,6 +238,9 @@ export class PushWatcher {
           control: typeof pane.control === "string" && pane.control !== "" ? pane.control.toLowerCase() : null,
           clients: typeof pane.clients === "number" ? pane.clients : null,
         });
+        // The message first, whatever the turn says: a Done that comes with it is folded into it (`merge`). A host before protocol 28 says none.
+        this.observeSaid(id, tab.tab.toLowerCase(), isObject(pane.said) && typeof pane.said.title === "string" && typeof pane.said.age === "number"
+          ? startedAt - Math.max(0, pane.said.age) * 1000 : null, now);
         // A word this watcher doesn't know is a newer host's: the pane stays as it was.
         if (!isTurnWord(pane.turn)) continue;
         if (pane.turn === "background") this.busy = true;
@@ -233,21 +250,19 @@ export class PushWatcher {
         // the word it began from was working. Without this a turn that is over before the next ask raises nothing, as waiting to waiting.
         const between = before !== undefined && before.turn === pane.turn && since - before.since > sameTurnMs;
         if (between) this.world.log(`push watch: a turn ran between two looks (${pane.turn} again, ${Math.round((since - before!.since) / 1000)} s later)`);
-        const decision = decide({
+        // A standing message folds a Done into itself, and an error or Needs you replaces it; otherwise the turn's decision alone.
+        const decision = merge(decide({
           old: between ? "working" : before?.turn ?? null,
           next: pane.turn,
           failure: pane.turn === "failed" && typeof pane.failure === "string" ? failureWord(pane.failure) : null,
           interrupted: pane.esc === true,
           sameTurn: !between && before !== undefined && Math.abs(before.since - since) <= sameTurnMs,
-        });
+        }), this.standing.get(id)?.notice);
         if (decision.action === "raise") {
           // An error that follows its waiting in the same turn takes over the Done's wait: the settle is for the turn, not for each word.
-          const replaces = !between && before!.turn === "waiting" && decision.notice.kind === "failed" ? this.standing.get(id) : undefined;
-          this.standing.set(id, {
-            notice: decision.notice, tab: tab.tab.toLowerCase(), raisedAt: replaces?.raisedAt ?? now, held: false, seen: false,
-            viewing: new Map(), looked: new Set(), logged: new Map(), confirmed: false, pushed: new Set(), handled: new Set(),
-          });
-          this.world.log(`push notice ${noticeLabel(decision.notice)} raised`);
+          const standing = this.standing.get(id);
+          const replaces = !between && before!.turn === "waiting" && decision.notice.kind === "failed" && standing?.notice.kind === "done" ? standing : undefined;
+          this.raise(id, tab.tab.toLowerCase(), decision.notice, replaces?.raisedAt ?? now);
         } else if (decision.action === "clear") {
           const gone = this.standing.get(id);
           if (gone) this.world.log(`push notice ${noticeLabel(gone.notice)} cleared`);
@@ -258,7 +273,7 @@ export class PushWatcher {
     }
     // A pane that is gone from the listing takes what it had with it.
     for (const id of [...this.readings.keys()]) {
-      if (!seen.has(id)) { this.readings.delete(id); this.standing.delete(id); this.lastPush.delete(id); }
+      if (!seen.has(id)) { this.readings.delete(id); this.standing.delete(id); this.lastPush.delete(id); this.saids.delete(id); this.lastMessagePush.delete(id); }
     }
     this.facts = facts;
     // The dates read before the ask; a pane the ask found that wasn't known before is a starting point and is read now.
@@ -266,6 +281,31 @@ export class PushWatcher {
     const added = fresh.length > 0 ? this.world.turnDates(fresh) : new Map<string, number>();
     this.dates = new Map([...facts.keys()].map((id) => [id, files.dates.get(id) ?? added.get(id) ?? 0] as const));
     this.stamp = files.stamp;
+  }
+
+  private raise(pane: string, tab: string, notice: Notice, raisedAt: number): void {
+    this.standing.set(pane, {
+      notice, tab, raisedAt, held: false, seen: false, viewing: new Map(), looked: new Set(), logged: new Map(), confirmed: false,
+      pushed: new Set(), handled: new Set(), heldBack: false,
+    });
+    this.world.log(`push notice ${noticeLabel(notice)} raised`);
+  }
+
+  /**
+   * A pane's message as the host's tabs say it (`since`: when it was recorded, ms on the host's clock; null for none). A new one raises Said,
+   * replacing what stands; one that is gone clears a standing Said and nothing else. The first reading of a pane is a starting point.
+   */
+  private observeSaid(pane: string, tab: string, since: number | null, now: number): void {
+    const decision: Decision = decideSaid({ old: this.saids.get(pane) ?? null, next: since, first: !this.saids.has(pane) });
+    this.saids.set(pane, since);
+    if (decision.action === "raise") {
+      this.raise(pane, tab, decision.notice, now);
+    } else if (decision.action === "clear") {
+      const gone = this.standing.get(pane);
+      if (gone?.notice.kind !== "said") return;
+      this.world.log(`push notice ${noticeLabel(gone.notice)} cleared`);
+      this.standing.delete(pane);
+    }
   }
 
   private controllerOf(pane: PaneFacts): Controller {
@@ -301,8 +341,15 @@ export class PushWatcher {
       else if (decision.route === "push") due.push(subscription);
     }
     if (due.length === 0) return;
-    // At most one push per pane per settle.
-    if (now - (this.lastPush.get(id) ?? -Infinity) < settleOf(standing.notice)) return;
+    // At most one push per pane per settle, and for a message one a minute: the newest words are pushed at the end of it, if the message still stands.
+    const said = standing.notice.kind === "said";
+    if (now - ((said ? this.lastMessagePush : this.lastPush).get(id) ?? -Infinity) < (said ? messageGapMs : settleOf(standing.notice))) {
+      if (said && !standing.heldBack) {
+        standing.heldBack = true;
+        this.world.log("push message held back: one a minute for a pane");
+      }
+      return;
+    }
     // The read after the settle, for every kind: a Done that background work or an error was about to replace, or a dialog answered since, isn't pushed.
     if (!standing.confirmed) {
       standing.confirmed = true;
@@ -310,7 +357,7 @@ export class PushWatcher {
       if (this.standing.get(id) === standing) return this.deliver(id);
       return;
     }
-    this.lastPush.set(id, now);
+    (said ? this.lastMessagePush : this.lastPush).set(id, now);
     const payload = payloadOf(standing.notice, standing.tab, id);
     // Not awaited: a retry inside a send waits for the push service, and nothing else may wait with it.
     for (const subscription of due) {

@@ -12,8 +12,11 @@ export const isTurnWord = (word: unknown): word is TurnWord => typeof word === "
 
 export type Waiting = "permission" | "question" | "plan" | "input";
 
-/** What a change of turn tells the user (Swift's `NoticeKind`). `failure` is the kind's word ("rate limit"), null when the host didn't say. */
-export type Notice = { kind: "done" } | { kind: "needs"; turn: Waiting } | { kind: "failed"; failure: string | null };
+/**
+ * What a change of turn tells the user (Swift's `NoticeKind`). `failure` is the kind's word ("rate limit"), null when the host didn't say. `said` is a
+ * message the session sent itself (option 04); its words are never in the notice, only in the tabs the worker asks for.
+ */
+export type Notice = { kind: "done" } | { kind: "needs"; turn: Waiting } | { kind: "failed"; failure: string | null } | { kind: "said" };
 
 export type Decision = { action: "none" } | { action: "clear" } | { action: "raise"; notice: Notice };
 
@@ -56,6 +59,41 @@ export function decide(input: { old: TurnWord | null; next: TurnWord; failure?: 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// A message the session sent itself (option 04 of phone-page-is-only-a-browser-tab): `NoticeRule.decide(said:)` and `NoticeRule.merge` in Swift.
+
+/** Two readings of one message differ by less than this: a host's age is whole seconds counted at the relay's run, and an answer may be 1.5 s old. */
+export const sameMessageMs = 5000;
+
+/**
+ * What a change of a pane's message tells the user. `old` and `next` are when the message was recorded, in ms on the host's clock, null for none.
+ *
+ * | What happens | Notice |
+ * |---|---|
+ * | the first message read for the pane (`first`: a start of the server, a pane that appeared) | none: a starting point |
+ * | a message newer than the last by more than `sameMessageMs` | Said, replacing what stands |
+ * | the message is gone (the next prompt, `/clear`, a start) | none, clears a standing Said |
+ *
+ * `clear` is for a standing Said only: the caller keeps any other notice.
+ */
+export function decideSaid(input: { old: number | null; next: number | null; first: boolean }): Decision {
+  if (input.first) return { action: "none" };
+  if (input.next === null) return input.old === null ? { action: "none" } : { action: "clear" };
+  if (input.old !== null && Math.abs(input.next - input.old) <= sameMessageMs) return { action: "none" };
+  return { action: "raise", notice: { kind: "said" } };
+}
+
+/**
+ * A turn's decision over the notice that stands (`NoticeRule.merge`). A standing Said is folded into by a Done (nothing is raised: the turn's end
+ * is what the message announced) and stays when the turn goes on or a dialog is answered; Needs you and an error replace it. Any other standing
+ * notice is the turn's decision alone.
+ */
+export function merge(decision: Decision, standing: Notice | undefined): Decision {
+  if (standing?.kind !== "said") return decision;
+  if (decision.action === "raise" && decision.notice.kind !== "done") return decision;
+  return { action: "none" };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Where a notice goes
 
 /**
@@ -70,8 +108,10 @@ export const doneSettleMs = 10_000;
  */
 export const urgentSettleMs = 2_000;
 
-/** How long a notice stands before it may be pushed. */
+/** How long a notice stands before it may be pushed. A message is deliberate and doesn't flicker back, so it settles as Needs you does. */
 export const settleOf = (notice: Notice): number => (notice.kind === "done" ? doneSettleMs : urgentSettleMs);
+/** At most one push for a message per pane in this long: the newest words are pushed at the end of it, if the message still stands. */
+export const messageGapMs = 60_000;
 /** A Mac with no input for this long is away. */
 export const awayAfterSeconds = 120;
 /** A presence report older than this is "can't be told": the Mac is asleep, Varnick isn't running, the link is down or it runs an older build. */
@@ -120,7 +160,7 @@ export type Route = "push" | "wait" | "drop";
  * | a Mac that can't be told (no report, or its client detached) | after the settle |
  * | a device | after the settle |
  *
- * The settle is `settleOf` the notice: 10 s for a Done, 2 s for Needs you and for an error.
+ * The settle is `settleOf` the notice: 10 s for a Done, 2 s for Needs you, for an error and for a message.
  *
  * `drop` is for good: the category is switched off, this device has looked at the pane while the notice stood (`view`), or the controlling Mac
  * has shown the user the notice (`seen`, from `macView`). `wait` is for now, and includes a device that has the pane open and visible but not yet
@@ -186,22 +226,25 @@ export interface Switches {
   needsMe: boolean;
   done: boolean;
   errors: boolean;
+  /** A message the session sent itself. A subscription saved before this build has none, and reads as on. */
+  messages: boolean;
 }
 
-export const defaultSwitches: Switches = { needsMe: true, done: true, errors: true };
+export const defaultSwitches: Switches = { needsMe: true, done: true, errors: true, messages: true };
 
 /** The switch a notice belongs to (Swift's `NoticeSwitches.allows`). */
 export const allows = (switches: Switches, notice: Notice): boolean =>
-  notice.kind === "needs" ? switches.needsMe : notice.kind === "done" ? switches.done : switches.errors;
+  notice.kind === "needs" ? switches.needsMe : notice.kind === "done" ? switches.done : notice.kind === "said" ? switches.messages : switches.errors;
 
-/** What a push carries (version 1): ids and the kind, and for an error its kind's word. Never a title, prompt, folder or screen. */
+/** What a push carries (version 1): ids and the kind, and for an error its kind's word. Never a title, prompt, folder, screen or a message's words (ADR 0038). */
 export type PushPayload =
   | { v: 1; kind: "test" }
-  | { v: 1; kind: "done" | Waiting; tab: string; pane: string }
+  | { v: 1; kind: "done" | "message" | Waiting; tab: string; pane: string }
   | { v: 1; kind: "failed"; tab: string; pane: string; failure?: string };
 
 export function payloadOf(notice: Notice, tab: string, pane: string): PushPayload {
   if (notice.kind === "done") return { v: 1, kind: "done", tab, pane };
+  if (notice.kind === "said") return { v: 1, kind: "message", tab, pane };
   if (notice.kind === "needs") return { v: 1, kind: notice.turn, tab, pane };
   return notice.failure ? { v: 1, kind: "failed", tab, pane, failure: notice.failure } : { v: 1, kind: "failed", tab, pane };
 }

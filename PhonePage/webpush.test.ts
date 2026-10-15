@@ -3,6 +3,7 @@ import {
   b64u, encrypt, encryptPayload, fingerprint, generatePushKey, isPushEndpoint, paddedSize, parsePushKey, publicKeyBytes, recordSize, vapidContact, vapidHeader, verifyToken,
   type PushKey,
 } from "./webpush";
+import { payloadOf } from "./pushrule";
 
 // RFC 8291 section 5 and appendix A: the worked example, every value as the RFC prints it.
 const example = {
@@ -88,6 +89,18 @@ describe("RFC 8291 aes128gcm", () => {
     // The header (salt, size, key id and the sender's key), the padded record and the tag.
     expect(short.length).toBe(16 + 4 + 1 + 65 + paddedSize + 16);
     expect(short.length).toBeLessThan(recordSize);
+  });
+
+  test("a message's push is that size too, and carries ids and its kind with no words", async () => {
+    const receiver = await generatePushKey();
+    const auth = crypto.getRandomValues(new Uint8Array(16));
+    const subscription = { p256dh: b64u.encode(publicKeyBytes(receiver)), auth: b64u.encode(auth) };
+    const tab = crypto.randomUUID(), pane = crypto.randomUUID();
+    const payload = payloadOf({ kind: "said" }, tab, pane);
+    const message = await encryptPayload(payload, subscription);
+    const done = await encryptPayload(payloadOf({ kind: "done" }, tab, pane), subscription);
+    expect(message.length).toBe(done.length);
+    expect(await open(message, receiver, auth)).toBe(JSON.stringify({ v: 1, kind: "message", tab, pane }));
   });
 
   test("a payload longer than its padding, or a bad key, is refused", async () => {

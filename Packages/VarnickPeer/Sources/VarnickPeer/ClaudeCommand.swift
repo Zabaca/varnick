@@ -12,7 +12,8 @@ public enum ClaudeCommand {
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
     /// hook, the turn hooks of ADR 0010 and, with `problems`, the work-link hooks of ADR 0020 (`WorkHooks`): the host that runs
     /// the session decides, from its Problems board switch (Settings › Experimental, or the relay's `--problems`). With it off
-    /// the settings are the same less the `WorkHooks` entries. The rules for the entries are in `docs/agents/where-it-breaks.md`.
+    /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
+    /// `notify` are there with it on or off. The rules for the entries are in `docs/agents/where-it-breaks.md`.
     public static func hookSettings(problems: Bool) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {

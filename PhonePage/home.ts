@@ -3,7 +3,7 @@
 
 import type { Device } from "./checks";
 import type { HostLink } from "./hosts";
-import { objects, uuidPattern } from "./json";
+import { isObject, objects, uuidPattern } from "./json";
 
 export type RelayResult = { ok: true; reply: Record<string, unknown> } | { ok: false; error: string };
 
@@ -35,6 +35,29 @@ export interface HomePane {
   proxy: string | null;
   /** Why it has none, in the host's words. */
   proxyNote: string | null;
+  /** A Claude pane's standing message (option 04), for the push worker's notification. The page shows nothing of it: a tap lands on the terminal. */
+  said: HomeSaid | null;
+}
+
+/** A message's words as the worker shows them: the title one line of at most 80 characters, the body at most 300 (`PaneMessage` cuts the same). */
+export interface HomeSaid {
+  title: string;
+  body: string | null;
+}
+
+/** Control characters and the bidi overrides out of a host's words, then cut: what the host sent is the host's, but it goes on to a lock screen. */
+const cleaned = (value: unknown, limit: number, lines: boolean): string | null => {
+  if (typeof value !== "string") return null;
+  const line = (text: string): string => text.replace(/[\t\r]/g, " ").replace(/[\p{Cc}\p{Cf}]/gu, "").replace(/\s+/g, " ").trim();
+  const kept = lines ? value.split("\n").map(line).join("\n").replace(/\n{2,}/g, "\n\n").trim() : line(value);
+  if (kept === "") return null;
+  return kept.length > limit ? `${kept.slice(0, limit - 1)}…` : kept;
+};
+
+export function shapeSaid(value: unknown): HomeSaid | null {
+  if (!isObject(value)) return null;
+  const title = cleaned(value.title, 80, false);
+  return title === null ? null : { title, body: cleaned(value.body, 300, true) };
 }
 
 /** An open tab of the host with its panes in the host's layout order. `name` is the tab's own (⌘⇧R), when it has one. */
@@ -127,6 +150,7 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     file: optional(pane.file),
     proxy: httpsAddress(pane.proxy),
     proxyNote: optional(pane.proxyNote),
+    said: kind === "claude" ? shapeSaid(pane.said) : null,
   };
 }
 

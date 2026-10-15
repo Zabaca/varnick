@@ -351,6 +351,14 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   pane on whether you are at it (seconds since your last input, whether the screen is locked or asleep, and which sessions it holds a
   notice for or shows on screen) over the SSH link that already carries its status requests. That goes to the host's page server on your
   own machines, and never into a push. The push key reaches the server through an owner-only file it deletes at once, not its environment.
+- **A message a session sends you reaches your lock screen, and no push service.** A Claude session can call a `notify` tool (or Claude
+  Code's own push notification) with a title and a body of its own words. Those words go to the Macs that follow the session and to the
+  host's page server, over the links you already have, and your phone's worker reads them from the host over the tailnet when the push
+  arrives and shows them as the notification, so they show on a locked phone. A push never carries them: Apple and Google see a push
+  of the same size as any other. Off the tailnet the notification says only that a session sent a message. A session decides what to
+  say, so put nothing private where you would not want it on a lock screen; at most one alert a minute per session and 60 pushes an
+  hour per device bound it. While a host has a push subscription, Varnick sets Claude Code's client-presence file so Claude Code skips
+  its own Remote Control mobile pushes, and Varnick's decide alone.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
   take over and type in a terminal. Not the search sync, upgrades or restarts. List only devices you control.
 

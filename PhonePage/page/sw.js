@@ -44,13 +44,14 @@ function note() {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The wordings are sessions-finish-unnoticed option 02's. With the session's title they follow it; without, they name the host and no session. */
-const phrase = { permission: "Needs permission", question: "Has a question", plan: "Plan to approve", input: "Waiting on an MCP server", done: "Done" };
+const phrase = { permission: "Needs permission", question: "Has a question", plan: "Plan to approve", input: "Waiting on an MCP server", done: "Done", message: "Sent you a message" };
 const generic = {
   permission: "A session needs permission",
   question: "A session has a question",
   plan: "A session has a plan to approve",
   input: "A session is waiting on an MCP server",
   done: "A session is done",
+  message: "A session sent you a message",
 };
 
 /** An error's kind as a word: the host's list ("rate limit"), nothing else the push could carry. */
@@ -70,11 +71,20 @@ function readPayload(event) {
   }
 }
 
-/** The notification's title and body. `title` is the session's, when the host could be asked. */
-function noticeText(payload, hostName, title) {
+/**
+ * The notification's title and body. `pane` is what the host said of the session, when it could be asked: its title and, for a message, the
+ * words (`said`, which only the host's tabs carry: a push never does, ADR 0038).
+ */
+function noticeText(payload, hostName, pane) {
   if (!payload) return { title: hostName, body: "A session needs a look" };
   if (payload.kind === "test") return { title: hostName, body: "Notifications work" };
+  const title = pane ? pane.title : null;
   const named = typeof title === "string" && title.trim() !== "";
+  if (payload.kind === "message" && pane && pane.said) {
+    // The message's own title leads, then its body, then which session and host.
+    const where = named ? `${title.trim()} · ${hostName}` : hostName;
+    return { title: pane.said.title, body: pane.said.body ? `${pane.said.body}\n${where}` : where };
+  }
   if (payload.kind === "failed") {
     const said = `Stopped on an error: ${payload.failure}`;
     return named ? { title: title.trim(), body: `${said} · ${hostName}` } : { title: hostName, body: `A session stopped on an error: ${payload.failure}` };
@@ -82,8 +92,11 @@ function noticeText(payload, hostName, title) {
   return named ? { title: title.trim(), body: `${phrase[payload.kind]} · ${hostName}` } : { title: hostName, body: generic[payload.kind] };
 }
 
-/** The session's title, read over the tailnet within three seconds; null when the host can't be reached or the pane is gone. */
-async function readTitle(payload) {
+/**
+ * The session's title, and a message's words, read over the tailnet within three seconds; null when the host can't be reached or the pane is gone.
+ * The host cut and cleaned the words; the worker cuts them again, since they go to a lock screen.
+ */
+async function readPane(payload) {
   if (!payload || !payload.tab) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
@@ -92,7 +105,11 @@ async function readTitle(payload) {
     if (!response.ok) return null;
     const body = await response.json();
     const pane = body && body.tab && Array.isArray(body.tab.panes) ? body.tab.panes.find((candidate) => candidate && candidate.id === payload.pane) : null;
-    return pane && typeof pane.title === "string" && pane.title.trim() !== "" ? pane.title.trim().slice(0, 120) : null;
+    if (!pane) return null;
+    const said = pane.said && typeof pane.said.title === "string" && pane.said.title.trim() !== ""
+      ? { title: pane.said.title.trim().slice(0, 80), body: typeof pane.said.body === "string" && pane.said.body.trim() !== "" ? pane.said.body.trim().slice(0, 300) : null }
+      : null;
+    return { title: typeof pane.title === "string" && pane.title.trim() !== "" ? pane.title.trim().slice(0, 120) : null, said };
   } catch {
     return null;
   } finally {
@@ -103,7 +120,7 @@ async function readTitle(payload) {
 /** One notification per pane: a newer one replaces the older and alerts again. */
 async function show(event) {
   const payload = readPayload(event);
-  const text = noticeText(payload, host, await readTitle(payload));
+  const text = noticeText(payload, host, await readPane(payload));
   await self.registration.showNotification(text.title, {
     body: text.body,
     tag: payload && payload.pane ? payload.pane : "varnick",

@@ -2,7 +2,7 @@
 // and the loop that runs the watcher. server.ts calls `setupPush` once and `pushRoute` for `/api/push`. The files are reached through a few small
 // functions so `bun test` can run them in a temporary folder.
 
-import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Device } from "./checks";
 import { isObject, uuidPattern } from "./json";
@@ -18,6 +18,10 @@ type PushConfig = NonNullable<Config["push"]>;
 export const keyFileName = "push-key.json";
 export const subscriptionsFileName = "push-subscriptions.json";
 export const turnFileName = ".varnick-turn";
+/** The file the PostToolUse hook saves a `notify` or PushNotification call to (`PaneFolder.messageFileName` in Swift). */
+export const messageFileName = ".varnick-message";
+/** The marker Claude Code's client-presence check looks for (`CLAUDE_CLIENT_PRESENCE_FILE`, `ClaudeCommand.presenceMarkerName` in Swift): in the push folder. */
+export const presenceMarkerName = "claude-client-present";
 
 /** Writes a file only its owner can read, whole by rename, so a reader sees the old file or the new one. */
 export function writePrivate(path: string, text: string): void {
@@ -83,11 +87,32 @@ export function readPresence(folder: string, id: string): PresenceReport | null 
   }
 }
 
-/** The date of each pane's turn file in ms, 0 for none. */
+/**
+ * The newest write of each pane's turn file or message file in ms, 0 for neither: a hook writing either is a change that asks the host's `tabs`
+ * at once. A message file removed while the turn file is newer changes nothing here; the read after a push's settle, and the idle cadence, find it.
+ */
 export function readTurnDates(panes: string, ids: string[]): Map<string, number> {
-  return new Map(ids.map((id) => {
-    try { return [id, statSync(join(panes, id, turnFileName)).mtimeMs] as const; } catch { return [id, 0] as const; }
-  }));
+  const date = (path: string): number => {
+    try { return statSync(path).mtimeMs; } catch { return 0; }
+  };
+  return new Map(ids.map((id) => [id, Math.max(date(join(panes, id, turnFileName)), date(join(panes, id, messageFileName)))] as const));
+}
+
+/**
+ * Keeps Claude Code's presence marker as the subscriptions say (option 04 of phone-page-is-only-a-browser-tab): present while the host has one,
+ * gone when it has none. While the file exists Claude Code skips its own Remote Control mobile pushes, so it must not exist when nothing of Varnick's
+ * will push, or the user loses Claude's own for nothing. Returns a function that sets it, doing nothing when it already is (one stat a call, so a
+ * marker removed by hand comes back at the next tick).
+ */
+export function presenceMarker(folder: string): (on: boolean) => void {
+  const path = join(folder, presenceMarkerName);
+  return (on) => {
+    try {
+      const exists = existsSync(path);
+      if (on && !exists) writeFileSync(path, "", { mode: 0o600 });
+      else if (!on && exists) rmSync(path, { force: true });
+    } catch { /* tried again at the next tick */ }
+  };
 }
 
 /** Whether a folder has appeared in the panes folder since the last call. The first call only learns what is there. */
@@ -110,6 +135,8 @@ export interface Push {
   /** The public key a browser subscribes with, base64url. */
   publicKey: string;
   openPanes: OpenPanes;
+  /** Sets Claude Code's presence marker as the subscriptions say; the routes call it at once, the watcher at every tick. */
+  syncMarker(): void;
   send: PushWorld["send"];
   start(): void;
   stop(): void;
@@ -137,6 +164,7 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   const loaded = await loadKey(push, inputs.headless, inputs.handedKey);
   if ("off" in loaded) {
     log(`push off: ${loaded.off}`);
+    presenceMarker(push.folder)(false);
     return null;
   }
   const key = loaded.key;
@@ -150,6 +178,9 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   const openPanes = new OpenPanes();
   const newPaneFolder = folderWatch(push.panes);
   const names = () => new Map(inputs.devices().map((device) => [device.id, device.name] as const));
+  const setMarker = presenceMarker(push.folder);
+  // A marker left by a server that was killed stays only if there is a subscription to hold it.
+  setMarker(store.all().length > 0);
   const world: PushWorld = {
     now: () => Date.now(),
     ownID: inputs.ownID,
@@ -162,6 +193,7 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
     tabsStamp: inputs.tabsStamp,
     devices: names,
     presence: (id) => readPresence(push.presence, id),
+    presenceMarker: setMarker,
     hasPaneOpen: (device, pane) => openPanes.has(device, pane),
     send: (subscription, payload, options) => sendPush({ fetch: inputs.fetch ?? fetch, sleep: Bun.sleep, now: Date.now }, key, subscription, payload, options),
     log,
@@ -170,10 +202,11 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   let timer: ReturnType<typeof setInterval> | undefined;
   return {
     watcher, store, key, fingerprint: print, publicKey: b64u.encode(publicKeyBytes(key)), openPanes, send: world.send, hostTabs: inputs.hostTabs,
+    syncMarker: () => setMarker(store.all().length > 0),
     start: () => {
       timer = setInterval(() => { void watcher.tick().catch(() => log("push: a look failed")); }, tickMs);
     },
-    stop: () => clearInterval(timer),
+    stop: () => { clearInterval(timer); setMarker(false); },
   };
 }
 
@@ -208,6 +241,7 @@ export async function pushRoute(
     const parsed = parseSubscribeBody(body);
     if (!parsed.ok) return { status: 400, body: { ok: false, error: parsed.error } };
     const entry = push.store.upsert(device.id, parsed, world.now());
+    push.syncMarker();
     world.log(`push ${device.name} subscribed`);
     return { status: 200, body: { ok: true, switches: entry.switches } };
   }
@@ -217,6 +251,7 @@ export async function pushRoute(
   if (path === "/api/push/state") return { status: 200, body: entry ? { ok: true, subscribed: true, switches: entry.switches } : { ok: true, subscribed: false } };
   if (path === "/api/push/unsubscribe") {
     push.store.remove(device.id, named.endpoint);
+    push.syncMarker();
     world.log(`push ${device.name} unsubscribed`);
     return { status: 200, body: { ok: true } };
   }

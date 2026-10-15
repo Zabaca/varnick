@@ -7,7 +7,7 @@
  * - `not-here`: Safari on an iPhone, outside the installed app: push is for the Home Screen app alone.
  * - `blocked`: the permission was refused.
  * - `off`: a switch to turn on.
- * - `on`: the three switches, Send a test and Turn off.
+ * - `on`: the four switches, Send a test and Turn off.
  */
 export function pushState({ looked, browserCanPush, hostSendsPush, ios, installed, permission, subscribed }) {
   if (!looked) return "hidden";
@@ -19,7 +19,7 @@ export function pushState({ looked, browserCanPush, hostSendsPush, ios, installe
 }
 
 export const texts = {
-  off: (host) => `Get a notification on this phone when a session on ${host} needs you, finishes or stops on an error.`,
+  off: (host) => `Get a notification on this phone when a session on ${host} needs you, finishes, stops on an error or sends you a message.`,
   on: (host) => `This phone gets notifications from ${host} when you're away from the Mac a session runs on, and for sessions you drive from the phone.`,
   blocked: "Notifications are blocked for this page. Allow them in this browser's settings for the site, then come back.",
   notHere: "Add this page to the Home Screen from the Share menu, then open it from there to turn notifications on.",
@@ -27,11 +27,12 @@ export const texts = {
   noHost: "Notifications aren't set up on this host.",
 };
 
-/** What the three switches are called, in the order the Mac's Settings has them, with the key the host stores them under. */
+/** What the four switches are called, in the order the Mac's Settings has them, with the key the host stores them under. */
 export const switchLabels = [
   ["needsMe", "Needs me"],
   ["done", "Done"],
   ["errors", "Errors"],
+  ["messages", "Messages"],
 ];
 
 /** A base64url string as the bytes a subscription is made with. */

@@ -47,8 +47,14 @@ describe("a browser's subscription", () => {
   });
 
   test("switches take only true and false", () => {
-    expect(readSwitches({ needsMe: "no", done: false, errors: 1 })).toEqual({ needsMe: true, done: false, errors: true });
+    expect(readSwitches({ needsMe: "no", done: false, errors: 1 })).toEqual({ needsMe: true, done: false, errors: true, messages: true });
     expect(readSwitches(undefined)).toEqual(defaultSwitches);
+  });
+
+  test("the Messages switch is its own, and one that is missing or not true or false reads as on", () => {
+    expect(readSwitches({ messages: false })).toEqual({ needsMe: true, done: true, errors: true, messages: false });
+    expect(readSwitches({ messages: "off" })).toEqual(defaultSwitches);
+    expect(readSwitches({ needsMe: false })).toEqual({ needsMe: false, done: true, errors: true, messages: true });
   });
 });
 
@@ -78,9 +84,17 @@ describe("the subscription file", () => {
     expect(store.find(alice, endpoint(1))!.switches).toEqual(defaultSwitches);
   });
 
+  test("a subscription saved before messages existed reads as on for them, and keeps the others as saved", () => {
+    const file = memory(JSON.stringify({ v: 1, subscriptions: [
+      { device: alice, endpoint: endpoint(1), p256dh: point, auth, key: "k", switches: { needsMe: true, done: false, errors: true }, added: 1 },
+    ] }));
+    const store = new SubscriptionStore(file, "k");
+    expect(store.all()[0].switches).toEqual({ needsMe: true, done: false, errors: true, messages: true });
+  });
+
   test("a new subscription starts with every switch on", () => {
     const store = new SubscriptionStore(memory(), "k");
-    expect(store.upsert(alice, input(1), 1).switches).toEqual({ needsMe: true, done: true, errors: true });
+    expect(store.upsert(alice, input(1), 1).switches).toEqual({ needsMe: true, done: true, errors: true, messages: true });
   });
 
   test("at most four for a device: the oldest goes", () => {

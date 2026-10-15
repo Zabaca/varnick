@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig, type Config, type Device } from "./checks";
 import {
-  folderWatch, keyFileName, loadKey, pushRoute, pushStatus, readPresence, readTurnDates, setupPush, subscriptionsFileName, takeKeyFile, testEveryMs, writePrivate,
+  folderWatch, keyFileName, loadKey, messageFileName, presenceMarker, presenceMarkerName, pushRoute, pushStatus, readPresence, readTurnDates, setupPush, subscriptionsFileName, takeKeyFile, testEveryMs, writePrivate,
 } from "./pushserver";
 import { Shared } from "./pushwatch";
 import { b64u, fingerprint, generatePushKey, parsePushKey } from "./webpush";
@@ -107,6 +107,32 @@ describe("the files it reads", () => {
     expect(dates.get("55555555-5555-4555-8555-555555555555")).toBe(0);
   });
 
+  test("a message file's date counts too: the newest of the two files, so a hook writing either asks the host at once", () => {
+    const dir = folder();
+    const pane = "44444444-4444-4444-8444-444444444444";
+    mkdirSync(join(dir, pane));
+    writeFileSync(join(dir, pane, ".varnick-turn"), "working");
+    utimesSync(join(dir, pane, ".varnick-turn"), 1000, 2000);
+    writeFileSync(join(dir, pane, ".varnick-message"), "{}");
+    utimesSync(join(dir, pane, ".varnick-message"), 1000, 3000);
+    expect(readTurnDates(dir, [pane]).get(pane)).toBe(3_000_000);
+    // A pane with a message and no turn file yet is dated by the message.
+    const bare = "55555555-5555-4555-8555-555555555555";
+    mkdirSync(join(dir, bare));
+    writeFileSync(join(dir, bare, ".varnick-message"), "{}");
+    utimesSync(join(dir, bare, ".varnick-message"), 1000, 4000);
+    expect(readTurnDates(dir, [bare]).get(bare)).toBe(4_000_000);
+  });
+
+  test("the file names and the marker's name are Swift's", () => {
+    const swiftFolder = "../Packages/VarnickPeer/Sources/VarnickPeer/";
+    const paneFolder = readFileSync(new URL(`${swiftFolder}PaneMessage.swift`, import.meta.url), "utf8");
+    expect(paneFolder).toContain(`static let messageFileName = "${messageFileName}"`);
+    const command = readFileSync(new URL(`${swiftFolder}ClaudeCommand.swift`, import.meta.url), "utf8");
+    expect(command).toContain(`static let presenceMarkerName = "${presenceMarkerName}"`);
+    expect(command).toContain('static let presenceVariable = "CLAUDE_CLIENT_PRESENCE_FILE"');
+  });
+
   test("a new pane folder is seen once, the first look only learning what is there", () => {
     const dir = folder();
     mkdirSync(join(dir, "a"));
@@ -120,8 +146,8 @@ describe("the files it reads", () => {
   });
 });
 
-async function pushIn(options: { headless?: boolean; devices?: Device[]; statuses?: number[] } = {}) {
-  const dir = folder();
+async function pushIn(options: { headless?: boolean; devices?: Device[]; statuses?: number[] } = {}, existing?: string) {
+  const dir = existing ?? folder();
   const logs: string[] = [];
   const calls: unknown[] = [];
   const statuses = [...(options.statuses ?? [])];
@@ -174,14 +200,89 @@ describe("setting push up", () => {
   });
 });
 
+describe("Claude Code's presence marker", () => {
+  const world = { now: () => 1000, log: () => {} };
+
+  test("is made and removed as asked, doing nothing when it is already so", () => {
+    const dir = folder();
+    const set = presenceMarker(dir);
+    const marker = join(dir, presenceMarkerName);
+    set(false);
+    expect(existsSync(marker)).toBe(false);
+    set(true);
+    expect(existsSync(marker)).toBe(true);
+    expect(mode(marker)).toBe(0o600);
+    set(true);
+    expect(existsSync(marker)).toBe(true);
+    set(false);
+    expect(existsSync(marker)).toBe(false);
+    // A marker taken away by hand while subscriptions stand comes back at the next call.
+    set(true);
+    rmSync(marker);
+    set(true);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  test("a folder that can't be written is no error", () => {
+    expect(() => presenceMarker(join(root, "missing", "folder"))(true)).not.toThrow();
+  });
+
+  test("a host with a subscription has it from the subscribing, and loses it with the last one", async () => {
+    const { push, dir } = await pushIn();
+    const marker = join(dir, presenceMarkerName);
+    expect(existsSync(marker)).toBe(false);
+    await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription() }, world);
+    expect(existsSync(marker)).toBe(true);
+    await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription(2) }, world);
+    await pushRoute(push, device, "/api/push/unsubscribe", { endpoint: subscription().endpoint }, world);
+    expect(existsSync(marker)).toBe(true);
+    await pushRoute(push, device, "/api/push/unsubscribe", { endpoint: subscription(2).endpoint }, world);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("a start finds a marker a killed server left and takes it away when there is no subscription; stopping takes it away", async () => {
+    const dir = folder();
+    writeFileSync(join(dir, presenceMarkerName), "");
+    const { push } = await pushIn(undefined, dir);
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(false);
+    await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription() }, world);
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(true);
+    // The next start keeps it, because the subscription is in the file.
+    const again = await pushIn(undefined, dir);
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(true);
+    again.push.stop();
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(false);
+  });
+
+  test("a host that sends no push has none", async () => {
+    const dir = folder();
+    writeFileSync(join(dir, presenceMarkerName), "");
+    const push = await setupPush({
+      push: { folder: dir, panes: "/p", presence: "/q" }, headless: false, ownID: "x",
+      hostTabs: new Shared(async () => ({ ok: false as const, error: "x" }), () => 0, 0), tabsStamp: () => "", devices: () => [], log: () => {},
+    });
+    expect(push).toBeNull();
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(false);
+  });
+
+  test("the watcher's tick keeps it: a subscription removed outside the routes (a device unlisted, a service that says gone) takes it away", async () => {
+    const { push, dir } = await pushIn();
+    await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription() }, world);
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(true);
+    push.store.drop(push.store.all()[0]);
+    await push.watcher.tick();
+    expect(existsSync(join(dir, presenceMarkerName))).toBe(false);
+  });
+});
+
 describe("the routes", () => {
   const world = { now: () => 1000, log: () => {} };
 
   test("subscribe, ask the state, unsubscribe", async () => {
     const { push } = await pushIn();
     const subscribed = await pushRoute(push, device, "/api/push/subscribe", { subscription: subscription(), switches: { done: false } }, world);
-    expect(subscribed).toEqual({ status: 200, body: { ok: true, switches: { needsMe: true, done: false, errors: true } } });
-    expect((await pushRoute(push, device, "/api/push/state", { endpoint: subscription().endpoint }, world)).body).toEqual({ ok: true, subscribed: true, switches: { needsMe: true, done: false, errors: true } });
+    expect(subscribed).toEqual({ status: 200, body: { ok: true, switches: { needsMe: true, done: false, errors: true, messages: true } } });
+    expect((await pushRoute(push, device, "/api/push/state", { endpoint: subscription().endpoint }, world)).body).toEqual({ ok: true, subscribed: true, switches: { needsMe: true, done: false, errors: true, messages: true } });
     expect((await pushRoute(push, device, "/api/push/state", { endpoint: subscription(2).endpoint }, world)).body).toEqual({ ok: true, subscribed: false });
     expect((await pushRoute(push, device, "/api/push/unsubscribe", { endpoint: subscription().endpoint }, world)).body).toEqual({ ok: true });
     expect((await pushRoute(push, device, "/api/push/state", { endpoint: subscription().endpoint }, world)).body).toEqual({ ok: true, subscribed: false });
