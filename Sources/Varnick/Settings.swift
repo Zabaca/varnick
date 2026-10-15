@@ -240,6 +240,12 @@ final class Settings: ObservableObject {
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
     /// What the tab strip does with tabs that don't fit (Settings › Claude); absent reads as Shrink.
     @Published var tabOverflow: TabOverflow { didSet { defaults.set(tabOverflow.rawValue, forKey: "tabOverflow") } }
+    /// Settings › Claude, "Notify me when a session…" (`SessionNotifier`): a dialog, question, plan or MCP request waits on me; a turn is done;
+    /// a turn stops on an error. Each is on unless switched off.
+    @Published var notifyNeedsMe: Bool { didSet { defaults.set(notifyNeedsMe, forKey: "notifyNeedsMe") } }
+    @Published var notifyDone: Bool { didSet { defaults.set(notifyDone, forKey: "notifyDone") } }
+    @Published var notifyError: Bool { didSet { defaults.set(notifyError, forKey: "notifyError") } }
+    var noticeSwitches: NoticeSwitches { NoticeSwitches(needsMe: notifyNeedsMe, done: notifyDone, error: notifyError) }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
     /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0033).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
@@ -411,6 +417,9 @@ final class Settings: ObservableObject {
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
+        notifyNeedsMe = defaults.object(forKey: "notifyNeedsMe") as? Bool ?? true
+        notifyDone = defaults.object(forKey: "notifyDone") as? Bool ?? true
+        notifyError = defaults.object(forKey: "notifyError") as? Bool ?? true
         voice = defaults.string(forKey: "voice") ?? ""
         elevenLabsVoice = defaults.string(forKey: "elevenLabsVoice") ?? ""
         elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
@@ -730,6 +739,19 @@ struct SettingsView: View {
                                     ForEach(TabOverflow.allCases) { Text($0.title).tag($0) }
                                 }
                                 .labelsHidden().pickerStyle(.segmented).frame(width: 260)
+                            }
+                            SectionLabel(text: "Notify me when a session…")
+                            SettingRow(title: "Needs me",
+                                       detail: "Claude waits on a permission dialog, a question, a plan to approve or an MCP server's request. The menu bar icon gets an orange dot, a sound plays and the menu lists the session; choosing it opens the pane. Never for the pane you are looking at, or for a session another Mac controls.") {
+                                Toggle("", isOn: $settings.notifyNeedsMe).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Is done",
+                                       detail: "A turn ended and no background agents, teammates, workflows or shells are still running. A softer sound; stopping Claude with esc gives none.") {
+                                Toggle("", isOn: $settings.notifyDone).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Stops on an error",
+                                       detail: "A turn ended on an API error such as a rate limit. The notice says which kind when this Mac can tell.") {
+                                Toggle("", isOn: $settings.notifyError).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)

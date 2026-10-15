@@ -225,7 +225,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private var conversationStamp: Date?
     /// The pane's turn and when it began, read by `checkTurn`, or for a session on a peer taken from the
     /// host's `status` by `follow`; nil without a file.
-    private(set) var turn: PaneTurn?
+    private(set) var turn: PaneTurn? {
+        didSet {
+            // Only a change of word counts: a peer's date moves with every reply, and background counts move within a word.
+            if let turn, turn.turn != oldValue?.turn { onTurnWordChange(oldValue, turn) }
+        }
+    }
+    /// Called when the turn's word changes, with the turn before (nil for the first one read: a launch, a restored pane, or a host that answers
+    /// again), from the pane's own file read or its host's reply (`SessionNotifier`).
+    var onTurnWordChange: (_ old: PaneTurn?, _ new: PaneTurn) -> Void = { _, _ in }
     /// What the turn file held when `checkTurn` last read it, before the transcript's correction, and the
     /// transcript's date then.
     private var recordedTurn: PaneTurn?

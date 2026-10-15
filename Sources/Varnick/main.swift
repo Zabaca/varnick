@@ -58,8 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private static let listenHotKeyID: UInt32 = 3
     var statusItem: NSStatusItem!
     private var listenItem: NSMenuItem!
+    private var showItem: NSMenuItem!
     private var pinItem: NSMenuItem!
     private var restartItem: NSMenuItem!
+    /// The menu bar icon's dot while a notice stands (`SessionNotifier`), and the menu's items for them, found by this tag.
+    private let noticeDot = NoticeDot()
+    private static let noticeItemTag = 9001
     var sizeSub: AnyCancellable?
     var settingsSubs: [AnyCancellable] = []
     let embedder = Embedder()
@@ -224,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.applicationIconImage = FoldMark.appIcon()
         let menu = NSMenu()
         menu.autoenablesItems = false   // the listening item is disabled below macOS 26
-        menu.addItem(withTitle: "Show Varnick", action: #selector(showFromMenu), keyEquivalent: "")
+        showItem = menu.addItem(withTitle: "Show Varnick", action: #selector(showFromMenu), keyEquivalent: "")
         pinItem = menu.addItem(withTitle: "Pin Varnick", action: #selector(togglePinFromMenu), keyEquivalent: "")
         menu.addItem(.separator())
         listenItem = menu.addItem(withTitle: "Start Listening", action: #selector(toggleListening), keyEquivalent: "")
@@ -234,8 +238,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.delegate = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+        if let button = statusItem.button {
+            noticeDot.isHidden = true
+            noticeDot.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(noticeDot)
+            NSLayoutConstraint.activate([
+                noticeDot.widthAnchor.constraint(equalToConstant: NoticeDot.diameter),
+                noticeDot.heightAnchor.constraint(equalToConstant: NoticeDot.diameter),
+                noticeDot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -2),
+                noticeDot.topAnchor.constraint(equalTo: button.topAnchor, constant: 2),
+            ])
+        }
+        model.notifier.start(model: model)
 
         settingsSubs = [
+            model.notifier.$notices
+                .sink { [weak self] notices in self?.showNotices(notices) },
             // The global hotkeys follow their bindings, and are off while recording so the
             // current one can be pressed (and rebound) without hiding the panel.
             Settings.shared.$overrides.combineLatest(Settings.shared.$recording)
@@ -333,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let combo = settings.combo(.toggleLauncher) {
             // ⌃Space conflicts with "Select previous input source" if that macOS shortcut is on.
             hotKey = HotKey(id: Self.toggleHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { [weak self] in self?.toggle() }
-            statusItem?.menu?.items.first?.title = "Show Varnick (\(combo.label))"
+            showItem?.title = "Show Varnick (\(combo.label))"
         }
         let pinCombo = settings.combo(.pinLauncher)
         if let combo = pinCombo {
@@ -394,6 +412,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Hidden when the restart can't work from here (`BuildUpgrade.menuRestartAvailable`), checked as the menu opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
         restartItem.isHidden = !BuildUpgrade.menuRestartAvailable(database: model.store.path)
+        showNoticeItems(in: menu)
+    }
+
+    /// The icon's dot follows the standing notices.
+    private func showNotices(_ notices: [SessionNotifier.Notice]) {
+        noticeDot.urgent = notices.contains { $0.kind.isUrgent }
+        noticeDot.isHidden = notices.isEmpty
+        statusItem.button?.setAccessibilityValue(notices.isEmpty ? nil : "\(notices.count) sessions need a look")
+    }
+
+    /// The notices above the usual items, newest first, as the menu opens.
+    private func showNoticeItems(in menu: NSMenu) {
+        for item in menu.items.reversed() where item.tag == Self.noticeItemTag { menu.removeItem(item) }
+        let items = model.notifier.notices.compactMap { notice -> NSMenuItem? in
+            guard let title = model.notifier.menuTitle(of: notice) else { return nil }
+            let item = NSMenuItem(title: title, action: #selector(openNotice(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = Self.noticeItemTag
+            item.representedObject = notice.id
+            return item
+        }
+        guard !items.isEmpty else { return }
+        let separator = NSMenuItem.separator()
+        separator.tag = Self.noticeItemTag
+        for (index, item) in (items + [separator]).enumerated() { menu.insertItem(item, at: index) }
+    }
+
+    /// Shows the panel on the notice's pane, over the board or Settings if either is open.
+    @objc func openNotice(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? UUID, model.claudePane(id) != nil else { return }
+        if model.showingSettings { model.toggleSettings() }
+        model.showPane(id)
+        show()
+        model.notifier.clear(id)
     }
 
     /// Nothing restarts until the card is confirmed.
