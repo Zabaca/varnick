@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-  allows, awayAfterSeconds, decide, defaultSwitches, decideRoute, failureWord, macView, payloadOf, presenceOf, route, seenAfterMs, settleMs, staleAfterSeconds, turnWords,
-  type Controller, type Decision, type Presence, type TurnWord, type View,
+  allows, awayAfterSeconds, decide, defaultSwitches, decideRoute, failureWord, macView, payloadOf, presenceOf, route, seenAfterMs, doneSettleMs, settleOf, urgentSettleMs, staleAfterSeconds, turnWords,
+  type Controller, type Decision, type Notice, type Presence, type TurnWord, type View,
 } from "./pushrule";
 
 const raise = (notice: object): Decision => ({ action: "raise", notice } as Decision);
@@ -126,7 +126,7 @@ describe("presence", () => {
 });
 
 describe("where a notice goes (the routing table)", () => {
-  const base = { elapsedMs: settleMs, view: "none" as View, allowed: true, seen: false };
+  const base = { notice: { kind: "done" } as Notice, elapsedMs: doneSettleMs, view: "none" as View, allowed: true, seen: false };
   const mac = (detached = false): Controller => ({ kind: "mac", detached });
   const host: Controller = { kind: "host" };
   const device: Controller = { kind: "device" };
@@ -146,21 +146,21 @@ describe("where a notice goes (the routing table)", () => {
 
   test("a Mac that is away pushes after the settle, not before", () => {
     for (const controller of [host, mac()]) {
-      expect(route({ ...base, controller, presence: "away", elapsedMs: settleMs - 1 })).toBe("wait");
+      expect(route({ ...base, controller, presence: "away", elapsedMs: doneSettleMs - 1 })).toBe("wait");
       expect(route({ ...base, controller, presence: "away" })).toBe("push");
     }
   });
 
   test("a Mac that can't be told pushes after the settle: a stale or missing report", () => {
     for (const controller of [host, mac()]) {
-      expect(route({ ...base, controller, presence: "unknown", elapsedMs: settleMs - 1 })).toBe("wait");
+      expect(route({ ...base, controller, presence: "unknown", elapsedMs: doneSettleMs - 1 })).toBe("wait");
       expect(route({ ...base, controller, presence: "unknown" })).toBe("push");
     }
   });
 
   test("a peer Mac whose client is detached counts as can't be told, even if its last report says present", () => {
     expect(route({ ...base, controller: mac(true), presence: "present" })).toBe("push");
-    expect(route({ ...base, controller: mac(true), presence: "present", elapsedMs: settleMs - 1 })).toBe("wait");
+    expect(route({ ...base, controller: mac(true), presence: "present", elapsedMs: doneSettleMs - 1 })).toBe("wait");
   });
 
   test("a device in control pushes after the settle, whatever any presence says", () => {
@@ -171,21 +171,21 @@ describe("where a notice goes (the routing table)", () => {
   test("a device that has looked at the pane while the notice stood gets no push for it, in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
       for (const presence of ["present", "away", "unknown"] as Presence[]) {
-        expect(decideRoute({ controller, presence, elapsedMs: settleMs * 10, view: "seen", allowed: true, seen: false })).toEqual({ route: "drop", why: "open-pane" });
+        expect(decideRoute({ controller, presence, notice: base.notice, elapsedMs: doneSettleMs * 10, view: "seen", allowed: true, seen: false })).toEqual({ route: "drop", why: "open-pane" });
       }
     }
   });
 
   test("a device looking at the pane for a moment waits: it keeps looking and has seen it, or leaves and is pushed", () => {
     for (const controller of [host, mac(), mac(true), device]) {
-      expect(decideRoute({ controller, presence: "away", elapsedMs: settleMs * 10, view: "viewing", allowed: true, seen: false })).toEqual({ route: "wait", why: "viewing" });
-      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, view: "none", allowed: true, seen: false })).toBe("push");
+      expect(decideRoute({ controller, presence: "away", notice: base.notice, elapsedMs: doneSettleMs * 10, view: "viewing", allowed: true, seen: false })).toEqual({ route: "wait", why: "viewing" });
+      expect(route({ controller, presence: "away", notice: base.notice, elapsedMs: doneSettleMs * 10, view: "none", allowed: true, seen: false })).toBe("push");
     }
     expect(seenAfterMs).toBe(3000);
   });
 
   test("each decision says why", () => {
-    const input = { controller: mac(), presence: "present" as Presence, elapsedMs: settleMs, view: "none" as const, allowed: true, seen: false };
+    const input = { controller: mac(), presence: "present" as Presence, notice: base.notice, elapsedMs: doneSettleMs, view: "none" as const, allowed: true, seen: false };
     expect(decideRoute({ ...input, allowed: false }).why).toBe("switch");
     expect(decideRoute({ ...input, seen: true }).why).toBe("seen-on-mac");
     expect(decideRoute({ ...input, elapsedMs: 0 }).why).toBe("settle");
@@ -198,20 +198,40 @@ describe("where a notice goes (the routing table)", () => {
 
   test("a switched-off category is dropped in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
-      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, view: "none", allowed: false, seen: false })).toBe("drop");
+      expect(route({ controller, presence: "away", notice: base.notice, elapsedMs: doneSettleMs * 10, view: "none", allowed: false, seen: false })).toBe("drop");
     }
   });
 
   test("a notice the controlling Mac has shown the user is dropped in every row, however long it has stood", () => {
     for (const controller of [host, mac(), mac(true)]) {
       for (const presence of ["present", "away", "unknown"] as Presence[]) {
-        expect(route({ controller, presence, elapsedMs: settleMs * 10, view: "none", allowed: true, seen: true })).toBe("drop");
+        expect(route({ controller, presence, notice: base.notice, elapsedMs: doneSettleMs * 10, view: "none", allowed: true, seen: true })).toBe("drop");
       }
     }
   });
 
-  test("the settle is 10 seconds", () => {
-    expect(settleMs).toBe(10_000);
+  test("the settle is 10 seconds for a Done, 2 for Needs you and for an error", () => {
+    expect(doneSettleMs).toBe(10_000);
+    expect(urgentSettleMs).toBe(2_000);
+    expect(settleOf({ kind: "done" })).toBe(10_000);
+    for (const notice of [{ kind: "needs", turn: "permission" }, { kind: "needs", turn: "question" }, { kind: "needs", turn: "plan" }, { kind: "needs", turn: "input" }, { kind: "failed", failure: null }] as Notice[]) {
+      expect(settleOf(notice)).toBe(2_000);
+    }
+  });
+
+  test("a Needs-you notice or an error is routed after 2 s, a Done not before 10", () => {
+    const needs: Notice = { kind: "needs", turn: "question" };
+    const failed: Notice = { kind: "failed", failure: "rate limit" };
+    for (const controller of [host, mac(), mac(true), device]) {
+      const input = { ...base, controller, presence: "away" as Presence };
+      for (const notice of [needs, failed]) {
+        expect(decideRoute({ ...input, notice, elapsedMs: urgentSettleMs - 1 })).toEqual({ route: "wait", why: "settle" });
+        expect(route({ ...input, notice, elapsedMs: urgentSettleMs })).toBe("push");
+      }
+      expect(decideRoute({ ...input, notice: base.notice, elapsedMs: urgentSettleMs })).toEqual({ route: "wait", why: "settle" });
+      expect(decideRoute({ ...input, notice: base.notice, elapsedMs: doneSettleMs - 1 })).toEqual({ route: "wait", why: "settle" });
+      expect(route({ ...input, notice: base.notice, elapsedMs: doneSettleMs })).toBe("push");
+    }
   });
 });
 

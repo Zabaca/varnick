@@ -175,7 +175,7 @@ The page can also notify the phone. At the foot of the home page, Notifications 
 that tap; on an iPhone it needs the page added to the Home Screen first). Each host is its own app and its own switch. With it on, the phone
 gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, or stops on an API error
 (with its kind), each with a switch of its own (Needs me, Done, Errors), Send a test and Turn off. It comes when you are away from the Mac that
-controls the session (CONTEXT.md, Presence, says how Varnick tells), after a 10-second wait to be sure; at the Mac you get the Mac's own
+controls the session (CONTEXT.md, Presence, says how Varnick tells), after a short wait to be sure (10 seconds for Done, 2 for a session that needs you or stopped on an error); at the Mac you get the Mac's own
 notice and the phone stays quiet, nor does it buzz for a notice you have already seen at the Mac, and the phone has none for a session it has open. A session you
 drive from the phone, or that runs on a headless host, always notifies it. With the phone on the tailnet the notification names the session;
 off it, only the host. Tapping it opens that session. As on the Mac (Notices, above), a turn that leaves background agents or shells running gives

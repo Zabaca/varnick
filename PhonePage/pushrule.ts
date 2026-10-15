@@ -58,8 +58,20 @@ export function decide(input: { old: TurnWord | null; next: TurnWord; failure?: 
 // ---------------------------------------------------------------------------------------------------------------
 // Where a notice goes
 
-/** A notice still standing this long after it was raised is pushed. It absorbs a turn that flickers and the up to 5 s a presence report takes. */
-export const settleMs = 10_000;
+/**
+ * A Done still standing this long after it was raised is pushed. It absorbs a turn that flickers straight back to work, and the up to 5 s a
+ * presence report takes.
+ */
+export const doneSettleMs = 10_000;
+/**
+ * A Needs-you notice or an error still standing this long is pushed. Short, because the user is waiting on it and a hand test showed 10 s long
+ * enough to open the app and look for the 3 s that count as seen before the push left; neither flickers back the way a Done does (the Mac's
+ * `SessionNotifier` raises a Needs-you at once, and settles only Done and errors, for about 1 s).
+ */
+export const urgentSettleMs = 2_000;
+
+/** How long a notice stands before it may be pushed. */
+export const settleOf = (notice: Notice): number => (notice.kind === "done" ? doneSettleMs : urgentSettleMs);
 /** A Mac with no input for this long is away. */
 export const awayAfterSeconds = 120;
 /** A presence report older than this is "can't be told": the Mac is asleep, Varnick isn't running, the link is down or it runs an older build. */
@@ -108,6 +120,8 @@ export type Route = "push" | "wait" | "drop";
  * | a Mac that can't be told (no report, or its client detached) | after the settle |
  * | a device | after the settle |
  *
+ * The settle is `settleOf` the notice: 10 s for a Done, 2 s for Needs you and for an error.
+ *
  * `drop` is for good: the category is switched off, this device has looked at the pane while the notice stood (`view`), or the controlling Mac
  * has shown the user the notice (`seen`, from `macView`). `wait` is for now, and includes a device that has the pane open and visible but not yet
  * long enough to have seen the notice: it either keeps looking (drop) or leaves (the push goes).
@@ -124,6 +138,8 @@ export type View = "none" | "viewing" | "seen";
 export interface RouteInput {
   controller: Controller;
   presence: Presence;
+  /** What stands, which sets the settle (`settleOf`). */
+  notice: Notice;
   elapsedMs: number;
   view: View;
   allowed: boolean;
@@ -138,7 +154,7 @@ export function decideRoute(input: RouteInput): { route: Route; why: Why } {
   if (input.view === "seen") return { route: "drop", why: "open-pane" };
   if (input.seen) return { route: "drop", why: "seen-on-mac" };
   if (input.view === "viewing") return { route: "wait", why: "viewing" };
-  if (input.elapsedMs < settleMs) return { route: "wait", why: "settle" };
+  if (input.elapsedMs < settleOf(input.notice)) return { route: "wait", why: "settle" };
   const { controller } = input;
   if (controller.kind === "device") return { route: "push", why: "device" };
   if (controller.kind === "mac" && controller.detached) return { route: "push", why: "detached" };

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { busyAskMs, idleAskMs, OpenPanes, perDeviceHourLimit, PushWatcher, Shared, tickMs, type PushWorld } from "./pushwatch";
-import { defaultSwitches, seenAfterMs, settleMs, type PresenceReport, type PushPayload } from "./pushrule";
+import { defaultSwitches, seenAfterMs, doneSettleMs, urgentSettleMs, type PresenceReport, type PushPayload } from "./pushrule";
 import { SubscriptionStore, type StoreFile, type Subscription } from "./pushstore";
 import { b64u } from "./webpush";
 import type { SendResult } from "./pushsend";
@@ -114,7 +114,7 @@ describe("the starting point", () => {
       const r = rig();
       r.state.panes[0].turn = word;
       r.state.panes[0].control = phone;
-      await r.advance(settleMs * 3);
+      await r.advance(doneSettleMs * 3);
       expect(r.state.sends).toEqual([]);
       expect(r.watcher.noticeFor(pane)).toBeUndefined();
     }
@@ -133,7 +133,7 @@ describe("a device in control", () => {
     r.state.panes[0].control = phone;
     await finishTurn(r);
     expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
-    await r.advance(settleMs - tickMs * 2);
+    await r.advance(doneSettleMs - tickMs * 2);
     expect(r.state.sends).toEqual([]);
     await r.advance(tickMs * 4);
     expect(r.state.sends).toEqual([{ device: phone, payload: { v: 1, kind: "done", tab, pane } }]);
@@ -145,21 +145,81 @@ describe("a device in control", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r, "question");
-    await r.advance(settleMs + tickMs);
+    await r.advance(doneSettleMs + tickMs);
     expect(r.state.sends.at(-1)!.payload).toEqual({ v: 1, kind: "question", tab, pane });
 
     const e = rig();
     e.state.panes[0].control = phone;
     await finishTurn(e, "failed", { failure: "rate_limit" });
-    await e.advance(settleMs + tickMs);
+    await e.advance(doneSettleMs + tickMs);
     expect(e.state.sends.at(-1)!.payload).toEqual({ v: 1, kind: "failed", tab, pane, failure: "rate limit" });
+  });
+
+  test("each kind has its own settle: Needs you and an error after about 2 s, a Done after about 10", async () => {
+    for (const [word, extra, kind, settle] of [
+      ["question", {}, "question", urgentSettleMs],
+      ["permission", {}, "permission", urgentSettleMs],
+      ["plan", {}, "plan", urgentSettleMs],
+      ["input", {}, "input", urgentSettleMs],
+      ["failed", { failure: "rate_limit" }, "failed", urgentSettleMs],
+      ["waiting", {}, "done", doneSettleMs],
+    ] as const) {
+      const r = rig();
+      r.state.panes[0].control = phone;
+      await finishTurn(r, word, extra);
+      // Not before the settle, whatever the kind.
+      await r.advance(settle - tickMs * 2);
+      expect(r.state.sends).toEqual([]);
+      // Pushed once soon after it.
+      await r.advance(tickMs * 4);
+      expect(r.state.sends.map((s) => s.payload.kind)).toEqual([kind]);
+      await r.advance(doneSettleMs * 3);
+      expect(r.state.sends).toHaveLength(1);
+    }
+  });
+
+  test("a question is not held to the Done's 10 s, and a Done is not pushed at the question's 2 s", async () => {
+    const q = rig();
+    q.state.panes[0].control = phone;
+    await finishTurn(q, "question");
+    await q.advance(urgentSettleMs + tickMs * 2);
+    expect(q.state.sends).toHaveLength(1);
+
+    const d = rig();
+    d.state.panes[0].control = phone;
+    await finishTurn(d);
+    await d.advance(urgentSettleMs + tickMs * 2);
+    expect(d.state.sends).toEqual([]);
+  });
+
+  test("the second read still holds a Needs-you push back: a dialog answered during the read isn't pushed", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r, "question");
+    // The user answers, but no turn file changed (its date is the same), so only the read after the settle can find out.
+    const asks = r.state.asks;
+    r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
+    await r.advance(urgentSettleMs + tickMs * 4);
+    expect(r.state.asks).toBeGreaterThan(asks);
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+  });
+
+  test("a Needs-you push is read again after its 2 s settle", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r, "question");
+    const asks = r.state.asks;
+    await r.advance(urgentSettleMs + tickMs);
+    expect(r.state.asks).toBeGreaterThan(asks);
+    expect(r.state.sends).toHaveLength(1);
   });
 
   test("an error from a host that says no kind has none in the payload", async () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r, "failed");
-    await r.advance(settleMs + tickMs);
+    await r.advance(doneSettleMs + tickMs);
     expect(r.state.sends.at(-1)!.payload).toEqual({ v: 1, kind: "failed", tab, pane });
   });
 
@@ -167,10 +227,9 @@ describe("a device in control", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r, "permission");
-    await r.advance(tickMs * 2);
     r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
     r.state.dates.set(pane, 2);
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
     expect(r.watcher.noticeFor(pane)).toBeUndefined();
   });
@@ -179,7 +238,7 @@ describe("a device in control", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r, "waiting", { esc: true });
-    await r.advance(settleMs * 2);
+    await r.advance(doneSettleMs * 2);
     expect(r.state.sends).toEqual([]);
   });
 
@@ -190,7 +249,7 @@ describe("a device in control", () => {
     // The turn file said waiting, and the transcript now says work goes on.
     const asks = r.state.asks;
     r.state.panes[0] = { ...r.state.panes[0], turn: "background" };
-    await r.advance(settleMs * 2);
+    await r.advance(doneSettleMs * 2);
     expect(r.state.sends).toEqual([]);
     expect(r.state.asks).toBeGreaterThan(asks);
   });
@@ -200,7 +259,7 @@ describe("a device in control", () => {
     r.state.panes[0].control = phone;
     await finishTurn(r);
     r.state.panes[0] = { ...r.state.panes[0], turn: "failed", failure: "overloaded", keepBegan: true };
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends.map((s) => s.payload)).toEqual([{ v: 1, kind: "failed", tab, pane, failure: "overloaded" }]);
   });
 
@@ -209,7 +268,7 @@ describe("a device in control", () => {
     r.state.panes[0].control = phone;
     await finishTurn(r);
     const asks = r.state.asks;
-    await r.advance(settleMs + tickMs);
+    await r.advance(doneSettleMs + tickMs);
     expect(r.state.asks).toBeGreaterThan(asks);
   });
 });
@@ -256,13 +315,13 @@ describe("a Mac in control", () => {
   test("a host with no report, or a stale one, can't be told and pushes after the settle", async () => {
     const none = rig();
     await finishTurn(none);
-    await none.advance(settleMs + tickMs * 2);
+    await none.advance(doneSettleMs + tickMs * 2);
     expect(none.state.sends).toHaveLength(1);
 
     const stale = rig();
     stale.present(own, { at: Math.floor(stale.now() / 1000) - 60 });
     await finishTurn(stale);
-    await stale.advance(settleMs + tickMs * 2);
+    await stale.advance(doneSettleMs + tickMs * 2);
     expect(stale.state.sends).toHaveLength(1);
   });
 
@@ -309,7 +368,7 @@ describe("who gets it", () => {
     r.state.panes[0].control = phone;
     r.state.open.add(`${phone}:${pane}`);
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends.map((s) => s.device)).toEqual([tablet]);
   });
 
@@ -318,9 +377,9 @@ describe("who gets it", () => {
     r.state.panes[0].control = phone;
     r.state.open.add(`${phone}:${pane}`);
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     r.state.open.clear();
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
   });
 
@@ -331,13 +390,13 @@ describe("who gets it", () => {
       const r = rig({ subscribed: [{ device: phone, switches: { [off]: false } }] });
       r.state.panes[0].control = phone;
       await finishTurn(r, word, extra);
-      await r.advance(settleMs * 2);
+      await r.advance(doneSettleMs * 2);
       expect(r.state.sends).toEqual([]);
     }
     const r = rig({ subscribed: [{ device: phone, switches: { done: false } }] });
     r.state.panes[0].control = phone;
     await finishTurn(r, "permission");
-    await r.advance(settleMs * 2);
+    await r.advance(doneSettleMs * 2);
     expect(r.state.sends).toHaveLength(1);
   });
 
@@ -345,7 +404,7 @@ describe("who gets it", () => {
     const r = rig({ listed: [tablet] });
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs * 2);
+    await r.advance(doneSettleMs * 2);
     expect(r.state.sends).toEqual([]);
     expect(r.store.all()).toEqual([]);
   });
@@ -356,7 +415,7 @@ describe("who gets it", () => {
     await r.watcher.tick();
     r.state.panes = r.state.panes.map((p) => ({ ...p, turn: "permission" }));
     r.state.dates.set(pane, 1);
-    await r.advance(settleMs + tickMs * 3);
+    await r.advance(doneSettleMs + tickMs * 3);
     expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["permission", "permission"]);
     expect(new Set(r.state.sends.map((s) => (s.payload as { pane: string }).pane))).toEqual(new Set([pane, other]));
   });
@@ -444,7 +503,7 @@ describe("a notice the Mac has already shown the user", () => {
     r.state.panes[0].control = phone;
     report(r, own, [], [pane]);
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends).toHaveLength(1);
   });
 });
@@ -458,13 +517,13 @@ describe("a send is off the tick", () => {
     await r.watcher.tick();
     r.state.panes = [{ id: pane, turn: "permission", control: phone, clients: 1 }, { id: other, turn: "working", control: phone, clients: 1 }];
     r.state.dates.set(pane, 1);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends).toHaveLength(1);
     // The first is still in flight; a second pane's notice is raised and pushed meanwhile.
     const asks = r.state.asks;
     r.state.panes = [{ id: pane, turn: "permission", control: phone, clients: 1 }, { id: other, turn: "question", control: phone, clients: 1 }];
     r.state.dates.set(other, 1);
-    await r.advance(settleMs + tickMs * 3);
+    await r.advance(doneSettleMs + tickMs * 3);
     expect(r.state.asks).toBeGreaterThan(asks);
     expect(r.state.sends.map((s) => (s.payload as { pane: string }).pane)).toEqual([pane, other]);
     expect(r.state.logs.filter((line) => line.startsWith("push ") && line.endsWith("201"))).toEqual([]);
@@ -487,7 +546,7 @@ describe("a turn that is over before it is seen", () => {
     await r.advance(tickMs * 4);
     expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
     expect(r.state.logs.some((line) => line.startsWith("push watch: a turn ran between two looks"))).toBe(true);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
   });
 
@@ -555,7 +614,7 @@ describe("work that goes on in the background", () => {
     await r.watcher.tick();
     r.state.panes[0] = { ...r.state.panes[0], turn: "background" };
     r.state.dates.set(pane, 1);
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.watcher.noticeFor(pane)).toBeUndefined();
     expect(r.state.sends).toEqual([]);
     expect(r.state.logs.filter((line) => line.startsWith("push watch tick")).at(-1)).toBe("push watch tick panes=1 working=0 waiting=0 background=1 notices=0");
@@ -610,7 +669,7 @@ describe("what the watcher says about itself", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs * 2);
+    await r.advance(doneSettleMs * 2);
     const text = r.state.logs.join("\n");
     for (const secret of [pane, tab, own, phone, "fcm.googleapis"]) expect(text).not.toContain(secret);
   });
@@ -621,7 +680,7 @@ describe("how often the host is asked once everything is pushed", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends).toHaveLength(1);
     const asks = r.state.asks;
     await r.advance(idleAskMs - tickMs * 3);
@@ -636,7 +695,7 @@ describe("how often the host is asked once everything is pushed", () => {
     r.state.open.add(`${phone}:${pane}`);
     // Pushed to the tablet and dropped for the phone: every subscription is handled.
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     const settled = r.state.asks;
     await r.advance(idleAskMs - tickMs * 3);
     expect(r.state.asks).toBe(settled);
@@ -662,7 +721,7 @@ describe("an error that follows its waiting is the same turn however slow the as
     await finishTurn(r);
     r.state.latency = 1900;
     r.state.panes[0] = { ...r.state.panes[0], turn: "failed", failure: "rate_limit", keepBegan: true };
-    await r.advance(settleMs + tickMs * 4);
+    await r.advance(doneSettleMs + tickMs * 4);
     expect(r.state.sends.map((s) => s.payload)).toEqual([{ v: 1, kind: "failed", tab, pane, failure: "rate limit" }]);
   });
 });
@@ -673,14 +732,14 @@ describe("what the push service says", () => {
     gone.state.panes[0].control = phone;
     gone.state.result = { outcome: "gone", status: 410 };
     await finishTurn(gone);
-    await gone.advance(settleMs + tickMs * 2);
+    await gone.advance(doneSettleMs + tickMs * 2);
     expect(gone.store.all()).toEqual([]);
 
     const failed = rig();
     failed.state.panes[0].control = phone;
     failed.state.result = { outcome: "failed", status: 403 };
     await finishTurn(failed);
-    await failed.advance(settleMs * 6);
+    await failed.advance(doneSettleMs * 6);
     expect(failed.state.sends).toHaveLength(1);
     expect(failed.store.all()[0].lastFailure).toBeDefined();
   });
@@ -689,7 +748,7 @@ describe("what the push service says", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.logs.filter((line) => line.endsWith("sent 201"))).toEqual(["push Phone done sent 201"]);
   });
 
@@ -701,7 +760,7 @@ describe("what the push service says", () => {
     for (let i = 0; i < perDeviceHourLimit + 5; i += 1) {
       r.state.panes[0] = { ...r.state.panes[0], turn: "permission" };
       r.state.dates.set(pane, 2 * i + 10);
-      await r.advance(settleMs + tickMs * 3);
+      await r.advance(doneSettleMs + tickMs * 3);
       r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
       r.state.dates.set(pane, 2 * i + 11);
       await r.advance(tickMs);
@@ -788,7 +847,7 @@ describe("when the host is asked", () => {
     await r.advance(tickMs * 3);
     r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
     r.store.upsert(phone, { endpoint: "https://fcm.googleapis.com/fcm/send/new", p256dh: point, auth, switches: null }, r.now());
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
   });
 });
@@ -841,7 +900,7 @@ describe("a notice the phone was and wasn't looking at", () => {
     await r.advance(tickMs);
     // Under a moment later the page hides (the terminal says so); its socket stays up for another minute.
     r.state.open.delete(`${phone}:${pane}`);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
   });
 
@@ -854,7 +913,7 @@ describe("a notice the phone was and wasn't looking at", () => {
     r.state.dates.set(pane, 1);
     await r.advance(seenAfterMs + tickMs);
     r.state.open.delete(`${phone}:${pane}`);
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
   });
 
@@ -866,7 +925,7 @@ describe("a notice the phone was and wasn't looking at", () => {
     r.state.open.add(`${phone}:${pane}`);
     await r.advance(seenAfterMs + tickMs);
     r.state.open.delete(`${phone}:${pane}`);
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
   });
 
@@ -880,7 +939,7 @@ describe("a notice the phone was and wasn't looking at", () => {
       r.state.open.delete(`${phone}:${pane}`);
       await r.advance(tickMs);
     }
-    await r.advance(settleMs);
+    await r.advance(doneSettleMs);
     expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
   });
 
@@ -891,12 +950,12 @@ describe("a notice the phone was and wasn't looking at", () => {
     await r.watcher.tick();
     r.state.panes[0] = { ...r.state.panes[0], turn: "permission" };
     r.state.dates.set(pane, 1);
-    await r.advance(settleMs * 3);
+    await r.advance(doneSettleMs * 3);
     expect(r.state.sends).toEqual([]);
     r.state.open.delete(`${phone}:${pane}`);
-    await r.advance(settleMs);
+    await r.advance(doneSettleMs);
     r.state.open.add(`${phone}:${pane}`);
-    await r.advance(settleMs);
+    await r.advance(doneSettleMs);
     expect(r.state.sends).toEqual([]);
   });
 
@@ -907,7 +966,7 @@ describe("a notice the phone was and wasn't looking at", () => {
     await r.watcher.tick();
     r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
     r.state.dates.set(pane, 1);
-    await r.advance(settleMs + tickMs * 3);
+    await r.advance(doneSettleMs + tickMs * 3);
     expect(r.state.sends.map((s) => s.device)).toEqual([phone]);
   });
 });
@@ -919,7 +978,7 @@ describe("what the log says of each decision", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     expect(r.state.logs.filter((line) => /^push (notice|decide|[A-Z])/.test(line))).toEqual([
       "push notice done raised",
       "push decide done Phone -> waiting(settle) controller=device",
@@ -948,7 +1007,7 @@ describe("what the log says of each decision", () => {
   test("a Mac that can't be told, and a peer whose client is detached", async () => {
     const none = rig();
     await finishTurn(none);
-    await none.advance(settleMs + tickMs * 2);
+    await none.advance(doneSettleMs + tickMs * 2);
     expect(decisions(none)).toContain("push decide done Phone -> pushing controller=host presence=unknown");
 
     const detached = rig();
@@ -967,7 +1026,7 @@ describe("what the log says of each decision", () => {
     await open.watcher.tick();
     open.state.panes[0] = { ...open.state.panes[0], turn: "waiting" };
     open.state.dates.set(pane, 1);
-    await open.advance(settleMs);
+    await open.advance(doneSettleMs);
     expect(decisions(open)).toEqual([
       "push notice done raised",
       "push decide done Phone -> waiting(viewing) controller=device",
@@ -996,7 +1055,7 @@ describe("what the log says of each decision", () => {
     const r = rig();
     r.state.panes[0].control = phone;
     await finishTurn(r);
-    await r.advance(settleMs + tickMs * 2);
+    await r.advance(doneSettleMs + tickMs * 2);
     const text = r.state.logs.join("\n");
     for (const secret of [pane, tab, own, phone, "fcm.googleapis"]) expect(text).not.toContain(secret);
   });

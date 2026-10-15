@@ -5,7 +5,7 @@
 import { objects } from "./json";
 import type { RelayResult } from "./home";
 import {
-  allows, decide, decideRoute, failureWord, isTurnWord, macView, payloadOf, presenceOf, seenAfterMs, settleMs, type Controller, type Notice, type Presence,
+  allows, decide, decideRoute, failureWord, isTurnWord, macView, payloadOf, presenceOf, seenAfterMs, settleOf, type Controller, type Notice, type Presence,
   type PresenceReport, type PushPayload, type Route, type TurnWord, type View, type Why,
 } from "./pushrule";
 import type { SendOptions, SendResult } from "./pushsend";
@@ -293,7 +293,7 @@ export class PushWatcher {
     for (const subscription of this.store.all()) {
       if (standing.pushed.has(subscription.endpoint) || standing.handled.has(subscription.endpoint)) continue;
       const decision = decideRoute({
-        controller, presence, elapsedMs: now - standing.raisedAt, seen: standing.seen,
+        controller, presence, notice: standing.notice, elapsedMs: now - standing.raisedAt, seen: standing.seen,
         view: this.viewOf(standing, subscription.device, id, now), allowed: allows(subscription.switches, standing.notice),
       });
       this.logDecision(standing, subscription, decision, controller, presence);
@@ -302,8 +302,8 @@ export class PushWatcher {
     }
     if (due.length === 0) return;
     // At most one push per pane per settle.
-    if (now - (this.lastPush.get(id) ?? -Infinity) < settleMs) return;
-    // The read after the settle: a Done that background work or an error was about to replace, or a dialog answered since, isn't pushed.
+    if (now - (this.lastPush.get(id) ?? -Infinity) < settleOf(standing.notice)) return;
+    // The read after the settle, for every kind: a Done that background work or an error was about to replace, or a dialog answered since, isn't pushed.
     if (!standing.confirmed) {
       standing.confirmed = true;
       await this.refresh();
