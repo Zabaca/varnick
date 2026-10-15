@@ -501,7 +501,7 @@ final class LauncherModel: ObservableObject {
     /// Agents depend on the folder the session starts in, so a peer's are kept by Mac and folder.
     private func agentsKey(for peer: Peer) -> String { peer.id + "|" + (claudeProject?.path ?? "") }
 
-    /// `#name …` starts the session in that repo instead of the default folder.
+    /// `#name …` starts the session in that repo instead of Home.
     var claudeProject: Project? {
         for word in leadingWords.words where word.first == "#" {
             if let project = activeProjects.first(where: { matches($0, word) }) { return project }
@@ -518,7 +518,9 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Where the session would start.
-    var claudeFolder: String { claudeProject?.path ?? Self.claudeDirectory }
+    var claudeFolder: String { claudeProject?.path ?? HomeFolder.made() }
+    /// The same for code that only reads it, which must not make Home.
+    private var claudeFolderForDisplay: String { claudeProject?.path ?? HomeFolder.path }
 
     /// Macs, projects or agents for the `^` / `#` / `@` word being typed (the last leading word, with
     /// nothing after it yet): names starting with it first, then names containing it.
@@ -967,7 +969,7 @@ final class LauncherModel: ObservableObject {
 
     /// Agents of the folder the session would start in, read again when that changes.
     private func loadAgents() {
-        let folder = claudeFolder
+        let folder = claudeFolderForDisplay
         guard folder != agentsFolder else { return }
         agentsFolder = folder
         agents = Agent.available(in: folder)
@@ -1203,7 +1205,7 @@ final class LauncherModel: ObservableObject {
             return tab.focus(pane)
         }
         claudeError = nil
-        var record = Self.newRecord(prompt: "", directory: Self.claudeDirectory)
+        var record = Self.newRecord(prompt: "", directory: HomeFolder.made())
         record.url = ""
         record.task = true
         addTab(PaneNode(session: makeSession(record, resuming: false, query: "")))
@@ -1962,7 +1964,7 @@ final class LauncherModel: ObservableObject {
     func newTerminalTab() {
         claudeError = nil
         let directory = showsTerminal ? activeSession?.record.directory : nil
-        var record = Self.newRecord(prompt: "", directory: directory ?? Self.claudeDirectory)
+        var record = Self.newRecord(prompt: "", directory: directory ?? HomeFolder.made())
         record.shell = true
         addTab(PaneNode(session: makeSession(record, resuming: false, query: "")))
     }
@@ -3035,22 +3037,6 @@ final class LauncherModel: ObservableObject {
         tab.focus(tab.focused)
     }
 
-    /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else `Home` in Varnick's support folder (never the support folder
-    /// itself, which holds sessions, automations and panes). Home is made on first use, so every reader finds a folder that exists.
-    static var claudeDirectory: String { claudeDirectory(creatingHome: true) }
-
-    /// The same answer for a label: it never makes Home, so drawing Settings leaves the disk alone.
-    static var claudeDirectoryForDisplay: String { claudeDirectory(creatingHome: false) }
-
-    private static func claudeDirectory(creatingHome: Bool) -> String {
-        let chosen = Settings.shared.claudeDirectory
-        if !chosen.isEmpty { return chosen }
-        if let folder = ProcessInfo.processInfo.environment["VARNICK_CLAUDE_DIR"] { return folder }
-        let home = SupportFolder.url.appendingPathComponent("Home", isDirectory: true)
-        if creatingHome { try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
-        return home.path
-    }
-
     /// ⌘,: settings in place of the current view; again (or esc) goes back.
     func toggleSettings() {
         pendingSplit = nil
@@ -3348,7 +3334,7 @@ final class LauncherModel: ObservableObject {
             origin = tab.sessions.first(where: \.runsInZmx)?.record.origin
             folder = folder ?? beside.record.directory
         }
-        let target = folder ?? Self.claudeDirectory
+        let target = folder ?? HomeFolder.made()
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(here)") }
         if start.isWebOrApp, let split { return hostSplitPage(start, id: id, folder: target, in: split, origin: origin, here: here) }
         var record = SessionRecord(id: id, prompt: start.isTerminal ? "" : start.prompt, title: "", directory: target, startedAt: Date(), lastUsed: Date())
@@ -3712,9 +3698,9 @@ final class LauncherModel: ObservableObject {
         return reply
     }
 
-    /// A peer's `apps`: the custom apps this Mac can run from `folder` (the default folder when it names none), each with the key its own picker gives it.
+    /// A peer's `apps`: the custom apps this Mac can run from `folder` (Home when it names none), each with the key its own picker gives it.
     func hostApps(folder: String?) async -> PeerReply {
-        let folder = folder ?? Self.claudeDirectory
+        let folder = folder ?? HomeFolder.path
         let found = await Task.detached(priority: .userInitiated) { CustomApp.available(from: folder) }.value
         let keys = CustomApp.assignKeys(taken: PaneKind.builtIns.compactMap(\.key), to: found)
         var reply = PeerReply.success()
@@ -3723,9 +3709,9 @@ final class LauncherModel: ObservableObject {
         return reply
     }
 
-    /// A peer's `agents`: those of `folder`, or of the default folder when it names none.
+    /// A peer's `agents`: those of `folder`, or of Home when it names none.
     func hostAgents(folder: String?) async -> PeerReply {
-        let folder = folder ?? Self.claudeDirectory
+        let folder = folder ?? HomeFolder.path
         let found = await Task.detached(priority: .userInitiated) { Agent.available(in: folder) }.value
         var reply = PeerReply.success()
         reply.folder = folder

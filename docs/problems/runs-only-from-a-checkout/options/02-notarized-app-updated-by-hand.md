@@ -135,6 +135,7 @@ The zip `make app` produces is what a person downloads: unzip, move to Applicati
 **Other working-folder defaults**
 - `.env` is read only when Varnick runs from a checkout. The app takes the TypeSafe key from the Keychain or the environment.
 - When no folder is chosen and `VARNICK_CLAUDE_DIR` isn't set, Claude's default folder is the home folder. From a checkout it stays the working folder.
+- **Amendment, 2026-10-15 (relayed by the coordinator):** a session with no project now always starts in `Home` in Varnick's support folder (`~/Library/Application Support/Varnick/Home`), made on first use, for the installed app and a checkout alike. The Default folder setting and `VARNICK_CLAUDE_DIR` are gone. The two sentences above no longer hold.
 
 **One Varnick per account**
 - Varnick holds an exclusive lock on a file in its support folder from its start to its exit. The file records its process id and its executable's path. The relay, the MCP server and the command-line modes don't take it, since they run beside the app.

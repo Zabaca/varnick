@@ -212,8 +212,6 @@ final class Settings: ObservableObject {
     static let defaultProjectFolders = ["~/Projects"]
     static let fontRange: ClosedRange<Double> = 9...24
 
-    /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR, else `Home` in Varnick's support folder.
-    @Published var claudeDirectory: String { didSet { defaults.set(claudeDirectory, forKey: "claudeDirectory") } }
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
@@ -419,7 +417,8 @@ final class Settings: ObservableObject {
     }
 
     private init() {
-        claudeDirectory = defaults.string(forKey: "claudeDirectory") ?? ""
+        // The Default folder setting is gone: new sessions start in `HomeFolder`. A value an earlier build stored is dropped.
+        defaults.removeObject(forKey: "claudeDirectory")
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         panelAccess = defaults.bool(forKey: Self.panelAccessKey)
@@ -694,20 +693,6 @@ struct SettingsView: View {
                                 .padding(.bottom, 6)
                             switch section {
                             case .claude:
-                                SettingRow(title: "Default folder", detail: "Where new sessions start when no #project is picked. Resumed sessions keep their own folder.") {
-                                    Text(folderLabel)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundStyle(settings.claudeDirectory.isEmpty ? .secondary : .primary)
-                                        .lineLimit(1).truncationMode(.middle)
-                                    Button("Choose…") {
-                                        if let path = pickFolders(multiple: false, from: LauncherModel.claudeDirectory).first {
-                                            settings.claudeDirectory = path
-                                        }
-                                    }
-                                    if !settings.claudeDirectory.isEmpty {
-                                        Button("Default") { settings.claudeDirectory = "" }
-                                    }
-                            }
                             SettingRow(title: "Project folders", detail: "Searched for git repos to start in with #name.") {
                                 Text(settings.projectFolders.joined(separator: ", "))
                                     .font(.system(size: 12, design: .monospaced))
@@ -1249,12 +1234,6 @@ struct SettingsView: View {
         var seen: [String] = []
         for a in ShortcutAction.allCases where !seen.contains(a.group) { seen.append(a.group) }
         return seen
-    }
-
-    private var folderLabel: String {
-        let path = settings.claudeDirectory.isEmpty ? LauncherModel.claudeDirectoryForDisplay : settings.claudeDirectory
-        let short = (path as NSString).abbreviatingWithTildeInPath
-        return settings.claudeDirectory.isEmpty ? "\(short) (default)" : short
     }
 
     /// Folder picker over the launcher; empty when cancelled.

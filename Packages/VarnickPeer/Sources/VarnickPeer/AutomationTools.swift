@@ -48,16 +48,16 @@ public enum AutomationTools {
         }
     }
 
-    /// Where a call's defaults come from: the calling session's folder (create's folder when none is given), the Default folder (what an
+    /// Where a call's defaults come from: the calling session's folder (create's folder when none is given), Home (what an
     /// automation with no folder runs in), and for an edit, the automation as it is now.
     public struct Context {
         public var sessionFolder: String
-        public var defaultFolder: String
+        public var homeFolder: String
         public var current: Automation?
 
-        public init(sessionFolder: String, defaultFolder: String, current: Automation? = nil) {
+        public init(sessionFolder: String, homeFolder: String, current: Automation? = nil) {
             self.sessionFolder = sessionFolder
-            self.defaultFolder = defaultFolder
+            self.homeFolder = homeFolder
             self.current = current
         }
     }
@@ -134,7 +134,7 @@ public enum AutomationTools {
             problems.append("folder: this session's folder \(context.sessionFolder) is no longer a folder on this Mac; give folder")
         }
         // The agent is judged against the folder the automation will have, so it is read after the folder.
-        let folderNow = fields.folder ?? (creating ? context.sessionFolder : context.current?.folder ?? context.defaultFolder)
+        let folderNow = fields.folder ?? (creating ? context.sessionFolder : context.current?.folder ?? context.homeFolder)
         if let text = given("agent") {
             let name = text.trimmingCharacters(in: .whitespaces)
             if name.isEmpty {

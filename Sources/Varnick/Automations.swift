@@ -253,9 +253,15 @@ extension LauncherModel {
             AutomationRun(slot: slot, startedAt: now, endedAt: now, late: late, manual: manual, state: .couldntStart, detail: reason)
         }
         guard Zmx.isEnabled else { return failed("Keep sessions running is off, so a run has no session to keep out of sight") }
-        let folder = automation.folder ?? Self.claudeDirectory
+        let folder = automation.folder ?? HomeFolder.made()
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder, isDirectory: &isFolder), isFolder.boolValue else { return failed("\(folder) isn't a folder") }
+        // Claude exits on an unknown --agent and a resumed pane drops one it can't find (`ClaudeSession`), so a run would go on with no agent at
+        // all. An automation saved before Home was the only choice besides a project may name an agent Home doesn't have.
+        if let agent = automation.agent, !Agent.available(in: folder).contains(where: { $0.name == agent }) {
+            return failed("The agent @\(agent) isn't available in \((folder as NSString).abbreviatingWithTildeInPath)")
+        }
+        if let note = ClaudeTrust.note(for: folder) { return failed(note) }
         let permissions = Self.permissions(for: automation)
         let id = UUID()
         var record = SessionRecord(id: id, prompt: automation.prompt, title: automation.name, directory: folder, startedAt: now, lastUsed: now)
@@ -423,7 +429,7 @@ extension LauncherModel {
             return nil
         }
         let launch = found.run.launch
-        var record = SessionRecord(id: UUID(), prompt: "", title: found.automation.name, directory: launch?.folder ?? found.automation.folder ?? Self.claudeDirectory,
+        var record = SessionRecord(id: UUID(), prompt: "", title: found.automation.name, directory: launch?.folder ?? found.automation.folder ?? HomeFolder.made(),
                                    startedAt: Date(), lastUsed: Date())
         record.agent = launch?.agent ?? found.automation.agent
         record.conversation = found.run.conversationID

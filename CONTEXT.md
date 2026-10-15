@@ -69,7 +69,7 @@ Something the user hands Varnick to carry out on a website in a **Task pane**, s
 _Avoid_: Agent (a Claude Code definition), computer use (avoided for **Screen access**), automation (that is the new **Automation**, a prompt that runs on a cadence)
 
 **Automation**:
-A saved prompt that Varnick starts as a Claude **Session** on a cadence, in a folder (a **Project**, or the **Default folder**) with an optional **Agent**: "every weekday at 9:00, summarise what changed in this repo". It is made and edited in Settings › Automations, or by a Claude **Session** on this Mac through Varnick's MCP server, kept in a file on the **Host** that runs it (this Mac's `automations.json`) and fired by that host alone, once a minute while its Varnick runs, at launch and after a wake. The prompt goes to Claude as written. Its cadence is a preset (every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12 hours, daily, weekdays or weekly at a time, in the zone of the Mac that saved it), its permissions follow Settings › Claude's Skip permissions unless it says Ask, Allowed tools only or Skip, and its working limit ends a run that goes on too long. At most one **Run** of it goes at a time. A slot that passed while the Mac slept or Varnick was quit runs once, at the next wake or launch, if it is under 12 hours old; the older ones are marked missed. Behind a switch, off by default (Settings › Experimental). What a session may do to one, and what shows when it has, is in [ADR 0040](docs/adr/0040-automations-are-fired-by-the-host-that-keeps-them-and-a-run-is-a-pane-kept-out-of-sight-until-opened.md).
+A saved prompt that Varnick starts as a Claude **Session** on a cadence, in a folder (a **Project**, or **Home**) with an optional **Agent**: "every weekday at 9:00, summarise what changed in this repo". It is made and edited in Settings › Automations, or by a Claude **Session** on this Mac through Varnick's MCP server, kept in a file on the **Host** that runs it (this Mac's `automations.json`) and fired by that host alone, once a minute while its Varnick runs, at launch and after a wake. The prompt goes to Claude as written. Its cadence is a preset (every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12 hours, daily, weekdays or weekly at a time, in the zone of the Mac that saved it), its permissions follow Settings › Claude's Skip permissions unless it says Ask, Allowed tools only or Skip, and its working limit ends a run that goes on too long. At most one **Run** of it goes at a time. A slot that passed while the Mac slept or Varnick was quit runs once, at the next wake or launch, if it is under 12 hours old; the older ones are marked missed. Behind a switch, off by default (Settings › Experimental). What a session may do to one, and what shows when it has, is in [ADR 0040](docs/adr/0040-automations-are-fired-by-the-host-that-keeps-them-and-a-run-is-a-pane-kept-out-of-sight-until-opened.md).
 _Avoid_: Schedule, cron job, routine, scheduled task (Claude Code's and Claude Desktop's own), **Task** (the website loop)
 
 **Run**:
@@ -100,9 +100,9 @@ _Avoid_: Workspace, window
 The **Session**s a **Tab** has held, newest first (the newest 50), saved with it: the ones `/clear` and `/resume` left behind and those of panes closed while it stayed open included. A session is in the Tab history of the latest tab that held it, and search shows it under that tab.
 _Avoid_: History (the Chrome archive, see **History**), Recent
 
-**Default folder**:
-The folder a new session starts in when no project is picked: the one chosen in Settings, else `Home` in Varnick's support folder. `VARNICK_CLAUDE_DIR` overrides the latter.
-_Avoid_: Working folder, Claude folder, home folder
+**Home**:
+Varnick's own folder for sessions that belong to no project: `Home` in its support folder. A new session with no project starts there, and so does an automation with no project. It is not the user's home folder, and it is not a setting. Varnick marks it trusted in Claude Code when it makes it.
+_Avoid_: Default folder, Working folder, Claude folder, home folder
 
 **Recent**:
 The tabs that closed, Done or not, newest first (the newest 20); ↩ on one reopens it whole. A **Peer**'s closed tabs are listed with this Mac's, marked with their Mac, and reopened on that Mac. A **Session** `/clear` or `/resume` left behind is in its **Tab history**, not in Recent.
@@ -178,7 +178,7 @@ What is typed into the panel, unless it starts with `?` (a search) or `!` (a **C
 _Avoid_: Ask, command
 
 **Project**:
-A git repo under the project folders that a session can start in instead of the default folder. A **Tab**'s project is its first Claude pane's (else its first pane's).
+A git repo under the project folders that a session can start in instead of **Home**. A **Tab**'s project is its first Claude pane's (else its first pane's).
 _Avoid_: Repo, workspace
 
 **Agent**:

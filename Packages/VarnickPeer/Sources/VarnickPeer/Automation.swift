@@ -6,7 +6,7 @@ public struct Automation: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String
     public var prompt: String
-    /// A Project's folder, or nil for the Default folder as Settings has it at each run.
+    /// A Project's folder, or nil for Home (Varnick's own folder for sessions that belong to no project; an earlier build called it the Default folder).
     public var folder: String?
     /// A Claude Code agent of that folder; nil is none.
     public var agent: String?

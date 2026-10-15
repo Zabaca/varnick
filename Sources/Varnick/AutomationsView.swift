@@ -137,7 +137,7 @@ struct AutomationsSettingsView: View {
     /// "Daily at 9:00 · ~/Projects/x · @reviewer · Ask": the cadence, the folder, the agent and the permissions when it overrides Varnick's.
     private func summary(_ automation: Automation) -> String {
         var parts = [automation.cadence.label]
-        parts.append(automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Default folder")
+        parts.append(automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Home")
         if let agent = automation.agent { parts.append("@" + agent) }
         if let permissions = automation.permissions { parts.append(permissions.title) }
         return parts.joined(separator: " · ")
@@ -193,6 +193,7 @@ private struct AutomationEditor: View {
     @State private var loaded = false
     /// The agents of the chosen folder, read when the editor opens and when the folder changes, never while the view is drawn.
     @State private var agentNames: [String] = []
+    @State private var trustNote: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -205,14 +206,14 @@ private struct AutomationEditor: View {
                     .frame(width: 320, height: 96)
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.hairline))
             }
-            field("Folder", detail: "A project, or the Default folder from Settings › Claude.") {
+            field("Folder", detail: "A project, or Home, Varnick's own folder for sessions that belong to no project." + (trustNote.map { " " + $0 } ?? "")) {
                 Picker("", selection: Binding(get: { draft.folder ?? "" }, set: { draft.folder = $0.isEmpty ? nil : $0 })) {
-                    Text("Default folder").tag("")
+                    Text("Home").tag("")
                     ForEach(folders, id: \.self) { path in Text((path as NSString).abbreviatingWithTildeInPath).tag(path) }
                 }
                 .labelsHidden().frame(width: 260)
             }
-            field("Agent", detail: "A Claude Code agent of that folder, or none.") {
+            field("Agent", detail: "A Claude Code agent of that folder, or none. Home has only your own, so to use a repo's agent, choose that repo as the folder.") {
                 Picker("", selection: Binding(get: { draft.agent ?? "" }, set: { draft.agent = $0.isEmpty ? nil : $0 })) {
                     Text("None").tag("")
                     ForEach(agentNames, id: \.self) { name in Text("@" + name).tag(name) }
@@ -300,8 +301,9 @@ private struct AutomationEditor: View {
     }
 
     private func readAgents() {
-        let found = Agent.available(in: draft.folder ?? LauncherModel.claudeDirectory).map(\.name)
+        let found = Agent.available(in: draft.folder ?? HomeFolder.path).map(\.name)
         agentNames = draft.agent.map { own in found.contains(own) ? found : [own] + found } ?? found
+        trustNote = ClaudeTrust.note(for: draft.folder ?? HomeFolder.path)
     }
 
     /// What the run will start with, and the macOS grants it inherits (`panes-share-launchys-permissions`).
