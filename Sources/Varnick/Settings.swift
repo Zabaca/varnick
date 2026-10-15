@@ -212,7 +212,7 @@ final class Settings: ObservableObject {
     static let defaultProjectFolders = ["~/Projects"]
     static let fontRange: ClosedRange<Double> = 9...24
 
-    /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR, else the launch folder from a checkout, else the home folder.
+    /// Folder new Claude sessions start in; empty uses VARNICK_CLAUDE_DIR, else `Home` in Varnick's support folder.
     @Published var claudeDirectory: String { didSet { defaults.set(claudeDirectory, forKey: "claudeDirectory") } }
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
@@ -1252,7 +1252,7 @@ struct SettingsView: View {
     }
 
     private var folderLabel: String {
-        let path = settings.claudeDirectory.isEmpty ? LauncherModel.claudeDirectory : settings.claudeDirectory
+        let path = settings.claudeDirectory.isEmpty ? LauncherModel.claudeDirectoryForDisplay : settings.claudeDirectory
         let short = (path as NSString).abbreviatingWithTildeInPath
         return settings.claudeDirectory.isEmpty ? "\(short) (default)" : short
     }

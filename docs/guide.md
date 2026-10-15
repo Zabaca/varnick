@@ -130,12 +130,16 @@ or an MCP request), and that tab's row carries the same orange mark, as a row in
 ## The projects column
 
 **⌘⇧P** shows a column left of the panes, as ⌘⇧F shows the file tree on the right. It lists **All**, then each project that has
-open tabs, by name, then **Other** for tabs in no project (the home folder, say). Each row shows how many tabs it has, and an orange
+open tabs, by name, then **Other** for tabs in no project (the Default folder, say). Each row shows how many tabs it has, and an orange
 mark with how many of them have a session waiting on you.
 
 - **A tab's project** is its first Claude pane's (a tab with none, its first pane's): the project whose folder is exactly that pane's
   folder when Varnick first saw it. It doesn't change as you move between panes, or when a shell in it changes folder. A pane in a subfolder or a worktree has no project, so its tab is under Other. Another Mac's tabs join the
   same rows by the project's name; hover a row to see how many tabs are on each Mac.
+- **The Default folder** (Settings › Claude) is where a new session starts when you pick no `#project`. Until you choose one it is
+  `Home` in Varnick's support folder (`~/Library/Application Support/Varnick/Home`), made the first time it is needed, so a session you
+  start from nowhere in particular doesn't land in a repo. **Default** in that row puts it back. Running Varnick with `VARNICK_CLAUDE_DIR`
+  set to a folder starts them there instead, until you choose one. Resumed sessions keep their own folder.
 - **Choosing a row** shows only that project's tabs in the strip and brings up the one you last had open there, or its first.
   ⌘⇧[ and ⌘⇧] step through them. **All** brings every tab back and leaves the one on screen as it is.
 - **⌃⌘[ and ⌃⌘]** choose the previous or next row, All included, with the column hidden too. Showing a tab of another project, from the

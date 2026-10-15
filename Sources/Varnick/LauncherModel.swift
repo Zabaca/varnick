@@ -3035,13 +3035,20 @@ final class LauncherModel: ObservableObject {
         tab.focus(tab.focused)
     }
 
-    /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else the launcher's working directory from a checkout (the repo,
-    /// when started with `make run`), else the home folder.
-    static var claudeDirectory: String {
+    /// Where Claude starts: the folder from Settings, else VARNICK_CLAUDE_DIR, else `Home` in Varnick's support folder (never the support folder
+    /// itself, which holds sessions, automations and panes). Home is made on first use, so every reader finds a folder that exists.
+    static var claudeDirectory: String { claudeDirectory(creatingHome: true) }
+
+    /// The same answer for a label: it never makes Home, so drawing Settings leaves the disk alone.
+    static var claudeDirectoryForDisplay: String { claudeDirectory(creatingHome: false) }
+
+    private static func claudeDirectory(creatingHome: Bool) -> String {
         let chosen = Settings.shared.claudeDirectory
         if !chosen.isEmpty { return chosen }
         if let folder = ProcessInfo.processInfo.environment["VARNICK_CLAUDE_DIR"] { return folder }
-        return LaunchSnapshot.checkout == nil ? NSHomeDirectory() : FileManager.default.currentDirectoryPath
+        let home = SupportFolder.url.appendingPathComponent("Home", isDirectory: true)
+        if creatingHome { try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
+        return home.path
     }
 
     /// ⌘,: settings in place of the current view; again (or esc) goes back.

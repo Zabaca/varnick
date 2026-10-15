@@ -101,7 +101,7 @@ The **Session**s a **Tab** has held, newest first (the newest 50), saved with it
 _Avoid_: History (the Chrome archive, see **History**), Recent
 
 **Default folder**:
-The folder a new session starts in when no project is picked.
+The folder a new session starts in when no project is picked: the one chosen in Settings, else `Home` in Varnick's support folder. `VARNICK_CLAUDE_DIR` overrides the latter.
 _Avoid_: Working folder, Claude folder, home folder
 
 **Recent**:
