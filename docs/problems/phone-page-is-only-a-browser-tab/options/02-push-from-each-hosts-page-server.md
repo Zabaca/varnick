@@ -2,7 +2,7 @@
 problem: phone-page-is-only-a-browser-tab
 title: Option 01, plus Web Push from each host's page server, routed by where the user is
 summary: Option 01, plus standard Web Push, sent only when the user isn't at the Mac driving the session. Each host's page server watches the turns of its own Claude panes and decides by sessions-finish-unnoticed option 01's table, so the Mac and the phone use one rule. It routes each notice by the pane's controller. A Mac whose user is present gets its own notice (that problem's option 01) and the phone stays quiet. If that Mac locks, sleeps or goes idle while the notice still stands, the push goes then. A Mac that is away or can't be told, and the phone in control, get the push after a 10-second settle. Each Mac reports whether its user is present (input idle time, screen locked or display asleep) to the hosts it follows, on the status requests it already sends every 5 s. The push goes from the host to Apple's or Google's push service, encrypted end to end, padded to one size, and holds ids and the kind of notice, never session content. The phone's worker reads the title over the tailnet when it can. Each host has its own signing key (in the Keychain on a Mac, an owner-only file on a headless host) and its own subscriptions. One protocol bump. Rough effort is six and a half days on top of option 01.
-status: proposed
+status: accepted
 ---
 
 ## Solution

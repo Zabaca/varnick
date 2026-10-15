@@ -2,7 +2,7 @@
 problem: sessions-finish-unnoticed
 title: Turn changes mark the menu bar and play a sound
 summary: Launchy watches the turns it already reads, and for each session this Mac is in control of it raises a notice when the turn is done (working or background to waiting), needs the user (a permission dialog, a question, a plan or an MCP request) or stopped on an API error. That last one is a new turn word, failed, which the reader takes from the transcript as it takes Esc. A notice puts a dot on the menu bar icon, plays a sound and lists the session at the top of the menu, where choosing it opens the pane. Background work stays silent until it drains. The pane on screen stays silent. A pane has one notice at most, cleared when its turn moves on or the pane comes on screen. Settings › Claude gets a switch per category. There are no macOS notifications, so nothing needs a permission or an app bundle, and every build has it. Rough effort is two and a half days.
-status: proposed
+status: accepted
 ---
 
 ## Solution
