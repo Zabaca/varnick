@@ -57,7 +57,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
-  Phone page, the Problems board, the Outline and Tasks (Experimental, below).
+  Phone page, the Problems board, the Outline, Tasks and Automations (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -400,6 +400,27 @@ the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as an
 does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
 and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
+
+**Automations** run a Claude prompt for you on a cadence, without opening anything. On, Settings gets an **Automations** page. An
+automation is a name, a prompt (sent to Claude as written, as the first message), a folder (a project, or the Default folder), an
+optional agent, a time and its permissions. Pick the time from the presets: every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12
+hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now** tries one before you leave it to the clock.
+- **A run is a Claude session like one you type,** started in the background. Its tab stays out of the tab strip, the session list,
+  Recent and the board's Sessions tab until you open it, from the board's **Runs** tab (⌘⇧B, then Tab) or from its notice in the menu
+  bar menu. It tells you as any session does: Done, Needs you, an error, or a message if the prompt asks for one ("…and notify me
+  with the count"). Open while it works and you watch it live; open after it ended and its conversation is resumed in a new tab.
+  The Runs tab also lists the slots that did not run and why: skipped, missed, couldn't start.
+- **It runs only while Varnick does on this Mac.** A slot that passed while the Mac slept or Varnick was quit runs once, when
+  the Mac wakes or Varnick starts, if it is under 12 hours old; older ones are marked missed. At most one run of an automation goes
+  at a time: a slot that falls due while the last run still works or waits on you is skipped. Keep sessions running must be on.
+- **Permissions follow Settings › Claude's Skip permissions,** as a prompt you type does, unless the automation says Ask (its allowed
+  tools run, anything else waits for you with Needs you), Allowed tools only (anything not allowed is refused with no dialog, and
+  Claude goes on or ends) or Skip. A run never gets Screen access or Panel access tools, but like every pane it has Varnick's
+  macOS permissions, so a shell command it may run can reach the screen: see [privacy and security](privacy-and-security.md#automations-act-while-you-are-away).
+- **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
+  hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.
+- Turning the switch off stops every run from starting and shows the tabs of runs you haven't opened as ordinary tabs. The
+  automations are kept in `automations.json` in Varnick's support folder.
 
 **Tasks** hands Varnick something to do on a website: find a fact ("how much is delivery to Canada"), or fill in forms ("create an
 account for Robin Vale"). On, `!task` and the split picker's Task tile open a **Task pane**, a browser of Varnick's own. It has none

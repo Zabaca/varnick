@@ -104,8 +104,8 @@ struct AutomationsSettingsView: View {
             parts.append("Next " + next.formatted(date: .abbreviated, time: .shortened))
         }
         if let last = automation.runs.first {
-            let now = model.displayed(last)
-            parts.append("Last: " + (now.state == .message ? now.detail ?? now.state.text : now.state.text))
+            // As last recorded (the check brings it up to date once a minute): the turn is read where a list is refreshed, never while one is drawn.
+            parts.append("Last: " + (last.state == .message ? last.detail ?? last.state.text : last.state.text))
         }
         return parts.joined(separator: " · ")
     }
@@ -143,6 +143,8 @@ private struct AutomationEditor: View {
     @State private var weekday = 2
     @State private var toolsText = ""
     @State private var loaded = false
+    /// The agents of the chosen folder, read when the editor opens and when the folder changes, never while the view is drawn.
+    @State private var agentNames: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -235,6 +237,7 @@ private struct AutomationEditor: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
         }
         .onAppear(perform: load)
+        .onChange(of: draft.folder) { _, _ in readAgents() }
     }
 
     private func field<Content: View>(_ title: String, detail: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -248,10 +251,9 @@ private struct AutomationEditor: View {
         return paths
     }
 
-    private var agentNames: [String] {
+    private func readAgents() {
         let found = Agent.available(in: draft.folder ?? LauncherModel.claudeDirectory).map(\.name)
-        if let own = draft.agent, !found.contains(own) { return [own] + found }
-        return found
+        agentNames = draft.agent.map { own in found.contains(own) ? found : [own] + found } ?? found
     }
 
     /// What the run will start with, and the macOS grants it inherits (`panes-share-launchys-permissions`).
@@ -278,6 +280,7 @@ private struct AutomationEditor: View {
     private func load() {
         guard !loaded else { return }
         loaded = true
+        readAgents()
         toolsText = draft.allowedTools.joined(separator: "\n")
         switch draft.cadence {
         case .minutes(let n): kind = .minutes; minuteStep = n

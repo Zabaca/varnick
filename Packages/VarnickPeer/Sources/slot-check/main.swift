@@ -174,6 +174,30 @@ for cadence in presets {
     expect("\(cadence.label) survives its file", back == cadence, String(decoding: data, as: UTF8.self))
 }
 
+// MARK: The command line of a run
+
+func arguments(skip: Bool = false, dontAsk: Bool = false, tools: [String] = []) -> [String] {
+    ClaudeCommand.arguments(skipPermissions: skip, agent: "reviewer", resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
+                            prompt: "Say hello", problems: false, mcpConfig: "{}", dontAsk: dontAsk, allowedTools: tools)
+}
+func allowed(_ arguments: [String]) -> [String] {
+    guard let at = arguments.firstIndex(of: "--settings"), let data = arguments[at + 1].data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let permissions = json["permissions"] as? [String: Any] else { return [] }
+    return permissions["allow"] as? [String] ?? []
+}
+let plain = arguments()
+expect("a pane with no override has neither flag", !plain.contains("--permission-mode") && !plain.contains("--dangerously-skip-permissions"), "\(plain.prefix(4))")
+expect("a plain pane allows notify alone", allowed(plain) == [NotifyTool.qualifiedName], "\(allowed(plain))")
+let strict = arguments(dontAsk: true, tools: ["Bash(git status)", "Edit"])
+expect("Allowed tools only is --permission-mode dontAsk, before the agent and the prompt",
+       strict.firstIndex(of: "--permission-mode").map { strict[$0 + 1] == "dontAsk" && $0 < strict.firstIndex(of: "--agent")! && $0 < strict.firstIndex(of: "--")! } == true,
+       "\(strict)")
+expect("the allowed tools join notify's allowance", allowed(strict) == [NotifyTool.qualifiedName, "Bash(git status)", "Edit"], "\(allowed(strict))")
+expect("skip never goes with dontAsk", !arguments(skip: true, dontAsk: true).contains("--permission-mode"))
+expect("skip is the existing flag", arguments(skip: true).contains("--dangerously-skip-permissions"))
+expect("the prompt stays the last operand after --", strict.suffix(2) == ["--", "Say hello"], "\(strict.suffix(2))")
+
 // MARK: The file
 
 // A throwaway folder: nothing here touches the support folder.
