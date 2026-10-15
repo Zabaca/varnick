@@ -311,6 +311,16 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   on the network with a note naming the host, and nothing else: it caches no reply, and every other request goes to the host as
   before. Every reply is still `no-store`. The only thing the page stores on the phone is whether you dismissed the install offer.
   The manifest, the icons and the worker are served only to a listed device, like every file of the page.
+- **Notifications go through Apple's or Google's push service,** the only request the page server makes outside the tailnet, and
+  only after you turn them on in the page, for that host. A push carries ids and the kind of notice (done, needs permission, an
+  error and its kind) and nothing of the session: no title, prompt, folder or screen. It is encrypted for your phone's browser
+  (Web Push, `aes128gcm`), padded to one size and sent alike every time, so the push service can't read it and can't tell one kind from
+  another; it sees that a push went, when, from this host's address, to which browser. The phone reads the session's title from the
+  host over the tailnet when the push arrives; off the tailnet the notification names only the host. The push is signed with a key
+  each host makes for itself: in the Keychain (Varnick's own item) on a Mac, an owner-only file on a headless host. It names
+  Varnick's public site, never your email. To choose between your Mac's own notice and the phone, each Mac tells the hosts it has a
+  pane on whether you are at it (seconds since your last input, and whether the screen is locked or asleep) over the SSH link that already
+  carries its status requests. That goes to the host's page server on your own machines, and never into a push.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
   take over and type in a terminal. Not the search sync, upgrades or restarts. List only devices you control.
 

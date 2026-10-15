@@ -111,6 +111,17 @@ async function show(event) {
     icon: "/icons/icon-192.png",
     data: { tab: payload ? payload.tab : null, pane: payload ? payload.pane : null },
   });
+  await setBadge();
+}
+
+/** The app's badge (iOS) is the number of its standing notifications; the page clears it when it opens. Android shows its own dot and ignores it. */
+async function setBadge() {
+  try {
+    if (!self.navigator || !self.navigator.setAppBadge || !self.registration.getNotifications) return;
+    await self.navigator.setAppBadge((await self.registration.getNotifications()).length);
+  } catch {
+    // A browser without badges, or one that refuses: the notification is shown all the same.
+  }
 }
 
 /** Where a tap goes: the tab and pane, the page's own address (`#t=<tab>&p=<pane>`). */

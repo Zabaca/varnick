@@ -140,6 +140,34 @@ describe("every push shows a notification", () => {
   });
 });
 
+describe("the badge", () => {
+  test("is the number of standing notifications where the browser has badges, and a push is shown without it where it hasn't", async () => {
+    const badges: number[] = [];
+    const handlers: Record<string, (event: any) => void> = {};
+    const shown: string[] = [];
+    const self = {
+      addEventListener: (type: string, handler: (event: any) => void) => { handlers[type] = handler; },
+      skipWaiting: () => {},
+      location: { origin: "https://host.example.test:8444" },
+      navigator: { setAppBadge: async (count: number) => { badges.push(count); } },
+      registration: { showNotification: async (title: string) => { shown.push(title); }, getNotifications: async () => [{}, {}, {}] },
+      clients: { claim: async () => {} },
+    };
+    new Function("self", "fetch", workerSource(template, "Mac Studio"))(self, unreachable);
+    let work: Promise<unknown> = Promise.resolve();
+    handlers.push({ data: { json: () => ({ v: 1, kind: "test" }) }, waitUntil: (p: Promise<unknown>) => { work = p; } });
+    await work;
+    expect(shown).toEqual(["Mac Studio"]);
+    expect(badges).toEqual([3]);
+
+    // A browser whose badge call throws still shows the notification.
+    self.navigator.setAppBadge = async () => { throw new Error("no"); };
+    handlers.push({ data: { json: () => ({ v: 1, kind: "test" }) }, waitUntil: (p: Promise<unknown>) => { work = p; } });
+    await work;
+    expect(shown).toHaveLength(2);
+  });
+});
+
 describe("a tap", () => {
   const closed = () => { const note = { closed: false, data: { tab, pane }, close() { note.closed = true; } }; return note; };
 

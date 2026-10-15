@@ -169,7 +169,13 @@ export function startPush(navigate) {
       if (event.data?.type === "open" && openHash(event.data.hash, parseTabHash)) navigate(event.data.hash);
     });
   }
-  // The permission can change in the browser's own settings while the page is away.
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !$("home").hidden) lookAtPush(); });
+  // The permission can change in the browser's own settings while the page is away; opening the app clears its badge.
+  const clearBadge = () => { try { navigator.clearAppBadge?.()?.catch(() => {}); } catch { /* no badges here */ } };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    clearBadge();
+    if (!$("home").hidden) lookAtPush();
+  });
+  clearBadge();
   lookAtPush();
 }
