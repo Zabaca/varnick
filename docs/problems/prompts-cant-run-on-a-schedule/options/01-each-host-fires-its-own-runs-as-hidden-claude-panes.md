@@ -327,6 +327,10 @@ Its file and the protocol 29 requests, the systemd timer and the relay's firing 
 
 It is built next, before slice 2.
 
+**Resolved by the user, 2026-10-15** (relayed by the coordinator), both as recommended:
+- **No Skip from a session.** A session may only follow Varnick's setting, or choose Ask or Allowed tools only. It may switch an automation set to Skip on or off, but not edit it. A session then never gives an unattended run more than the user's own setting gives a typed prompt.
+- **The mark alone.** The user is told of a session's create, edit or switch by the mark, with no notice.
+
 **The tools,** a set of their own on Varnick's MCP server:
 - **`automations_list`** gives every automation of this Mac with its id and every field create takes, plus:
   - its next run;
@@ -360,7 +364,7 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
 | cadence | required: a kind (every N minutes, every N hours, daily, weekdays or weekly) with its numbers, as the presets have them. Anything else is refused, and the reply lists the presets |
 | folder | an existing folder on this Mac. Absent is the calling session's own folder: "this repo every morning" means the session's folder, and the Default folder is a Settings choice the session can't see. The editor already shows a folder that isn't a project |
 | agent | an agent of that folder; another is refused, and the reply lists them |
-| permissions | absent follows Varnick's setting; else Ask or Allowed tools only. Skip is open question 3 |
+| permissions | absent follows Varnick's setting; else Ask or Allowed tools only. Skip is refused, and so is any edit of an automation set to Skip |
 | allowed tools | a list of Claude Code rules, one line each |
 | working limit | minutes, 5 to 1440, as the editor's; 60 when absent |
 | enabled | on when absent, as the editor's Add |
@@ -373,6 +377,7 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
 - **Like the Save, an edit stamps this Mac's zone,** and a changed cadence or zone starts the slots from now.
 - **Turning one on,** by edit or switch, starts its slots from now, as the row's switch does.
 - **Turning one off** releases nothing: a run that is going goes on, as in slice 1.
+- **An automation set to Skip** is refused for every edit by a session, and can still be switched on or off.
 - **The editor and a session at once.** A session's edit made while the user has the editor open is overwritten by the user's Save, for the fields the editor holds. The user's own edit wins.
 
 **The user sees it as a mark, not a notice.**
@@ -384,7 +389,6 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
   - a new notice kind would change the table in both languages.
 - **The run tells them anyway.** A run raises its own notices, named after the automation. So an automation a session made or turned on while the user was away is seen at its first run at the latest.
 - **The tool's reply asks Claude to tell the user what it did.**
-- **A notice as well** is open question 4.
 
 **How a call reaches the store.** As Panel access's calls do:
 - **The MCP server sends one line.** It turns each call into one request line on Varnick's socket, with a key and a version of its own, and prints the reply.
@@ -405,7 +409,7 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
 - the set listed alone and with the others;
 - each tool's schema and description;
 - create's required fields and the cadence's kinds;
-- the permissions' values, with no Skip if the user takes recommendation 3;
+- the permissions' values, with no Skip;
 - a call to one of these tools on a server without the set, refused before anything is sent.
 
 It never calls a tool the set lists. With Varnick running on the user's Mac, that call would reach it and make a real automation.
@@ -425,7 +429,7 @@ It never calls a tool the set lists. With Varnick running on the user's Mac, tha
 - **Edit:**
   - "change its prompt to …": only the prompt changes, and its runs and next run stay;
   - "make it daily at 9:00": the next run moves, and its slots start from now.
-- **Refusals,** each with nothing saved: an agent the folder doesn't have, a folder that isn't there, every 5 minutes, and Skip if recommendation 3 is taken.
+- **Refusals,** each with nothing saved: an agent the folder doesn't have, a folder that isn't there, every 5 minutes, Skip, and an edit of an automation set to Skip. Switching that automation off and on again works.
 - **With Skip permissions off,** Claude Code asks before each call.
 - **The switch:**
   - Automations off: every call is refused;
@@ -456,5 +460,3 @@ It never calls a tool the set lists. With Varnick running on the user's Mac, tha
 
 1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** For slice 2. Recommendation: attach. It is how every Mac-controlled session there already works, and it needs no change to the routing.
 2. **Should a run ended at its working limit raise a notice?** The pane is gone, so it needs one of two things: a notice the notifier keeps for a run rather than a pane, or a way to end the turn and leave the pane. Recommendation: decide after slice 1's hand test shows how often limits are hit. Until then it is marked in the run list only.
-3. **May a session set the Skip override?** For slice 3. Recommendation: no. A session may choose to follow Varnick's setting, Ask or Allowed tools only, and may switch an automation set to Skip but not edit it. A session then never gives an unattended run more than the user's own setting gives a typed prompt. Editing a Skip automation's prompt would turn the user's choice of Skip for one prompt into Skip for anything a session writes. With Varnick's setting on Skip, an automation that follows it still runs with Skip: that is the user's own setting.
-4. **Should a session's create or switch on also raise a notice on the Mac,** besides the mark? For slice 3. Recommendation: the mark alone. A notice is mostly raised for the pane the user is looking at, where none is shown. It needs either Varnick writing the message file, which only the hook writes, or a new notice kind in both languages. The automation's first run tells the user anyway.
