@@ -931,6 +931,7 @@ enum SpokenPipeline {
 extension Error {
     /// What a log may say of a failure: the kind, never a message that could hold what was said.
     var logKind: String {
+        if let status = self as? JevStatus { return status.description }
         if let urlError = self as? URLError { return "URLError \(urlError.code.rawValue)" }
         if let failure = self as? ScreenText.Failure { return failure.logKind }
         return (self as? ModelServer.Failure)?.errorDescription ?? "\(type(of: self))"

@@ -77,7 +77,7 @@ final class TaskJev: System1, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body(state: state, questions: questions)
         let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        try JevStatus.check(response)
         return try read(data, questions: questions)
     }
 }
