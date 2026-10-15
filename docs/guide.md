@@ -166,6 +166,11 @@ Shift+Tab, the arrows and a sticky Ctrl). It is off by default (Settings › Ser
 only, and each device you list on a host is identified by Tailscale. [Privacy and security](privacy-and-security.md#the-phone-page) explains what
 that does and does not protect, including a mode in which any program on the Mac can reach it.
 
+On the phone the page installs as an app, one for each host, named for it and opening full screen without the browser's bars. In Chrome
+on Android the foot of the home page offers an Install button (or use Chrome's menu); in Safari on an iPhone, use Share › Add to Home
+Screen. If the phone can't reach the host (Tailscale is off on it, or the host is asleep), the app says so instead of showing the
+browser's error page; Try again loads the page once the host answers. The app keeps nothing of your sessions on the phone.
+
 ## Listening
 
 Listening transcribes your microphone and what the Mac plays, on this Mac, into a text file for the day

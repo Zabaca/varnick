@@ -2,7 +2,7 @@
 problem: phone-page-is-only-a-browser-tab
 title: Each host's Phone page installs as an app, with an offline note and no push
 summary: Each host's page server serves a web app manifest named for the host, icons made from the Fold mark, and a service worker that handles only page loads. A load that fails gets its own note ("Can't reach Mac Studio: is Tailscale on, and is the Mac awake?") instead of the browser's error. Nothing else is cached. Android Chrome then offers Install, and an iPhone can Add to Home Screen. Either way the page opens standalone, without the browser's bars. One app per host, since each host is its own origin. No push, so no key, no third party and no protocol change. Option 02 builds push on this. Rough effort is a day, plus checking the terminal in a standalone window on both phones.
-status: accepted
+status: shipped
 ---
 
 ## Solution

@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark light">
 <title>Phone page</title>
+<meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<!--APP-TITLE-->
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/app.css">
 <script type="module" src="/app.js"></script>
@@ -36,6 +44,13 @@
       <ul id="hosts"></ul>
     </section>
   </main>
+  <section id="install" class="install" aria-label="Install as an app" hidden>
+    <p id="install-text" class="hint"></p>
+    <div class="card-actions">
+      <button id="install-button" type="button" class="primary" hidden>Install</button>
+      <button id="install-dismiss" type="button">Not now</button>
+    </div>
+  </section>
 </div>
 
 <div id="new" hidden>

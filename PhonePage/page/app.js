@@ -3,6 +3,7 @@
 // host sent goes in with textContent, never as markup.
 
 import { element, notListed, postJSON, shortFolder } from "/dom.js";
+import { startInstall } from "/install.js";
 import { closeNew, openNew } from "/new.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
@@ -291,3 +292,4 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("hashchange", route);
 route();
+startInstall();
