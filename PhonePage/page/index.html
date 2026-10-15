@@ -44,6 +44,17 @@
       <ul id="hosts"></ul>
     </section>
   </main>
+  <section id="notify" class="install" aria-labelledby="notify-heading" hidden>
+    <h2 id="notify-heading">Notifications</h2>
+    <p id="notify-text" class="hint"></p>
+    <div id="notify-switches" class="switches" role="group" aria-label="Which notifications" hidden></div>
+    <div class="card-actions">
+      <button id="notify-on" type="button" class="primary" hidden>Turn on</button>
+      <button id="notify-test" type="button" hidden>Send a test</button>
+      <button id="notify-off" type="button" hidden>Turn off</button>
+    </div>
+    <p id="notify-error" class="error" role="alert" hidden></p>
+  </section>
   <section id="install" class="install" aria-label="Install as an app" hidden>
     <p id="install-text" class="hint"></p>
     <div class="card-actions">

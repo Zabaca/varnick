@@ -5,6 +5,7 @@
 import { element, notListed, postJSON, shortFolder } from "/dom.js";
 import { startInstall } from "/install.js";
 import { closeNew, openNew } from "/new.js";
+import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
 import { paneSummary, parseTabHash, tabHash, tabTitle } from "/tabrules.js";
@@ -243,6 +244,8 @@ function route() {
     document.body.classList.add("in-session");
     document.title = hostName ? `${hostName} · Phone page` : "Phone page";
     openTab({ tab: tabMatch.tab, pane: tabMatch.pane, host: hostName, done: goHome, take: takeSession });
+    // Opening a tab is seeing what its notifications said.
+    closeNotices(tabMatch.tab);
   } else if (match) {
     closeNew();
     closeTab();
@@ -293,3 +296,4 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("hashchange", route);
 route();
 startInstall();
+startPush((hash) => { location.hash = hash; });

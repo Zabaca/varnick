@@ -104,6 +104,11 @@ button.pane-tab.idle { opacity: .6; }
 .card-error { margin: -8px 0 16px; font-size: 14px; color: var(--warn); overflow-wrap: anywhere; }
 .install { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Notifications at the foot of Home: a heading, a line, the three switches while on, and the buttons. */
+#notify h2 { margin-top: 0; }
+.switches { display: flex; flex-wrap: wrap; gap: 0 16px; margin: 0 0 8px; }
+.switch { display: flex; align-items: center; gap: 6px; min-height: 44px; font-size: 15px; }
+.switch input { width: 20px; height: 20px; }
 /* "Controlled on X" over a live screen is a bar with Take over; the screen takes the rest. */
 .card.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 8px 8px; padding: 8px 12px; flex: none; }
 .card.bar .card-note, .card.bar .card-error { flex-basis: 100%; margin: 0; }

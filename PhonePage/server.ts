@@ -236,6 +236,8 @@ async function main(): Promise<void> {
     "/vendor/xterm.css": { file: "vendor/xterm.css", type: "text/css; charset=utf-8" },
     "/install.js": { file: "page/install.js", type: js },
     "/installrules.js": { file: "page/installrules.js", type: js },
+    "/push.js": { file: "page/push.js", type: js },
+    "/pushrules.js": { file: "page/pushrules.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
