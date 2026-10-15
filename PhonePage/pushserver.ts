@@ -153,8 +153,8 @@ export async function setupPush(inputs: PushInputs): Promise<Push | null> {
   const world: PushWorld = {
     now: () => Date.now(),
     ownID: inputs.ownID,
-    askTabs: async () => {
-      const { value, startedAt } = await inputs.hostTabs.stamped();
+    askTabs: async (notBefore) => {
+      const { value, startedAt } = await inputs.hostTabs.stamped(notBefore);
       return { result: value, startedAt };
     },
     turnDates: (ids) => readTurnDates(push.panes, ids),

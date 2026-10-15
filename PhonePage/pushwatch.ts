@@ -25,13 +25,15 @@ const hourMs = 3_600_000;
  * shared ask's up to 1.5 s old (`Shared`), so two readings of one turn differ by that and a relay run, not by a new turn.
  */
 const sameTurnMs = 5000;
+/** The summary line is written at least this often, and at once when it changes. */
+const summaryEveryMs = 60_000;
 
 export interface PushWorld {
   now(): number;
   /** The host's own id: the controller of a pane that names nobody or the host. */
   ownID: string;
   /** `tabs` asked as the host itself; one ask serves this and the port proxy when both want one. `startedAt` is when that ask began (unix ms). */
-  askTabs(): Promise<{ result: RelayResult; startedAt: number }>;
+  askTabs(notBefore: number): Promise<{ result: RelayResult; startedAt: number }>;
   /** The date (unix ms) of each pane's turn file, 0 for a pane with none. */
   turnDates(panes: string[]): Map<string, number>;
   /** Whether a pane folder has appeared since the last call (a pane started that the listing may not have). */
@@ -95,6 +97,10 @@ export class PushWatcher {
   private ticking = false;
   /** Sends under way. They run off the tick: a retry waits for a push service's Retry-After, up to two minutes, and the tick must not. */
   private inFlight = new Set<Promise<void>>();
+  private reportedSubscriptions = -1;
+  private lastSummary = "";
+  private lastSummaryAt = -Infinity;
+  private lastFailure = "";
 
   constructor(private world: PushWorld, private store: SubscriptionStore) {}
 
@@ -121,14 +127,39 @@ export class PushWatcher {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      if (this.store.all().length === 0) return this.reset();
       this.store.dropUnlisted(new Set(this.world.devices().keys()));
+      this.reportSubscriptions();
       if (this.store.all().length === 0) return this.reset();
       if (this.shouldAsk()) await this.refresh();
       for (const pane of [...this.standing.keys()]) await this.deliver(pane);
+      this.reportTick();
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** `push watching N subscriptions`, at the start and whenever the number changes: whether the watcher has anything to watch for is the first question. */
+  private reportSubscriptions(): void {
+    const count = this.store.all().length;
+    if (count === this.reportedSubscriptions) return;
+    this.reportedSubscriptions = count;
+    this.world.log(`push watching ${count} subscription${count === 1 ? "" : "s"}`);
+  }
+
+  /**
+   * What the watcher sees, at most once a minute unless it changes: how many Claude panes the host lists, how many are working, waiting or
+   * (silent until it drains) background, and how many notices stand. Counts only, so a hand test can tell "nothing happened" from "the watcher
+   * saw a turn that is still in background".
+   */
+  private reportTick(): void {
+    const words = { working: 0, waiting: 0, background: 0 };
+    for (const reading of this.readings.values()) if (reading.turn in words) words[reading.turn as keyof typeof words] += 1;
+    const line = `push watch tick panes=${this.readings.size} working=${words.working} waiting=${words.waiting} background=${words.background} notices=${this.standing.size}`;
+    const now = this.world.now();
+    if (line === this.lastSummary && now - this.lastSummaryAt < summaryEveryMs) return;
+    this.lastSummary = line;
+    this.lastSummaryAt = now;
+    this.world.log(line);
   }
 
   private reset(): void {
@@ -155,9 +186,20 @@ export class PushWatcher {
   async refresh(): Promise<void> {
     this.asking ??= (async () => {
       try {
-        const { result, startedAt } = await this.world.askTabs();
+        // What the files say is read before the ask, never after: a turn file written while the relay runs is a change the answer may not have,
+        // and the next look must see it as one. The answer must also begin after the newest of those writes, or a shared answer from before it
+        // would stand for it (the ask the port proxy made a second ago).
+        const before = { dates: this.world.turnDates([...this.facts.keys()]), stamp: this.world.tabsStamp() };
+        const { result, startedAt } = await this.world.askTabs(Math.max(0, ...before.dates.values()));
         this.lastAsk = this.world.now();
-        if (result.ok) this.observe(objects(result.reply.tabs), startedAt);
+        if (result.ok) {
+          this.lastFailure = "";
+          this.observe(objects(result.reply.tabs), startedAt, before);
+        } else if (result.error !== this.lastFailure) {
+          // Once for each kind of failure: a host that can't be asked means no notice can be raised, which the log must say.
+          this.lastFailure = result.error;
+          this.world.log(`push watch can't read the host's tabs: ${result.error.replace(/[^\x20-\x7e]/g, "?").slice(0, 120)}`);
+        }
       } finally {
         this.asking = null;
       }
@@ -166,7 +208,7 @@ export class PushWatcher {
   }
 
   /** `startedAt` is when the ask began: a turn's age is counted at the relay's run, which is after it, never at the reply. */
-  private observe(tabs: Record<string, unknown>[], startedAt: number): void {
+  private observe(tabs: Record<string, unknown>[], startedAt: number, files: { dates: Map<string, number>; stamp: string }): void {
     const now = this.world.now();
     const seen = new Set<string>();
     const facts = new Map<string, PaneFacts>();
@@ -187,16 +229,20 @@ export class PushWatcher {
         if (pane.turn === "background") this.busy = true;
         const since = startedAt - (typeof pane.turnAge === "number" ? pane.turnAge : 0) * 1000;
         const before = this.readings.get(id);
+        // The same word with a later start is another turn: one that ran and ended between two looks (a short turn, a look that came late), so
+        // the word it began from was working. Without this a turn that is over before the next ask raises nothing, as waiting to waiting.
+        const between = before !== undefined && before.turn === pane.turn && since - before.since > sameTurnMs;
+        if (between) this.world.log(`push watch: a turn ran between two looks (${pane.turn} again, ${Math.round((since - before!.since) / 1000)} s later)`);
         const decision = decide({
-          old: before?.turn ?? null,
+          old: between ? "working" : before?.turn ?? null,
           next: pane.turn,
           failure: pane.turn === "failed" && typeof pane.failure === "string" ? failureWord(pane.failure) : null,
           interrupted: pane.esc === true,
-          sameTurn: before !== undefined && Math.abs(before.since - since) <= sameTurnMs,
+          sameTurn: !between && before !== undefined && Math.abs(before.since - since) <= sameTurnMs,
         });
         if (decision.action === "raise") {
           // An error that follows its waiting in the same turn takes over the Done's wait: the settle is for the turn, not for each word.
-          const replaces = before!.turn === "waiting" && decision.notice.kind === "failed" ? this.standing.get(id) : undefined;
+          const replaces = !between && before!.turn === "waiting" && decision.notice.kind === "failed" ? this.standing.get(id) : undefined;
           this.standing.set(id, {
             notice: decision.notice, tab: tab.tab.toLowerCase(), raisedAt: replaces?.raisedAt ?? now, held: false, seen: false,
             viewing: new Map(), looked: new Set(), logged: new Map(), confirmed: false, pushed: new Set(), handled: new Set(),
@@ -215,8 +261,11 @@ export class PushWatcher {
       if (!seen.has(id)) { this.readings.delete(id); this.standing.delete(id); this.lastPush.delete(id); }
     }
     this.facts = facts;
-    this.dates = this.world.turnDates([...facts.keys()]);
-    this.stamp = this.world.tabsStamp();
+    // The dates read before the ask; a pane the ask found that wasn't known before is a starting point and is read now.
+    const fresh = [...facts.keys()].filter((id) => !files.dates.has(id));
+    const added = fresh.length > 0 ? this.world.turnDates(fresh) : new Map<string, number>();
+    this.dates = new Map([...facts.keys()].map((id) => [id, files.dates.get(id) ?? added.get(id) ?? 0] as const));
+    this.stamp = files.stamp;
   }
 
   private controllerOf(pane: PaneFacts): Controller {
@@ -386,9 +435,12 @@ export class Shared<T> {
     return this.stamped().then((answer) => answer.value);
   }
 
-  /** The answer with the time its ask began, which is what a turn's age is counted from. */
-  stamped(): Promise<{ value: T; startedAt: number }> {
-    if (this.value && this.now() - this.at < this.maxAgeMs) {
+  /**
+   * The answer with the time its ask began, which is what a turn's age is counted from. `notBefore` is the time of a change the answer must
+   * know of: a shared answer whose ask began earlier (a moment old, the port proxy's) is not used, and the ask is made again.
+   */
+  stamped(notBefore = -Infinity): Promise<{ value: T; startedAt: number }> {
+    if (this.value && this.now() - this.at < this.maxAgeMs && this.startedAt >= notBefore) {
       const kept = this.startedAt;
       return this.value.then((value) => ({ value, startedAt: kept }));
     }

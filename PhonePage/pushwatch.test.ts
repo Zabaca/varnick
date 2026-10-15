@@ -41,14 +41,18 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     logs: [] as string[],
     /** How long after an ask starts the relay runs, in ms. */
     latency: 0,
+    /** The newest turn-file date each ask said its answer must know of, and something that happens while an ask runs (a hook writing a turn file). */
+    notBefore: [] as number[],
+    duringAsk: null as (() => void) | null,
     /** While set, a send waits for it (a retry waiting out a Retry-After). */
     hold: null as Promise<void> | null,
   };
   const world: PushWorld = {
     now: () => now,
     ownID: own,
-    askTabs: async () => {
+    askTabs: async (notBefore) => {
       state.asks += 1;
+      state.notBefore.push(notBefore);
       const startedAt = now;
       // The relay runs after the ask starts, and its answer may be the shared one: a host's age is counted when it runs.
       const ran = now + state.latency;
@@ -62,7 +66,10 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
         const { keepBegan: _, ...rest } = p;
         return { kind: "claude", running: true, ...rest, turnAge: Math.floor((ran - state.began.get(p.id)!.at) / 1000) };
       });
-      return { result: { ok: true as const, reply: { tabs: [{ tab, panes }] } }, startedAt };
+      const answer = { result: { ok: true as const, reply: { tabs: [{ tab, panes }] } }, startedAt };
+      // What happens after the relay has read the files and before the answer is back.
+      state.duringAsk?.();
+      return answer;
     },
     turnDates: (ids) => new Map(ids.map((id) => [id, state.dates.get(id) ?? 0])),
     newPaneFolder: () => { const seen = state.folder; state.folder = false; return seen; },
@@ -468,6 +475,147 @@ describe("a send is off the tick", () => {
   });
 });
 
+describe("a turn that is over before it is seen", () => {
+  test("a turn shorter than the cadence: waiting again with a later start is a Done", async () => {
+    const r = rig();
+    r.state.panes[0] = { id: pane, turn: "waiting", control: phone, clients: 1 };
+    await r.watcher.tick();
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    await r.advance(idleAskMs - tickMs * 3);
+    // A turn ran and ended since the last look, and no look saw it working: the word is the same, its start is not.
+    r.state.began.set(pane, { word: "waiting", at: r.now() - 3000 });
+    await r.advance(tickMs * 4);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
+    expect(r.state.logs.some((line) => line.startsWith("push watch: a turn ran between two looks"))).toBe(true);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("the same turn read again is not another: its start only wobbles by whole seconds and the relay's run", async () => {
+    const r = rig();
+    r.state.panes[0] = { id: pane, turn: "waiting", control: phone, clients: 1 };
+    r.state.latency = 900;
+    await r.watcher.tick();
+    for (let ask = 0; ask < 8; ask += 1) {
+      r.state.latency = ask % 2 === 0 ? 1400 : 100;
+      await r.advance(idleAskMs);
+    }
+    expect(r.state.asks).toBeGreaterThan(5);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a dialog that was raised and answered between two looks is a Needs me when the next one is read", async () => {
+    const r = rig();
+    r.state.panes[0] = { id: pane, turn: "permission", control: phone, clients: 1 };
+    await r.watcher.tick();
+    await r.advance(idleAskMs - tickMs * 3);
+    r.state.began.set(pane, { word: "permission", at: r.now() - 3000 });
+    await r.advance(tickMs * 4);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "needs", turn: "permission" });
+  });
+
+  test("a turn file written while the host is being asked is a change the next look sees", async () => {
+    const r = rig();
+    r.state.panes[0] = { id: pane, turn: "working", control: phone, clients: 1 };
+    await r.watcher.tick();
+    // The prompt is sent: the turn file changes and the host is asked. While its relay runs the turn ends and the hook writes "waiting":
+    // the answer says working, and a date read after the answer would call that handled.
+    r.state.dates.set(pane, 1);
+    r.state.duringAsk = () => {
+      r.state.duringAsk = null;
+      r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+      r.state.dates.set(pane, 2);
+    };
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
+  });
+
+  test("an answer must know of the newest turn file write: the ask says which, so a shared answer from before it is not used", async () => {
+    const r = rig();
+    await r.watcher.tick();
+    expect(r.state.notBefore.at(-1)).toBe(0);
+    // A turn file written: the ask that follows must be answered by a relay that ran after the write.
+    r.state.dates.set(pane, 1_700_000_123_456);
+    await r.advance(tickMs);
+    expect(r.state.notBefore.at(-1)).toBe(1_700_000_123_456);
+    // And an ask that nothing in the files caused names the newest date the watcher knows.
+    r.state.stamp = "2";
+    await r.advance(tickMs);
+    expect(r.state.notBefore.at(-1)).toBe(1_700_000_123_456);
+  });
+});
+
+describe("work that goes on in the background", () => {
+  test("a turn that ends with background work is silent while it runs, and says so in the log; when it drains the Done comes", async () => {
+    const r = rig();
+    r.state.panes[0] = { id: pane, turn: "working", control: phone, clients: 1 };
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "background" };
+    r.state.dates.set(pane, 1);
+    await r.advance(settleMs * 3);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    expect(r.state.sends).toEqual([]);
+    expect(r.state.logs.filter((line) => line.startsWith("push watch tick")).at(-1)).toBe("push watch tick panes=1 working=0 waiting=0 background=1 notices=0");
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    await r.advance(idleAskMs + busyAskMs);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+});
+
+describe("what the watcher says about itself", () => {
+  const mine = (r: ReturnType<typeof rig>) => r.state.logs.filter((line) => line.startsWith("push watch"));
+
+  test("it says how many subscriptions it watches, at the start and when the number changes", async () => {
+    const r = rig({ subscribed: [{ device: phone }, { device: tablet }] });
+    await r.watcher.tick();
+    expect(r.state.logs[0]).toBe("push watching 2 subscriptions");
+    await r.advance(tickMs * 3);
+    expect(r.state.logs.filter((line) => line.startsWith("push watching"))).toHaveLength(1);
+    for (const entry of [...r.store.all()]) r.store.drop(entry);
+    await r.advance(tickMs);
+    expect(r.state.logs.at(-1)).toBe("push watching 0 subscriptions");
+  });
+
+  test("a tick line gives the counts, once a minute when nothing changes and at once when something does", async () => {
+    const r = rig();
+    r.state.panes = [{ id: pane, turn: "working", control: phone, clients: 1 }, { id: other, turn: "waiting", control: phone, clients: 1 }];
+    await r.advance(tickMs * 3);
+    expect(mine(r).filter((line) => line.startsWith("push watch tick"))).toEqual(["push watch tick panes=2 working=1 waiting=1 background=0 notices=0"]);
+    await r.advance(idleAskMs * 3 - tickMs * 3);
+    expect(mine(r).filter((line) => line.startsWith("push watch tick"))).toHaveLength(3);
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(tickMs);
+    expect(mine(r).at(-1)).toContain("working=0 waiting=2 background=0 notices=1");
+  });
+
+  test("a host that can't be asked is said once, and again when it says something else", async () => {
+    const r = rig();
+    r.state.ok = false;
+    for (let i = 0; i < 4; i += 1) { r.state.stamp = `s${i}`; await r.advance(tickMs); }
+    expect(mine(r).filter((line) => line.includes("can't read"))).toEqual(["push watch can't read the host's tabs: down"]);
+    r.state.ok = true;
+    await r.advance(tickMs * 2);
+    r.state.ok = false;
+    r.state.stamp = "again";
+    await r.advance(tickMs);
+    expect(mine(r).filter((line) => line.includes("can't read"))).toHaveLength(2);
+  });
+
+  test("no line names a pane, a tab, a device id or an endpoint", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    await r.advance(settleMs * 2);
+    const text = r.state.logs.join("\n");
+    for (const secret of [pane, tab, own, phone, "fcm.googleapis"]) expect(text).not.toContain(secret);
+  });
+});
+
 describe("how often the host is asked once everything is pushed", () => {
   test("a Done pushed to every subscription drops back to the idle cadence", async () => {
     const r = rig();
@@ -772,7 +920,7 @@ describe("what the log says of each decision", () => {
     r.state.panes[0].control = phone;
     await finishTurn(r);
     await r.advance(settleMs + tickMs * 2);
-    expect(r.state.logs).toEqual([
+    expect(r.state.logs.filter((line) => /^push (notice|decide|[A-Z])/.test(line))).toEqual([
       "push notice done raised",
       "push decide done Phone -> waiting(settle) controller=device",
       "push decide done Phone -> pushing controller=device",
@@ -879,6 +1027,18 @@ describe("one ask for two readers", () => {
     await expect(shared.get()).rejects.toThrow();
     fail = false;
     expect(await shared.get()).toBe(4);
+  });
+
+  test("an answer whose ask began before a change the caller needs to know of is not shared", async () => {
+    let now = 1000;
+    let loads = 0;
+    const shared = new Shared(async () => { loads += 1; return loads; }, () => now, 1500);
+    expect((await shared.stamped()).value).toBe(1);
+    now = 1200;
+    expect((await shared.stamped(900)).value).toBe(1);
+    expect((await shared.stamped(1000)).value).toBe(1);
+    expect(await shared.stamped(1100)).toEqual({ value: 2, startedAt: 1200 });
+    expect((await shared.stamped(1200)).value).toBe(2);
   });
 
   test("the answer says when its ask began, also to a caller that shares an earlier one", async () => {
