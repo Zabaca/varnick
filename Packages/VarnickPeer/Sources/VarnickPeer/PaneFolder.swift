@@ -117,22 +117,27 @@ public enum PaneFolder {
         return PaneTurn(turn, since: since)
     }
 
-    /// Waiting from when the transcript says the user stopped Claude (no hook fires then), and `.background` when
-    /// a waiting turn left agents, teammates, workflows or shells running. The turn file is never rewritten; a waiting turn does add the conversation to the pane's list
-    /// (`recordConversation`).
+    /// Waiting from when the transcript says the user stopped Claude (no hook fires then; `interrupted`), `.background` when
+    /// a waiting turn left agents, teammates, workflows or shells running, and `.failed` when it ended on an API error with none
+    /// running (background wins: that work starts Claude's next turn by itself). The turn file is never rewritten; a waiting turn does
+    /// add the conversation to the pane's list (`recordConversation`).
     public static func corrected(_ recorded: PaneTurn, for id: UUID, transcriptPath: String?) -> PaneTurn {
         var result = recorded
         guard let transcriptPath else { return result }
         if result.turn != .waiting, let changed = modificationDate(transcriptPath), changed > result.since,
            let stopped = TranscriptReader.stoppedAt(path: transcriptPath), stopped > result.since {
-            result = PaneTurn(.waiting, since: stopped)
+            result = PaneTurn(.waiting, since: stopped, interrupted: true)
         }
         if result.turn == .waiting {
             let input = stopInput(for: id, since: result.since, transcriptPath: transcriptPath)
             recordConversation(for: id, transcriptPath: transcriptPath)
             let earlier = earlierTranscripts(for: id, transcriptPath: transcriptPath)
-            let work = TranscriptReader.pendingBackground(path: transcriptPath, since: result.since, input: input, earlier: earlier)
-            if !work.isEmpty { result = PaneTurn(.background, since: result.since, background: work) }
+            let ended = TranscriptReader.endOfWaitingTurn(path: transcriptPath, since: result.since, input: input, earlier: earlier)
+            if !ended.work.isEmpty {
+                result = PaneTurn(.background, since: result.since, background: ended.work)
+            } else if !result.interrupted, let failure = ended.failure {
+                result = PaneTurn(.failed, since: result.since, failure: failure)
+            }
         }
         return result
     }

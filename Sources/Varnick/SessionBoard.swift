@@ -5,7 +5,7 @@ import VarnickPeer
 import SwiftUI
 
 extension Turn {
-    /// What a card says of a turn that waits on the user in the middle of Claude's work; nil for
+    /// What a card says of a turn that waits on the user in the middle of Claude's work, or that stopped on an API error; nil for
     /// working and for a turn that simply ended.
     var mark: String? {
         switch self {
@@ -14,6 +14,7 @@ extension Turn {
         case .question: "Question"
         case .plan: "Plan to approve"
         case .input: "MCP input"
+        case .failed: "API error"
         }
     }
 
@@ -354,6 +355,12 @@ final class SessionBoard: ObservableObject {
     }
 
     static var panelIsVisible: Bool { NSApp.windows.first(where: { $0 is LauncherPanel })?.isVisible == true }
+
+    /// The panel is the key window, which is how an accessory app is frontmost (`SessionNotifier`).
+    static var panelIsKey: Bool {
+        guard let panel = NSApp.windows.first(where: { $0 is LauncherPanel }) else { return false }
+        return panel.isVisible && panel.isKeyWindow
+    }
 
     /// Tab, ⇧Tab and `!problems`. Problems reads its files only while it shows; the cards keep their tick on both tabs, and returning to
     /// Sessions asks the paired Macs again.
