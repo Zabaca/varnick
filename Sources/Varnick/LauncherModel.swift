@@ -3151,11 +3151,11 @@ final class LauncherModel: ObservableObject {
         tabs.lazy.flatMap(\.sessions).first { $0.id == id && $0.isClaude }
     }
 
-    /// Whether the user is looking at `pane`: the panel is the key window and shows the session board, or a tab (not Settings) whose focused pane
-    /// this is. A pinned panel behind another app isn't key.
+    /// Whether the user is looking at `pane`: the panel is the key window and shows the session board's Sessions tab, or a tab (not
+    /// Settings) whose focused pane this is. A pinned panel behind another app isn't key.
     func isOnScreen(_ pane: ClaudeSession) -> Bool {
         guard SessionBoard.panelIsKey, !showingSettings else { return false }
-        return showingBoard || (showsTerminal && activeTab?.focused === pane)
+        return (showingBoard && board.tab == .sessions) || (showsTerminal && activeTab?.focused === pane)
     }
 
     /// Reads the turn files of the panes on this Mac that haven't started since a restart, which a zmx session may still be running Claude for, as

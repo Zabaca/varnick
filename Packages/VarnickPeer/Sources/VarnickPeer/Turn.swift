@@ -15,9 +15,7 @@ public enum Turn: String, Sendable {
     /// The turn ended with background agents, busy teammates, workflows or shells still running. Never in the turn file: the reader
     /// derives it from the transcript (`PaneFolder.corrected`), and it travels to peers as text like the rest.
     case background
-    /// The turn stopped on an API error (a rate limit, say) instead of finishing. Like `.background`, never in the turn file: the reader
-    /// derives it from the transcript (`PaneFolder.corrected`), and it travels to peers as text. A build without it reads the word as
-    /// unknown (`PeerSessionStatus.turn` is nil).
+    /// The turn stopped on an API error. Derived like `.background`, never in the turn file; see `docs/agents/where-it-breaks.md`, Notices.
     case failed
 }
 

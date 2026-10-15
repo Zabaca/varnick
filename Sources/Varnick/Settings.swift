@@ -746,7 +746,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.notifyNeedsMe).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Is done",
-                                       detail: "A turn ended and no background agents, teammates, workflows or shells are still running. A softer sound; stopping Claude with esc gives none.") {
+                                       detail: "A turn ended and no background agents, teammates, workflows or shells are still running. A softer sound; stopping Claude with Esc gives none.") {
                                 Toggle("", isOn: $settings.notifyDone).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Stops on an error",

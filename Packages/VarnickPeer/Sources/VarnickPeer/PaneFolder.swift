@@ -117,10 +117,8 @@ public enum PaneFolder {
         return PaneTurn(turn, since: since)
     }
 
-    /// Waiting from when the transcript says the user stopped Claude (no hook fires then; `interrupted`), `.background` when
-    /// a waiting turn left agents, teammates, workflows or shells running, and `.failed` when it ended on an API error with none
-    /// running (background wins: that work starts Claude's next turn by itself). The turn file is never rewritten; a waiting turn does
-    /// add the conversation to the pane's list (`recordConversation`).
+    /// Waiting from the transcript's interrupt (`interrupted`), `.background` when a waiting turn left work running, `.failed` when it
+    /// ended on an API error with none. The turn file is never rewritten; a waiting turn adds the conversation to the pane's list.
     public static func corrected(_ recorded: PaneTurn, for id: UUID, transcriptPath: String?) -> PaneTurn {
         var result = recorded
         guard let transcriptPath else { return result }

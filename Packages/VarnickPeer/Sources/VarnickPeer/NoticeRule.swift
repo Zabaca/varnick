@@ -9,22 +9,9 @@ public enum NoticeKind: Equatable, Sendable {
     case needsYou(Turn)
     /// Stopped on an error, with the kind when the reader knew it (a paired Mac's reply carries the word alone).
     case failed(TurnFailure?)
-
-    public var category: NoticeCategory {
-        switch self {
-        case .done: .done
-        case .needsYou: .needsMe
-        case .failed: .error
-        }
-    }
 }
 
-/// The three switches of Settings › Claude, "Notify me when a session…".
-public enum NoticeCategory: String, CaseIterable, Sendable {
-    case needsMe, done, error
-}
-
-/// Which categories are on; all are by default.
+/// The three switches of Settings › Claude, "Notify me when a session…"; all on by default.
 public struct NoticeSwitches: Equatable, Sendable {
     public var needsMe: Bool
     public var done: Bool
@@ -36,11 +23,11 @@ public struct NoticeSwitches: Equatable, Sendable {
         self.error = error
     }
 
-    public func isOn(_ category: NoticeCategory) -> Bool {
-        switch category {
-        case .needsMe: needsMe
+    public func allows(_ kind: NoticeKind) -> Bool {
+        switch kind {
+        case .needsYou: needsMe
         case .done: done
-        case .error: error
+        case .failed: error
         }
     }
 }
@@ -64,13 +51,15 @@ public enum NoticeRule {
     /// | working or background | waiting, not from Esc | Done |
     /// | any other word | permission, question, plan or input | Needs you |
     /// | working or background | failed | Stopped on an error |
+    /// | waiting, in the same turn (`sameTurn`) | failed | Stopped on an error |
     /// | anything | working or background | none, clears |
     /// | permission, question, plan or input | waiting | none, clears |
     ///
-    /// A row that raises also needs `inControl` (the pane isn't showing a card), not `onScreen`, and its category switched on; otherwise
-    /// the turn has still moved on, so the standing notice is cleared. Any change the table has no row for clears too.
-    public static func decide(from old: Turn?, to new: Turn, failure: TurnFailure? = nil, interrupted: Bool = false, inControl: Bool,
-                              onScreen: Bool, switches: NoticeSwitches = NoticeSwitches()) -> NoticeDecision {
+    /// The same-turn row is the error entry arriving a read after the waiting did. A row that raises also needs `inControl` (the pane
+    /// isn't showing a card), not `onScreen`, and its category switched on; otherwise the turn has still moved on, so the standing
+    /// notice is cleared. Any change the table has no row for clears too.
+    public static func decide(from old: Turn?, to new: Turn, failure: TurnFailure? = nil, interrupted: Bool = false, sameTurn: Bool = false,
+                              inControl: Bool, onScreen: Bool, switches: NoticeSwitches = NoticeSwitches()) -> NoticeDecision {
         guard let old else { return .none }
         guard old != new else { return .none }
         let wasRunning = old == .working || old == .background
@@ -83,9 +72,9 @@ public enum NoticeRule {
         case .permission, .question, .plan, .input:
             kind = .needsYou(new)
         case .failed:
-            kind = wasRunning ? .failed(failure) : nil
+            kind = wasRunning || (old == .waiting && sameTurn) ? .failed(failure) : nil
         }
-        guard let kind, inControl, !onScreen, switches.isOn(kind.category) else { return .clear }
+        guard let kind, inControl, !onScreen, switches.allows(kind) else { return .clear }
         return .raise(kind)
     }
 }

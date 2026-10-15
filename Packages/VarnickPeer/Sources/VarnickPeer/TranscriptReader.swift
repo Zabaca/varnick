@@ -288,10 +288,8 @@ extension TranscriptReader {
         return stop
     }
 
-    /// Whether the last conversation entry in the tail is Claude Code's API-error entry (an assistant entry with `isApiErrorMessage`, and
-    /// `error` for the kind), dated at or after the turn's start. `since` is when the waiting turn began, which the `StopFailure` hook
-    /// writes just after Claude Code writes the entry, so the entry may be a moment older (`PaneFolder.staleWindow`). Undocumented: a
-    /// renamed field finds nothing, and the turn reads as an ordinary waiting.
+    /// The kind of API error if the tail's last conversation entry is Claude Code's API-error entry, dated no earlier than
+    /// `PaneFolder.staleWindow` before `since` (the hook writes the turn file just after the entry).
     static func apiFailure(tail: Data, startsMidLine: Bool, since: Date) -> TurnFailure? {
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
         if startsMidLine, !lines.isEmpty { lines.removeFirst() }
@@ -371,8 +369,7 @@ extension TranscriptReader {
     /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's tasks,
     /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`), which reads the
     /// pane's `earlier` conversations too.
-    ///
-    /// The same tail read says whether the turn stopped on an API error (`apiFailure`), which counts only with no background work.
+    /// The same tail read gives the API error (`apiFailure`), which counts only with no background work.
     static func endOfWaitingTurn(path: String, since: Date, input: StopInput, earlier: [String]) -> (work: BackgroundWork, failure: TurnFailure?) {
         guard let (tail, startsMidLine) = readTail(path) else { return (BackgroundWork(), nil) }
         var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)

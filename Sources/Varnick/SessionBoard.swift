@@ -14,7 +14,7 @@ extension Turn {
         case .question: "Question"
         case .plan: "Plan to approve"
         case .input: "MCP input"
-        case .failed: "API error"
+        case .failed: TurnFailure.other.word
         }
     }
 

@@ -419,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func showNotices(_ notices: [SessionNotifier.Notice]) {
         noticeDot.urgent = notices.contains { $0.kind.isUrgent }
         noticeDot.isHidden = notices.isEmpty
-        statusItem.button?.setAccessibilityValue(notices.isEmpty ? nil : "\(notices.count) sessions need a look")
+        statusItem.button?.setAccessibilityValue(notices.isEmpty ? nil : notices.count == 1 ? "1 session needs a look" : "\(notices.count) sessions need a look")
     }
 
     /// The notices above the usual items, newest first, as the menu opens.
