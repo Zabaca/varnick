@@ -254,6 +254,18 @@ describe("Claude Code's presence marker", () => {
     expect(existsSync(join(dir, presenceMarkerName))).toBe(false);
   });
 
+  test("the server stops on SIGHUP as on SIGTERM, since `zmx kill` sends the child SIGHUP and then SIGKILL, and clears a stale marker when no push is set up", () => {
+    // server.ts starts a server when imported, so it is read as text, as protocol.test.ts reads it.
+    const server = readFileSync(new URL("./server.ts", import.meta.url), "utf8");
+    expect(server).toContain('process.on("SIGTERM", stop);');
+    expect(server).toContain('process.on("SIGHUP", stop);');
+    expect(server).toMatch(/if \(!push && config\.push\) presenceMarker\(config\.push\.folder\)\(false\);/);
+    // Varnick's side deletes the marker itself when it stops the server, with the name the server uses.
+    const runner = readFileSync(new URL("../Sources/Varnick/PhonePageRunner.swift", import.meta.url), "utf8");
+    expect(runner).toContain("ClaudeCommand.presenceMarkerName");
+    expect(runner).toMatch(/guard enabled else \{[^}]*\}[\s\S]*?removePresenceMarker\(\)\s*\n\s*return \.stopped/);
+  });
+
   test("a host that sends no push has none", async () => {
     const dir = folder();
     writeFileSync(join(dir, presenceMarkerName), "");
