@@ -10,8 +10,8 @@ import { notes, type ProxyStatus } from "./proxy";
 import { answers, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 
 // The proxy on throwaway ports and a copy of its code, never the running page. The "tailnet address" is ::1 and the server is on 127.0.0.1,
-// the same port on two addresses as on a real host. Nothing here listens on a tailnet address. Run it from a shell with no HTTP_PROXY or
-// HTTPS_PROXY: Bun sends even a request to ::1 through one, and a request would then arrive from the proxy's node, not from here.
+// the same port on two addresses as on a real host. Nothing here listens on a tailnet address. It passes with
+// HTTP_PROXY and HTTPS_PROXY set or not, because constructing a `PortProxy` exempts localhost (proxyenv.test.ts runs it with them set).
 
 const NAME = "test.example.ts.net";
 const DEVICE: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nPHONE", name: "Phone" };

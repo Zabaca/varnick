@@ -10,7 +10,7 @@ import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Device, WhoisNode } from "./checks";
 import {
-  aimsOf, buildStatus, checkProxyFetch, checkProxyHost, decideProxyCaller, downstreamHeaders, notes, openFailure, planPorts, proxiedOrigin, upstreamHeaders,
+  aimsOf, buildStatus, checkProxyFetch, checkProxyHost, decideProxyCaller, downstreamHeaders, notes, openFailure, planPorts, proxiedOrigin, upstreamHeaders, withLocalNoProxy,
   type Admission, type PaneAim, type PortFacts, type PortPlan,
 } from "./proxy";
 import { Slots } from "./relay";
@@ -145,6 +145,11 @@ export class PortProxy {
   constructor(private world: ProxyWorld, private options: ProxyOptions) {
     this.upstreams = options.upstreams ?? ["127.0.0.1", "[::1]"];
     this.tls = options.tls !== false;
+    // The forwards below are `fetch` to localhost, which HTTP_PROXY would otherwise take (docs/agents/where-it-breaks.md, Port proxy).
+    // Both spellings, each holding both's entries: Bun reads the lowercase one first when it is set.
+    const exempt = withLocalNoProxy([process.env.NO_PROXY, process.env.no_proxy].filter(Boolean).join(","));
+    process.env.NO_PROXY = exempt;
+    process.env.no_proxy = exempt;
   }
 
   /** The ports held now. */
