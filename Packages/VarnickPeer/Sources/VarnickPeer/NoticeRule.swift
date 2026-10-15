@@ -9,18 +9,22 @@ public enum NoticeKind: Equatable, Sendable {
     case needsYou(Turn)
     /// Stopped on an error, with the kind when the reader knew it (a paired Mac on protocol 27 sends it, an older one didn't).
     case failed(TurnFailure?)
+    /// The session told the user something itself (`PaneMessage`, option 04 of `phone-page-is-only-a-browser-tab`); the title is what the menu says.
+    case said(String)
 }
 
-/// The three switches of Settings › Claude, "Notify me when a session…"; all on by default.
+/// The four switches of Settings › Claude, "Notify me when a session…"; all on by default.
 public struct NoticeSwitches: Equatable, Sendable {
     public var needsMe: Bool
     public var done: Bool
     public var error: Bool
+    public var messages: Bool
 
-    public init(needsMe: Bool = true, done: Bool = true, error: Bool = true) {
+    public init(needsMe: Bool = true, done: Bool = true, error: Bool = true, messages: Bool = true) {
         self.needsMe = needsMe
         self.done = done
         self.error = error
+        self.messages = messages
     }
 
     public func allows(_ kind: NoticeKind) -> Bool {
@@ -28,6 +32,7 @@ public struct NoticeSwitches: Equatable, Sendable {
         case .needsYou: needsMe
         case .done: done
         case .failed: error
+        case .said: messages
         }
     }
 }
@@ -76,5 +81,38 @@ public enum NoticeRule {
         }
         guard let kind, inControl, !onScreen, switches.allows(kind) else { return .clear }
         return .raise(kind)
+    }
+
+    // MARK: A message
+
+    /// What a change of a pane's message tells the user (the table in option 04 of `phone-page-is-only-a-browser-tab`). `PhonePage` keeps a copy
+    /// in `pushrule.ts`: a change to one is a change to both.
+    ///
+    /// | What happens | Notice |
+    /// |---|---|
+    /// | the first message read for the pane (`first`: a launch, a pane restored, a host that answers again) | none: a starting point |
+    /// | a message newer than the last by more than `PaneMessage.sameMessage` | Said, replacing what stands |
+    /// | the message is gone (the next prompt, `/clear`, a start) | none, clears a standing message |
+    ///
+    /// A message that raises also needs `inControl`, not `onScreen` and its switch on; otherwise nothing is raised and what stands stays. The
+    /// caller clears only a standing Said on `.clear`.
+    public static func decide(said new: PaneMessage?, from old: PaneMessage?, first: Bool, inControl: Bool, onScreen: Bool,
+                              switches: NoticeSwitches = NoticeSwitches()) -> NoticeDecision {
+        guard !first else { return .none }
+        guard let new else { return old == nil ? .none : .clear }
+        if let old, abs(new.since.timeIntervalSince(old.since)) <= PaneMessage.sameMessage { return .none }
+        guard inControl, !onScreen, switches.messages else { return .none }
+        return .raise(.said(new.title))
+    }
+
+    /// A turn's decision over the notice that stands. A standing Said is folded into by a Done (nothing is raised: the turn's end is what the
+    /// message announced) and stays when the turn goes on or a dialog is answered; Needs you and an error replace it. Any other standing notice
+    /// is the turn's decision alone.
+    public static func merge(_ decision: NoticeDecision, standing: NoticeKind?) -> NoticeDecision {
+        guard case .said? = standing else { return decision }
+        switch decision {
+        case .raise(.done), .clear, .none: return .none
+        case .raise: return decision
+        }
     }
 }

@@ -9,10 +9,11 @@ extension NoticeKind {
         case .done: "Done"
         case .needsYou(let turn): turn.mark ?? "Needs you"
         case .failed(let failure): "Stopped on an error (\((failure ?? .other).word))"
+        case .said(let title): title
         }
     }
 
-    /// Needs you and an error get the louder cue and the orange dot; Done is softer.
+    /// Needs you, an error and a message get the louder cue and the orange dot (Claude chose to interrupt); Done is softer.
     var isUrgent: Bool {
         if case .done = self { return false }
         return true
@@ -21,20 +22,23 @@ extension NoticeKind {
     /// A system sound's name.
     var soundName: String { isUrgent ? "Funk" : "Tink" }
 
-    /// The word the pane's turn must still have for the notice to hold.
-    var turn: Turn {
+    /// The word the pane's turn must still have for the notice to hold; a message holds whatever the turn does.
+    var turn: Turn? {
         switch self {
         case .done: .waiting
         case .needsYou(let turn): turn
         case .failed: .failed
+        case .said: nil
         }
     }
 
     /// Done and an error wait to be read again (`SessionNotifier.settle`): the turn file is written just before the transcript says whether
     /// background work or an API error goes with the waiting.
     var settles: Bool {
-        if case .needsYou = self { return false }
-        return true
+        switch self {
+        case .needsYou, .said: false
+        case .done, .failed: true
+        }
     }
 }
 
@@ -62,6 +66,9 @@ final class SessionNotifier: ObservableObject {
     private var lastSound = Date.distantPast
     private var lastSoundWasUrgent = false
     private var playing: NSSound?
+    /// When each pane last alerted for a message: one alert a minute a pane (option 04 of `phone-page-is-only-a-browser-tab`).
+    private var lastMessageAlert: [UUID: Date] = [:]
+    static let messageAlertEvery: TimeInterval = 60
     private static let settleAfter: TimeInterval = 1
     /// A peer whose host stops answering doesn't hold a pending notice forever.
     private static let settleGiveUp: TimeInterval = 15
@@ -85,8 +92,11 @@ final class SessionNotifier: ObservableObject {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
         // A peer's date moves with each reply, so the same turn is told within a couple of seconds.
         let sameTurn = old.map { abs($0.since.timeIntervalSince(new.since)) <= 2 } ?? false
-        let decision = NoticeRule.decide(from: old?.turn, to: new.turn, failure: new.failure, interrupted: new.interrupted, sameTurn: sameTurn,
-                                         inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches)
+        // A standing message folds a Done into itself, and an error or Needs you replaces it (`NoticeRule.merge`).
+        let decision = NoticeRule.merge(
+            NoticeRule.decide(from: old?.turn, to: new.turn, failure: new.failure, interrupted: new.interrupted, sameTurn: sameTurn,
+                              inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
+            standing: notices.first { $0.id == pane.id }?.kind)
         // An error that follows its waiting stands for the running word before it.
         let from = unsettled[pane.id]?.from ?? (old?.turn == .waiting ? .working : old?.turn ?? .working)
         switch decision {
@@ -96,6 +106,21 @@ final class SessionNotifier: ObservableObject {
             clear(pane.id)
             unsettled[pane.id] = Unsettled(from: from, readAt: Date())
         case .raise(let kind): raise(kind, for: pane)
+        }
+    }
+
+    /// A pane's message changed (`ClaudeSession.onSaidChange`): a new one raises Said, replacing what stands; one that is gone clears a standing Said.
+    func messageChanged(in pane: ClaudeSession, from old: PaneMessage?, to new: PaneMessage?, first: Bool) {
+        guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
+        switch NoticeRule.decide(said: new, from: old, first: first, inControl: pane.away == nil, onScreen: model.isOnScreen(pane),
+                                 switches: Settings.shared.noticeSwitches) {
+        case .none: break
+        case .clear:
+            if case .said? = notices.first(where: { $0.id == pane.id })?.kind { clear(pane.id) }
+        case .raise(let kind):
+            // It supersedes a Done or an error still waiting to be confirmed.
+            unsettled[pane.id] = nil
+            raise(kind, for: pane)
         }
     }
 
@@ -126,8 +151,10 @@ final class SessionNotifier: ObservableObject {
             }
             unsettled[id] = nil
             guard let turn = pane.turn else { continue }
-            let decision = NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
-                                             inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches)
+            let decision = NoticeRule.merge(
+                NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
+                                  inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
+                standing: notices.first { $0.id == id }?.kind)
             if case .raise(let kind) = decision { raise(kind, for: pane) }
         }
     }
@@ -141,16 +168,22 @@ final class SessionNotifier: ObservableObject {
             let status = await Task.detached { Zmx.status(of: id) }.value
             guard let self, let model = self.model, let pane = model.claudePane(id), status.running,
                   status.control == nil || Zmx.sameID(status.control, PeerIdentity.id),
-                  pane.turn?.turn == kind.turn, pane.away == nil, !model.isOnScreen(pane) else { return }
+                  kind.turn.map({ pane.turn?.turn == $0 }) ?? (pane.said != nil), pane.away == nil, !model.isOnScreen(pane) else { return }
             self.post(kind, for: id)
         }
     }
 
     private func post(_ kind: NoticeKind, for id: UUID) {
+        // A message alerts at most once a minute a pane; one within the minute replaces the standing notice and its menu line quietly.
+        var quiet = false
+        if case .said = kind {
+            quiet = lastMessageAlert[id].map { Date().timeIntervalSince($0) < Self.messageAlertEvery } ?? false
+            if !quiet { lastMessageAlert[id] = Date() }
+        }
         notices.removeAll { $0.id == id }
         notices.insert(Notice(id: id, kind: kind), at: 0)
         reportPanes()
-        play(kind)
+        if !quiet { play(kind) }
     }
 
     /// One sound per notice; several in the same moment don't stack, but a louder one replaces a softer.

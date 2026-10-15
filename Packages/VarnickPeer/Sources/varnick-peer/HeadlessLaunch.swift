@@ -45,6 +45,7 @@ extension HeadlessPeerHost {
                 try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
                 PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: uuid)
                 PaneFolder.clearSubagentWork(for: uuid)
+                PaneFolder.clearMessage(for: uuid)
             } catch {
                 failed()
                 return stateFailure(error)
@@ -60,7 +61,8 @@ extension HeadlessPeerHost {
             let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
             shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
                 skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: startID,
-                prompt: prompt, problems: problemsBoard))
+                prompt: prompt, problems: problemsBoard,
+                mcpConfig: NotifyTool.relayConfiguration(command: root.appendingPathComponent("varnick-peer").path, pane: uuid)))
         }
         guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
             failed()
@@ -119,6 +121,7 @@ extension HeadlessPeerHost {
         ["TERM=xterm-256color", "COLORTERM=truecolor", "LANG=en_US.UTF-8",
          "HOME=\(account.home)", "USER=\(account.user)", "LOGNAME=\(account.user)", "SHELL=\(account.shell)",
          "VARNICK_SESSION_FILE=\(PaneFolder.sessionFile(for: id).path)", "VARNICK_PANE_ID=\(id.uuidString.lowercased())",
-         "VARNICK_PROJECT=\(Project.root(of: folder))", "DISABLE_AUTO_UPDATE=true"] + Zmx.paneEnvironment
+         "VARNICK_PROJECT=\(Project.root(of: folder))", "DISABLE_AUTO_UPDATE=true",
+         ClaudeCommand.presenceEntry(phoneFolder: root.appendingPathComponent("phone", isDirectory: true))] + Zmx.paneEnvironment
     }
 }

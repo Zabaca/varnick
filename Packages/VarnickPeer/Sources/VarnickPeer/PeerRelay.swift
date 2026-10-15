@@ -374,6 +374,7 @@ public enum PeerRelay {
         var status = status
         if !Zmx.sameID(status.control, device) { status.control = nil }
         status.work = nil   // the page doesn't show work links (ADR 0020)
+        status.said = nil   // a device gets a message's words in `tabs`, which the page and its worker read; nothing asks `status` for them
         return status
     }
 

@@ -210,6 +210,7 @@ enum PeerFollow {
             status.conversation = reported(record.id) ?? record.conversationID
             if let found = PeerTurn.read(for: record.id) { status.take(found) }
             status.work = PeerWork.read(for: record.id)
+            status.said = PeerSaid.read(for: record.id)
             if status.control == nil || Zmx.sameID(status.control, host), !record.title.isEmpty { status.title = record.title }
             statuses[name] = status
         }
@@ -276,7 +277,8 @@ enum PeerOpenTabs {
         return PeerPane(id: id, kind: .claude, title: title.isEmpty ? "New session" : title, folder: record.directory,
                         running: status?.running == true, clients: status?.clients, control: status?.control, agent: record.agent,
                         conversation: record.conversation, turn: found?.turn, turnAge: found?.age, failure: found?.failure,
-                        esc: found?.interrupted == true ? true : nil, work: PeerWork.read(for: record.id))
+                        esc: found?.interrupted == true ? true : nil, work: PeerWork.read(for: record.id),
+                        said: PeerSaid.read(for: record.id))
     }
 }
 

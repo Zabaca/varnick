@@ -20,14 +20,15 @@ public enum ClaudeCommand {
         }
         var hooks: [String: [HookSettings.Entry]] = [
             "SessionStart": [.init(command: #"cat > "$VARNICK_SESSION_FILE""#),
-                             .init(matcher: "clear", command: clearCommand), turn(.waiting, matcher: "resume")],
-            "UserPromptSubmit": [.init(command: promptCommand), .init(command: leadEndedCommand(.working))],
+                             .init(matcher: "clear", command: clearCommand), .init(matcher: "clear", command: messageClearCommand),
+                             turn(.waiting, matcher: "resume")],
+            "UserPromptSubmit": [.init(command: promptCommand), .init(command: leadEndedCommand(.working)), .init(command: messageClearCommand)],
             "Stop": [turn(.waiting), .init(command: stopInputCommand), .init(command: leadEndedCommand(.waiting))],
             "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand), .init(command: leadEndedCommand(.waiting))],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
             "PermissionRequest": [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
                                   turn(.question, matcher: question), turn(.plan, matcher: plan)],
-            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)")],
+            "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)"), .init(matcher: messageMatcher, command: messageInputCommand)],
             "PostToolBatch": [.init(command: answeredCommand)],
             "SubagentStop": [.init(command: answeredCommand)],
             "Elicitation": [turn(.input)],
@@ -48,6 +49,13 @@ public enum ClaudeCommand {
 
     private struct HookSettings: Encodable {
         var hooks: [String: [Entry]]
+        /// `notify` is allowed in every session, so calling it never stops the turn on a permission dialog (which would itself raise Needs you).
+        /// A list in `--settings` adds to the user's own (checked on Claude Code 2.1.300).
+        var permissions = Permissions()
+
+        struct Permissions: Encodable {
+            var allow = [NotifyTool.qualifiedName]
+        }
 
         struct Entry: Encodable {
             var matcher: String?
@@ -115,6 +123,32 @@ public enum ClaudeCommand {
     static let stopInputKeepCommand =
         #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.stopFileName)"; "#
         + #"[ -n "$VARNICK_SESSION_FILE" ] && [ -f "$f" ] && touch "$f" 2>/dev/null; exit 0"#
+
+    /// The tools whose calls are messages to the user: Varnick's `notify` and Claude Code's own PushNotification (option 04 of
+    /// `phone-page-is-only-a-browser-tab`). Anchored, so no other tool's name matches.
+    static let messageMatcher = "^(\(NotifyTool.qualifiedName)|\(PaneMessage.pushNotificationTool))$"
+
+    /// `PostToolUse` for those tools: the hook's input saved as it comes (no jq in a hook's shell) to the message file beside the turn file, by
+    /// rename. It is the only writer of that file, and `PaneMessage` reads it. A call that fails fires `PostToolUseFailure`, not this.
+    static let messageInputCommand =
+        #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.messageFileName)"; "#
+        + #"[ -n "$VARNICK_SESSION_FILE" ] && { cat > "$f.$$" && mv "$f.$$" "$f"; } 2>/dev/null; exit 0"#
+
+    /// `UserPromptSubmit` and a `/clear`: a message lasts until the user's next prompt or the conversation is cleared.
+    static let messageClearCommand =
+        #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.messageFileName)"; "#
+        + #"[ -n "$VARNICK_SESSION_FILE" ] && rm -f "$f" 2>/dev/null; exit 0"#
+
+    /// The variable that points Claude Code's client-presence check at the host's marker (option 04): while the file exists Claude Code skips
+    /// its own Remote Control mobile pushes, because the host's page server keeps it while it has a push subscription of its own.
+    public static let presenceVariable = "CLAUDE_CLIENT_PRESENCE_FILE"
+    /// The marker's name in the page server's folder (`pushserver.ts`).
+    public static let presenceMarkerName = "claude-client-present"
+
+    /// The environment entry for a host whose page server's folder is `phoneFolder`.
+    public static func presenceEntry(phoneFolder: URL) -> String {
+        "\(presenceVariable)=\(phoneFolder.appendingPathComponent(presenceMarkerName).path)"
+    }
 
     /// `UserPromptSubmit` writes working even over working: a prompt starts a new working period, and Esc leaves
     /// the file at working.

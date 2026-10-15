@@ -347,6 +347,7 @@ extension HeadlessPeerHost {
             status.conversation = reported ?? record.conversation
             if let found = PeerTurn.read(for: uuid) { status.take(found) }
             status.work = PeerWork.read(for: uuid)
+            status.said = PeerSaid.read(for: uuid)
             statuses[Zmx.sessionName(uuid)] = status
             if let reported, reported != record.conversation { _ = try? state.update(record.id) { $0.conversation = reported } }
         }
@@ -394,7 +395,7 @@ extension HeadlessPeerHost {
         return PeerPane(id: record.id, kind: .claude, title: title, folder: folder, running: running, clients: status?.clients,
                         control: status?.control, agent: record.agent, conversation: conversation == record.id ? nil : conversation,
                         turn: found?.turn, turnAge: found?.age, failure: found?.failure, esc: found?.interrupted == true ? true : nil,
-                        work: PeerWork.read(for: uuid))
+                        work: PeerWork.read(for: uuid), said: PeerSaid.read(for: uuid))
     }
 
     /// A headless host has no file panes.

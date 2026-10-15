@@ -227,9 +227,6 @@ enum ScreenMCP {
     /// and then takes a few seconds.
     static let callTimeout: TimeInterval = 15
 
-    /// The protocol versions this server answers to as they are asked, newest last. A client asking for another gets the newest.
-    static let protocolVersions = ["2024-11-05", "2025-03-26", "2025-06-18"]
-
     // MARK: The command line
 
     /// The sets of tools a server lists, as its arguments name them.
@@ -237,6 +234,8 @@ enum ScreenMCP {
         let rawValue: Int
         static let screen = Sets(rawValue: 1)
         static let panel = Sets(rawValue: 2)
+        /// `notify` (option 04 of `phone-page-is-only-a-browser-tab`): in every Claude pane, whatever the two switches say.
+        static let notify = Sets(rawValue: 4)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
@@ -246,6 +245,7 @@ enum ScreenMCP {
             var found: Sets = []
             if arguments.contains(Self.screenArgument) { found.insert(.screen) }
             if arguments.contains(Self.panelArgument) { found.insert(.panel) }
+            if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
             self = found.isEmpty ? .screen : found
         }
 
@@ -254,14 +254,11 @@ enum ScreenMCP {
 
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
-    /// on for. Nil with both off.
-    static func configuration(pane: UUID, screen: Bool, panel: Bool) -> String? {
-        guard screen || panel else { return nil }
-        let server: [String: Any] = ["type": "stdio", "command": PeerLink.mcpCommand,
-                                     "args": ["--mcp", "--pane", pane.uuidString.lowercased()]
-                                        + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])]
-        let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": ["varnick": server]], options: [.sortedKeys, .withoutEscapingSlashes])
-        return data.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
+    static func configuration(pane: UUID, screen: Bool, panel: Bool) -> String {
+        NotifyTool.configuration(command: PeerLink.mcpCommand,
+                                 arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
+                                    + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : []) + [NotifyTool.argument])
     }
 
     // MARK: The tools
@@ -376,57 +373,38 @@ enum ScreenMCP {
 
     // MARK: The server
 
-    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's.
+    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, then `notify`.
     static func tools(for sets: Sets) -> [[String: Any]] {
-        (sets.contains(.screen) ? tools : []) + (sets.contains(.panel) ? PanelMCP.tools : [])
+        (sets.contains(.screen) ? tools : []) + (sets.contains(.panel) ? PanelMCP.tools : []) + (sets.contains(.notify) ? [NotifyTool.tool] : [])
     }
 
     /// Runs until standard input ends; the exit status is 0.
     static func run(pane: String, sets: Sets) -> Int32 {
-        while let line = readLine(strippingNewline: true) {
-            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-            if let reply = answer(line, pane: pane, sets: sets) { write(reply) }
-        }
-        return 0
+        MCPServer.run { answer($0, pane: pane, sets: sets) }
     }
 
-    /// The reply to one JSON-RPC message; nil for a notification, which is never answered, and for what can't be answered.
+    /// The reply to one JSON-RPC message; nil for a notification, which is never answered, and for what can't be answered. The JSON-RPC is
+    /// `MCPServer`'s, which the headless relay's `--mcp` shares.
     static func answer(_ line: String, pane: String, sets: Sets = .screen, ask: (String) -> ScreenReply = ScreenMCP.ask) -> [String: Any]? {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)), let message = object as? [String: Any] else {
-            return failure(id: NSNull(), code: -32700, "Parse error")
-        }
-        // A request has an id; a notification has none and gets nothing back.
-        guard let id = message["id"] else { return nil }
-        let params = message["params"] as? [String: Any] ?? [:]
-        switch message["method"] as? String {
-        case "initialize":
-            let asked = params["protocolVersion"] as? String ?? ""
-            return success(id: id, ["protocolVersion": protocolVersions.contains(asked) ? asked : protocolVersions.last!,
-                                    "capabilities": ["tools": [String: Any]()],
-                                    "serverInfo": ["name": "varnick", "version": "1"]])
-        case "tools/list":
-            return success(id: id, ["tools": tools(for: sets)])
-        case "ping":
-            return success(id: id, [:])
-        case "tools/call":
-            guard let name = params["name"] as? String else { return failure(id: id, code: -32602, "Unknown tool") }
+        MCPServer.answer(line, tools: tools(for: sets)) { name, arguments in
             let reply: ScreenReply
             if ScreenTool(rawValue: name) != nil, sets.contains(.screen) {
-                let arguments = (params["arguments"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                let decoded = arguments.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                     .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
-                reply = ask(requestLine(pane: pane, tool: name, arguments: arguments))
+                reply = ask(requestLine(pane: pane, tool: name, arguments: decoded))
             } else if sets.contains(.panel), PanelMCP.names.contains(name) {
-                reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: params["arguments"] as? [String: Any])))
+                reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
+            } else if sets.contains(.notify), name == NotifyTool.name {
+                // Answered here: the hook records the call, and nothing is sent to the app.
+                return NotifyTool.call(arguments)
             } else {
-                return failure(id: id, code: -32602, "Unknown tool")
+                return nil
             }
             var content: [[String: Any]] = [["type": "text", "text": reply.text]]
             for image in (reply.image.map { [$0] } ?? []) + (reply.images ?? []) {
                 content.append(["type": "image", "data": image.data, "mimeType": image.mimeType])
             }
-            return success(id: id, ["content": content, "isError": reply.isError])
-        default:
-            return failure(id: id, code: -32601, "Method not found")
+            return MCPResult(content: content, isError: reply.isError)
         }
     }
 
@@ -446,18 +424,5 @@ enum ScreenMCP {
                 : ScreenReply(text: "Varnick isn't running", isError: true)
         }
         return PeerJSON.decode(ScreenReply.self, from: answer) ?? ScreenReply(text: "Varnick's answer wasn't readable", isError: true)
-    }
-
-    private static func success(id: Any, _ result: [String: Any]) -> [String: Any] {
-        ["jsonrpc": "2.0", "id": id, "result": result]
-    }
-
-    private static func failure(id: Any, code: Int, _ message: String) -> [String: Any] {
-        ["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]
-    }
-
-    private static func write(_ reply: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: reply, options: [.withoutEscapingSlashes]) else { return }
-        FileHandle.standardOutput.write(data + Data("\n".utf8))
     }
 }

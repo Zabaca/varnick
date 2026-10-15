@@ -251,7 +251,9 @@ final class Settings: ObservableObject {
     @Published var notifyNeedsMe: Bool { didSet { defaults.set(notifyNeedsMe, forKey: "notifyNeedsMe") } }
     @Published var notifyDone: Bool { didSet { defaults.set(notifyDone, forKey: "notifyDone") } }
     @Published var notifyError: Bool { didSet { defaults.set(notifyError, forKey: "notifyError") } }
-    var noticeSwitches: NoticeSwitches { NoticeSwitches(needsMe: notifyNeedsMe, done: notifyDone, error: notifyError) }
+    /// "Sends me a message" (option 04 of `phone-page-is-only-a-browser-tab`): the session itself told me something, through `notify` or Claude Code's PushNotification.
+    @Published var notifyMessages: Bool { didSet { defaults.set(notifyMessages, forKey: "notifyMessages") } }
+    var noticeSwitches: NoticeSwitches { NoticeSwitches(needsMe: notifyNeedsMe, done: notifyDone, error: notifyError, messages: notifyMessages) }
     /// Voice Varnick speaks in (an `AVSpeechSynthesisVoice` identifier); empty is the system voice.
     /// With an ElevenLabs voice chosen it is the fallback voice, spoken when ElevenLabs fails (ADR 0033).
     @Published var voice: String { didSet { defaults.set(voice, forKey: "voice") } }
@@ -427,6 +429,7 @@ final class Settings: ObservableObject {
         notifyNeedsMe = defaults.object(forKey: "notifyNeedsMe") as? Bool ?? true
         notifyDone = defaults.object(forKey: "notifyDone") as? Bool ?? true
         notifyError = defaults.object(forKey: "notifyError") as? Bool ?? true
+        notifyMessages = defaults.object(forKey: "notifyMessages") as? Bool ?? true
         voice = defaults.string(forKey: "voice") ?? ""
         elevenLabsVoice = defaults.string(forKey: "elevenLabsVoice") ?? ""
         elevenLabsVoices = defaults.data(forKey: "elevenLabsVoices")
@@ -759,6 +762,10 @@ struct SettingsView: View {
                             SettingRow(title: "Stops on an error",
                                        detail: "A turn ended on an API error such as a rate limit. The notice says which kind when this Mac can tell.") {
                                 Toggle("", isOn: $settings.notifyError).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Sends me a message",
+                                       detail: "The session tells you something itself, through its notify tool or Claude Code's own push notification (\"notify me when the tests pass\"). The louder sound and the orange dot; at most one alert a minute for a session, and the menu line shows the message's title. A turn that ends right after a message adds no second notice.") {
+                                Toggle("", isOn: $settings.notifyMessages).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)

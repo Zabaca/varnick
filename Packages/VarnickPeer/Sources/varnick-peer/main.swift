@@ -4,6 +4,7 @@ import VarnickPeer
 // The headless host's relay, for a machine with no Varnick app: ADR 0009 says what its install root holds.
 //
 //   varnick-peer --peer <base64 request>   what a peer Mac runs over SSH: one reply, or `attach`/`watch`
+//   varnick-peer --mcp --pane <id> --notify   the MCP server a Claude pane on this host starts (the `notify` tool)
 //   varnick-peer init                      makes the host's id if there is none, and prints it
 //   varnick-peer peers                     the Macs it is paired with
 //   varnick-peer forget <id or name>       unpairs one
@@ -22,6 +23,11 @@ func fail(_ error: Error) -> Never {
     FileHandle.standardError.write(Data("varnick-peer: \((error as? StateError)?.message ?? error.localizedDescription)\n".utf8))
     exit(1)
 }
+
+// `--mcp ...` is the MCP server a Claude pane on this host starts (`HeadlessPeerHost.launch` passes it as `--mcp-config`): `notify` alone, the
+// tool a Mac's server lists with Screen and Panel access (`NotifyTool`). JSON-RPC on standard input and output; it never reads or acts, and
+// exits when its input ends. It needs no install folder.
+if CommandLine.arguments.contains("--mcp") { exit(NotifyTool.serve()) }
 
 guard let root = Zmx.installFolder else {
     FileHandle.standardError.write(Data("varnick-peer: can't tell which folder it is in\n".utf8))

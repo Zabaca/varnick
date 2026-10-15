@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 27
+    public static let version = 28
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -468,13 +468,17 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
     /// The problems and options the pane worked on, from its work files on the host (ADR 0020). Nil when it linked nothing, and from a
     /// build before protocol 18.
     public var work: PeerWork?
+    /// The pane's standing message from its file on the host (`PaneMessage`, protocol 28). The words go only to the Macs that follow the pane and
+    /// the host's own page server, never in a push.
+    public var said: PeerSaid?
 
     private enum CodingKeys: String, CodingKey {
-        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work
+        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work, said
     }
 
     public init(running: Bool, clients: Int? = nil, control: String? = nil, controlName: String? = nil, conversation: String? = nil,
-                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil) {
+                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil,
+                said: PeerSaid? = nil) {
         self.running = running
         self.clients = clients
         self.control = control
@@ -486,6 +490,7 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         self.failureWord = failure?.wire
         self.esc = esc
         self.work = work
+        self.said = said
     }
 
     /// Takes in a host's reading of the pane's turn.
