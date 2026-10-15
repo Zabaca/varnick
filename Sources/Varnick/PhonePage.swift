@@ -140,6 +140,15 @@ enum PhonePage {
             .compactMap { $0.hasPrefix("\(modeKey)=") ? Mode(rawValue: String($0.dropFirst(modeKey.count + 1))) : nil }.first
     }
 
+    /// The push key fingerprint a running session was started with (`PhonePagePush.noKey` for none), from its labels.
+    static func push(inLabels line: String) -> String? {
+        line.split(whereSeparator: \.isWhitespace).first { $0.hasPrefix("\(pushKey)=") }.map { String($0.dropFirst(pushKey.count + 1)) }
+    }
+
+    /// Where the key is handed to the server: a file in the server's owner-only folder, written just before the start, read and deleted by the
+    /// server as its first act.
+    static func pushKeyHandoff(in phoneFolder: URL) -> URL { phoneFolder.appendingPathComponent("push-key-handoff", isDirectory: false) }
+
     /// Whether a running session's labels (`zmx get`) are the ones this start would give it.
     static func isCurrent(labels line: String, digest: String, mode: Mode, place: String, push: String) -> Bool {
         let words = Set(line.split(whereSeparator: \.isWhitespace).map(String.init))
@@ -156,16 +165,17 @@ enum PhonePage {
     // MARK: What the server is given
 
     /// The server's environment, and nothing else of Varnick's. `VARNICK_ZMX_DIR` goes along only when Varnick has it
-    /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder. The push key (`pushKey`, one line of JSON) is in
-    /// the environment alone, never on a command line; without it the server sends no push.
+    /// (a check's throwaway folder), so the relay the server runs looks in the same zmx folder. The push key itself is never in the
+    /// environment, where `ps eww` shows it: `pushKeyFile` names an owner-only file the server reads at its start and deletes
+    /// (`PhonePage.pushKeyHandoff`); without it the server sends no push.
     static func environment(mode: Mode, socketPath: String, relay: String, devices: String, tailscale: String?,
                             home: String, zmxDirectory: String?, proxyFolder: String, proxyStatus: String, proxyTabs: String,
-                            pushFolder: String, panesFolder: String, presenceFolder: String, pushKey: String?) -> [String] {
+                            pushFolder: String, panesFolder: String, presenceFolder: String, pushKeyFile: String?) -> [String] {
         var environment = [mode == .socket ? "VARNICK_PAGE_SOCKET=\(socketPath)" : "VARNICK_PAGE_LOOPBACK=\(loopbackPort)",
                            "VARNICK_PAGE_PORT=\(publishedPort)", "VARNICK_RELAY=\(relay)", "VARNICK_DEVICES=\(devices)",
                            "VARNICK_PROXY_FOLDER=\(proxyFolder)", "VARNICK_PROXY_STATUS=\(proxyStatus)", "VARNICK_PROXY_TABS=\(proxyTabs)",
                            "VARNICK_PUSH_FOLDER=\(pushFolder)", "VARNICK_PANES_FOLDER=\(panesFolder)", "VARNICK_PRESENCE_FOLDER=\(presenceFolder)"]
-        if let pushKey { environment.append("VARNICK_PUSH_KEY=\(pushKey)") }
+        if let pushKeyFile { environment.append("VARNICK_PUSH_KEY_FILE=\(pushKeyFile)") }
         if let tailscale { environment.append("VARNICK_TAILSCALE=\(tailscale)") }
         environment += ["HOME=\(home)", "PATH=/usr/bin:/bin", "LANG=en_US.UTF-8"]
         if let zmxDirectory { environment.append("VARNICK_ZMX_DIR=\(zmxDirectory)") }

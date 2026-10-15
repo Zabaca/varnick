@@ -3,7 +3,7 @@ import Foundation
 import VarnickPeer
 
 /// The Phone page server's push key on a Mac (`phone-page-is-only-a-browser-tab`, option 02): one P-256 key pair, made the first time the server
-/// starts with the page on, whose private half rests in the Keychain as an item of its own and goes to the server in its environment alone. Every
+/// starts with the page on, whose private half rests in the Keychain as an item of its own and goes to the server as a file it deletes at once (`PhonePage.pushKeyHandoff`). Every
 /// browser subscription is bound to the public half, so the key must never change by itself: an existing item that can't be read (an ad-hoc build
 /// may be refused after a rebuild) is never replaced, and the server starts without push until it can be read.
 enum PhonePagePush {
@@ -13,19 +13,29 @@ enum PhonePagePush {
     static let noKey = "none"
 
     struct Key: Equatable {
-        /// The private JWK as one line of JSON: what the server's `VARNICK_PUSH_KEY` holds.
+        /// The private JWK as one line of JSON: what the handoff file holds.
         var json: String
         /// The first 16 hex digits of the SHA-256 of the public point, `fingerprint` in `PhonePage/webpush.ts`.
         var fingerprint: String
     }
 
-    /// The key, made if there was none. Nil when an item exists and can't be read now. Blocks on the Keychain (which may ask the user), so never on the main thread.
+    /// The key, made if there was none: only `errSecItemNotFound` says there was none, and the new one is added with `SecItemAdd` alone, so an
+    /// existing item (one the Keychain refused to give, or one made meanwhile) is never deleted or written over. Nil when it can't be read now.
+    /// Blocks on the Keychain (which may ask the user), so never on the main thread.
     static func current() -> Key? {
-        if let saved = Keychain.read(account) { return key(fromJSON: saved) }
-        guard !Keychain.exists(account) else { return nil }
-        let made = make()
-        do { try Keychain.save(made.json, for: account) } catch { return nil }
-        return made
+        switch Keychain.lookup(account) {
+        case .found(let saved): return key(fromJSON: saved)
+        case .unreadable: return nil
+        case .absent:
+            let made = make()
+            switch Keychain.addNew(made.json, for: account) {
+            case .added: return made
+            case .failed: return nil
+            case .duplicate:
+                if case .found(let saved) = Keychain.lookup(account) { return key(fromJSON: saved) }
+                return nil
+            }
+        }
     }
 
     static func make() -> Key {
