@@ -27,7 +27,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var liveTranscript: Bool?
 
     /// Task pane (`!task`, the split picker's Task tile): a web pane whose task Varnick carries out. Never saved: a restart ends the task, and
-    /// the tab comes back without the pane (`PaneLayout.withoutTasks`).
+    /// the tab comes back without the pane (`SavedTab.withoutTasks`).
     var task: Bool?
 
     /// Custom app pane: the app's folder name. It is a web pane too (`url` is the app's server).
