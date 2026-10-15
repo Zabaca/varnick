@@ -10,9 +10,11 @@ let package = Package(
     products: [
         .library(name: "VarnickPeer", targets: ["VarnickPeer"]),
         .executable(name: "varnick-peer", targets: ["varnick-peer"]),
+        .executable(name: "slot-check", targets: ["slot-check"]),
     ],
     targets: [
         .target(name: "VarnickPeer", swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "varnick-peer", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "slot-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
