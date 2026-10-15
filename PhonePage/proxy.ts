@@ -242,6 +242,21 @@ function connectionNames(headers: [string, string][]): Set<string> {
   return names;
 }
 
+/** The addresses a request to this machine's own servers is made at (`portproxy.ts` upstreams), spelled as Bun's NO_PROXY matching reads them. */
+export const localNoProxy = ["localhost", "127.0.0.1", "[::1]"];
+
+/** A NO_PROXY value with the localhost entries added to it: what was there is kept, in order, and no entry is held twice (it is called once per port proxy built). */
+export function withLocalNoProxy(value: string | undefined): string {
+  const seen = new Set<string>();
+  const entries = [...(value ?? "").split(","), ...localNoProxy].map((entry) => entry.trim()).filter((entry) => {
+    const key = entry.toLowerCase();
+    if (entry === "" || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return entries.join(",");
+}
+
 /**
  * The headers a request goes to the server with: Host as the server's own (dev servers refuse any other), Origin as the server's own
  * when it is the proxied address, nothing else changed. Websocket handshake headers are the client's own to make, so they go too.
