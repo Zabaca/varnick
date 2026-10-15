@@ -16,7 +16,9 @@ const other = "ffffffff-0000-4000-8000-000000000001";
 const point = b64u.encode(new Uint8Array([4, ...Array.from({ length: 64 }, (_, index) => index)]));
 const auth = b64u.encode(new Uint8Array(16));
 
-interface FakePane { id: string; turn?: string; control?: string | null; clients?: number; failure?: string; esc?: boolean; running?: boolean; kind?: string; keepBegan?: boolean }
+/** `message` is a message the pane holds, recorded at `at` (ms on the fake clock). */
+interface FakeMessage { title: string; body?: string; at: number }
+interface FakePane { id: string; turn?: string; control?: string | null; clients?: number; failure?: string; esc?: boolean; running?: boolean; kind?: string; keepBegan?: boolean; message?: FakeMessage | null }
 
 function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<typeof defaultSwitches> }>; listed?: string[] } = {}) {
   let now = 1_000_000_000_000;
@@ -39,6 +41,8 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     listed: new Map((options.listed ?? [phone, tablet]).map((id) => [id, id === phone ? "Phone" : "Tablet"])),
     result: { outcome: "sent", status: 201 } as SendResult,
     logs: [] as string[],
+    /** Every call of `presenceMarker`, in order. */
+    marker: [] as boolean[],
     /** How long after an ask starts the relay runs, in ms. */
     latency: 0,
     /** The newest turn-file date each ask said its answer must know of, and something that happens while an ask runs (a hook writing a turn file). */
@@ -63,8 +67,9 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
         const known = state.began.get(p.id);
         if (!known || (known.word !== p.turn && !p.keepBegan)) state.began.set(p.id, { word: p.turn ?? "", at: ran });
         else state.began.set(p.id, { word: p.turn ?? "", at: known.at });
-        const { keepBegan: _, ...rest } = p;
-        return { kind: "claude", running: true, ...rest, turnAge: Math.floor((ran - state.began.get(p.id)!.at) / 1000) };
+        const { keepBegan: _, message, ...rest } = p;
+        const messageField = message ? { message: { title: message.title, ...(message.body ? { body: message.body } : {}), id: message.at } } : {};
+        return { kind: "claude", running: true, ...rest, ...messageField, turnAge: Math.floor((ran - state.began.get(p.id)!.at) / 1000) };
       });
       const answer = { result: { ok: true as const, reply: { tabs: [{ tab, panes }] } }, startedAt };
       // What happens after the relay has read the files and before the answer is back.
@@ -76,6 +81,7 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     tabsStamp: () => state.stamp,
     devices: () => state.listed,
     presence: (id) => state.presence.get(id) ?? null,
+    presenceMarker: (on) => { state.marker.push(on); },
     hasPaneOpen: (device, id) => state.open.has(`${device}:${id}`),
     send: async (subscription: Subscription, payload) => {
       state.sends.push({ device: subscription.device, payload });
@@ -1108,5 +1114,418 @@ describe("one ask for two readers", () => {
     expect(await shared.stamped()).toEqual({ value: "answer", startedAt: 1000 });
     now = 2600;
     expect(await shared.stamped()).toEqual({ value: "answer", startedAt: 2600 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// A message the session sent itself (option 04 of phone-page-is-only-a-browser-tab)
+
+describe("a message the session sent itself", () => {
+  let writes = 0;
+  /** The first reading is taken (the starting point), then a hook records a message: the file's date moves, and the next look asks. */
+  async function start(r: ReturnType<typeof rig>) {
+    await r.watcher.tick();
+  }
+  async function say(r: ReturnType<typeof rig>, title = "Tests passed: 214", body?: string, index = 0) {
+    r.state.panes[index] = { ...r.state.panes[index], message: { title, body, at: r.now() } };
+    r.state.dates.set(r.state.panes[index].id, (writes += 1));
+    await r.advance(tickMs);
+  }
+  const kinds = (r: ReturnType<typeof rig>) => r.state.sends.map((s) => s.payload.kind);
+
+  test("the first message read for a pane is a starting point: a message already there at a start raises nothing", async () => {
+    const r = rig();
+    r.state.panes[0] = { ...r.state.panes[0], control: phone, message: { title: "Old news", at: r.now() - 5000 } };
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+  });
+
+  test("a message is a Message, pushed after the 2 s settle with the ids and the kind and no words, once", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r, "Tests passed: 214", "all green");
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    expect(r.state.sends).toEqual([]);
+    await r.advance(tickMs);
+    expect(r.state.sends).toEqual([{ device: phone, payload: { v: 1, kind: "message", tab, pane } }]);
+    expect(JSON.stringify(r.state.sends)).not.toContain("Tests passed");
+    expect(JSON.stringify(r.state.sends)).not.toContain("green");
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends).toHaveLength(1);
+  });
+
+  test("it is held to the Needs-you settle, not the Done's 10 s", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await r.advance(urgentSettleMs + tickMs);
+    expect(kinds(r)).toEqual(["message"]);
+    expect(urgentSettleMs).toBeLessThan(doneSettleMs);
+  });
+
+  test("a hook writing the message file is a change that asks the host at once, without waiting for the cadence", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    const asks = r.state.asks;
+    await say(r);
+    expect(r.state.asks).toBe(asks + 1);
+  });
+
+  test("answering with a prompt before the push goes pushes nothing: the read after the settle finds the message gone", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    // The prompt hook removed the file and wrote the turn file (a new date), 1 s later; the working turn is nothing to say.
+    r.state.panes[0] = { ...r.state.panes[0], message: null, turn: "working" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(urgentSettleMs * 3);
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    expect(r.state.logs).toContain("push notice message cleared");
+  });
+
+  test("a message gone with no other change (a /clear) clears the notice too, once the host is asked", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    r.state.panes[0] = { ...r.state.panes[0], message: null };
+    await r.advance(busyAskMs + tickMs);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a Done that follows a message is folded into it: one push for the two, not a Done after the message", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await finishTurn(r);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    await r.advance(doneSettleMs * 4);
+    expect(kinds(r)).toEqual(["message"]);
+  });
+
+  test("a Done folded into a message that stands for a long turn is still folded: the fold has no time limit", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.panes[0].message = null;
+    await start(r);
+    await say(r);
+    await r.advance(urgentSettleMs * 3);
+    expect(kinds(r)).toEqual(["message"]);
+    // The turn runs on for twenty minutes, then ends.
+    await r.advance(20 * 60_000);
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 3);
+    expect(kinds(r)).toEqual(["message"]);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+  });
+
+  test("the turn going to work or background, or a dialog answered, leaves the message standing", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.panes[0].turn = "waiting";
+    await start(r);
+    await say(r);
+    r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    r.state.panes[0] = { ...r.state.panes[0], turn: "background" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+  });
+
+  test("Needs you replaces a message, and an error does", async () => {
+    for (const [word, extra, kind] of [["permission", {}, "permission"], ["failed", { failure: "rate_limit" }, "failed"]] as const) {
+      const r = rig();
+      r.state.panes[0].control = phone;
+      await start(r);
+      await say(r);
+      r.state.panes[0] = { ...r.state.panes[0], turn: word, ...extra };
+      r.state.dates.set(pane, (writes += 1));
+      await r.advance(tickMs);
+      expect(r.watcher.noticeFor(pane)?.kind).toBe(kind === "failed" ? "failed" : "needs");
+      await r.advance(doneSettleMs * 2);
+      // The message was replaced before it was pushed, so only the dialog or the error goes.
+      expect(kinds(r)).toEqual([kind]);
+    }
+  });
+
+  test("a message after a Done replaces it", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await finishTurn(r);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "done" });
+    await say(r);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    await r.advance(doneSettleMs * 3);
+    expect(kinds(r)).toEqual(["message"]);
+  });
+
+  test("an error in the same turn after a message and a Done takes over the message, not a Done's wait", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await finishTurn(r);
+    r.state.panes[0] = { ...r.state.panes[0], turn: "failed", failure: "overloaded", keepBegan: true };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)?.kind).toBe("failed");
+  });
+
+  test("at most one push a minute for a pane: five in a row give one, then one at the minute's end for the newest", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    for (let n = 1; n <= 5; n += 1) {
+      await say(r, `Message ${n}`);
+      await r.advance(tickMs * 2);
+    }
+    // The first went after its settle; the rest are replacing it quietly.
+    expect(kinds(r)).toEqual(["message"]);
+    // Logged once for each message held back (the second to the fifth), not at every tick.
+    expect(r.state.logs.filter((line) => line === "push message held back: one a minute for a pane")).toHaveLength(4);
+    // The five took about 30 s, the first push went in the first few: the minute ends about 64 s in.
+    await r.advance(24_000);
+    expect(kinds(r)).toEqual(["message"]);
+    await r.advance(10_000);
+    expect(kinds(r)).toEqual(["message", "message"]);
+    // And the newest message is the one that stands, so the worker reads its words.
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    await r.advance(doneSettleMs * 6);
+    expect(kinds(r)).toEqual(["message", "message"]);
+  });
+
+  test("the second push comes a minute after the first, not a minute after the message", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await r.advance(tickMs);
+    expect(kinds(r)).toEqual(["message"]);
+    const first = r.now();
+    await r.advance(30_000);
+    await say(r, "Later");
+    await r.advance(tickMs * 2);
+    expect(kinds(r)).toEqual(["message"]);
+    while (r.now() - first < 58_000) await r.advance(tickMs);
+    expect(kinds(r)).toEqual(["message"]);
+    while (r.now() - first < 64_000) await r.advance(tickMs);
+    expect(kinds(r)).toEqual(["message", "message"]);
+  });
+
+  test("a message replaced by one that is then answered before the minute is up is not pushed again", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await r.advance(tickMs);
+    await say(r, "Second");
+    r.state.panes[0] = { ...r.state.panes[0], message: null, turn: "working" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(120_000);
+    expect(kinds(r)).toEqual(["message"]);
+  });
+
+  test("a message gap is for messages: a Needs-you right after one is pushed at its own settle", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await r.advance(tickMs);
+    r.state.panes[0] = { ...r.state.panes[0], turn: "permission" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs * 3);
+    expect(kinds(r)).toEqual(["message", "permission"]);
+  });
+
+  test("a message is the same message while its id is: read again for minutes, it never comes back over a Needs you", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    await r.advance(urgentSettleMs * 3);
+    r.state.panes[0] = { ...r.state.panes[0], turn: "permission" };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)?.kind).toBe("needs");
+    // The host is asked again and again (a new tabs stamp each time), and the message file never changed.
+    for (let n = 0; n < 40; n += 1) { r.state.stamp = `s${n}`; await r.advance(busyAskMs); }
+    expect(r.watcher.noticeFor(pane)?.kind).toBe("needs");
+    expect(kinds(r)).toEqual(["message", "permission"]);
+  });
+
+  test("a second message a second after the first is another message", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    r.state.panes[0] = { ...r.state.panes[0], message: { title: "One", at: r.now() } };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    const raisedBefore = r.state.logs.filter((line) => line === "push notice message raised").length;
+    r.state.panes[0] = { ...r.state.panes[0], message: { title: "Two", at: r.now() + 1000 } };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+    expect(r.state.logs.filter((line) => line === "push notice message raised")).toHaveLength(raisedBefore + 1);
+  });
+
+  test("with Messages off and Done on, a Done that follows a message is still pushed: the fold is for the subscriptions that take messages", async () => {
+    const r = rig({ subscribed: [{ device: phone }, { device: tablet, switches: { messages: false } }] });
+    await start(r);
+    await say(r);
+    await r.advance(urgentSettleMs * 2);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[phone, "message"]]);
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[phone, "message"], [tablet, "done"]]);
+    // And only once each.
+    await r.advance(doneSettleMs * 6);
+    expect(r.state.sends).toHaveLength(2);
+  });
+
+  test("a Done folded before the message was read as dropped for a subscription that takes no messages still reaches it, and Done off stops it", async () => {
+    const r = rig({ subscribed: [{ device: tablet, switches: { messages: false, done: false } }, { device: phone, switches: { messages: false } }] });
+    await start(r);
+    await say(r);
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[phone, "done"]]);
+  });
+
+  test("a message that replaces a message keeps the Done folded into the first for the subscriptions that don't take messages", async () => {
+    const r = rig({ subscribed: [{ device: tablet, switches: { messages: false } }] });
+    await start(r);
+    await say(r, "One");
+    await finishTurn(r);
+    await say(r, "Two");
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[tablet, "done"]]);
+  });
+
+  test("the Messages switch is its own: off gives no push, and the other switches don't decide a message", async () => {
+    const off = rig({ subscribed: [{ device: phone, switches: { messages: false } }] });
+    off.state.panes[0].control = phone;
+    await start(off);
+    await say(off);
+    await off.advance(doneSettleMs * 2);
+    expect(off.state.sends).toEqual([]);
+    expect(off.state.logs).toContain("push decide message Phone -> suppressed(switch) controller=device");
+
+    const others = rig({ subscribed: [{ device: phone, switches: { needsMe: false, done: false, errors: false } }] });
+    others.state.panes[0].control = phone;
+    await start(others);
+    await say(others);
+    await others.advance(urgentSettleMs * 2);
+    expect(kinds(others)).toEqual(["message"]);
+  });
+
+  test("a Mac whose user is at it is not pushed to; one that turns away with the message standing is", async () => {
+    const r = rig();
+    r.keep(own);
+    await r.watcher.tick();
+    await say(r);
+    for (let i = 0; i < 12; i += 1) { r.keep(own); await r.advance(tickMs); }
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toEqual({ kind: "message" });
+    r.keep(own, { away: true });
+    await r.advance(tickMs * 3);
+    expect(kinds(r)).toEqual(["message"]);
+  });
+
+  test("a message the Mac showed the user is not pushed when they lock it and leave", async () => {
+    const r = rig();
+    r.keep(own, { notices: [], onScreen: [] });
+    await r.watcher.tick();
+    await say(r);
+    // The Mac raises its own notice, then the user opens the pane.
+    r.keep(own, { notices: [pane], onScreen: [] });
+    await r.advance(tickMs);
+    r.keep(own, { notices: [], onScreen: [pane] });
+    await r.advance(tickMs);
+    for (let i = 0; i < 20; i += 1) { r.keep(own, { notices: [], onScreen: [pane], away: true }); await r.advance(tickMs); }
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a device that has the pane open gets no message push", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.open.add(`${phone}:${pane}`);
+    await start(r);
+    await say(r);
+    await r.advance(doneSettleMs);
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a host before protocol 28 says no message, and a message field that isn't one is none", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    r.state.panes[0] = { ...r.state.panes[0], message: undefined };
+    await r.advance(doneSettleMs * 2);
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+  });
+
+  test("a pane that is gone takes its message with it, and its next message is a starting point again", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r);
+    const gone = r.state.panes[0];
+    r.state.panes = [];
+    r.state.stamp = "2";
+    await r.advance(tickMs);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+    r.state.panes = [{ ...gone, message: { title: "Back", at: r.now() - 1000 } }];
+    r.state.stamp = "3";
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("the log names the kind and the device, never the words", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await start(r);
+    await say(r, "Secret title", "Secret body");
+    await r.advance(urgentSettleMs * 2);
+    const text = r.state.logs.join("\n");
+    expect(text).toContain("push notice message raised");
+    expect(text).toContain("push decide message Phone -> pushing controller=device");
+    expect(text).toContain("push Phone message sent 201");
+    for (const secret of ["Secret", pane, tab]) expect(text).not.toContain(secret);
+  });
+});
+
+describe("Claude Code's presence marker follows the subscriptions", () => {
+  test("it is asked for as long as there is one, and asked to go when the last is removed", async () => {
+    const r = rig();
+    await r.watcher.tick();
+    expect(r.state.marker.at(-1)).toBe(true);
+    r.store.remove(phone, r.store.all()[0].endpoint);
+    await r.watcher.tick();
+    expect(r.state.marker.at(-1)).toBe(false);
+  });
+
+  test("a host with no subscription never asks for it", async () => {
+    const r = rig({ subscribed: [] });
+    await r.advance(10_000);
+    expect(r.state.marker.every((on) => on === false)).toBe(true);
+  });
+
+  test("a device the host no longer lists takes its subscription, and the marker with it", async () => {
+    const r = rig({ listed: [tablet] });
+    await r.watcher.tick();
+    expect(r.state.marker.at(-1)).toBe(false);
   });
 });

@@ -24,11 +24,11 @@ import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
 import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy";
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
-import { pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
+import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -316,6 +316,8 @@ async function main(): Promise<void> {
       devices: () => { try { return readDevices(readFileSync(config.devices, "utf8")); } catch { return []; } }, log,
     })
     : null;
+  // No push set up (no host id, or setupPush said off): a marker a server left would silence Claude Code's own pushes for nothing.
+  if (!push && config.push) presenceMarker(config.push.folder)(false);
   const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
   const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
   const json = (value: unknown, status = 200) => respond(JSON.stringify(value), status, "application/json; charset=utf-8");
@@ -500,6 +502,8 @@ async function main(): Promise<void> {
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
+  // `zmx kill` (how Varnick ends the page) sends the child SIGHUP, then SIGKILL: without this the marker would outlive the server.
+  process.on("SIGHUP", stop);
 
   proxy?.start();
   push?.start();

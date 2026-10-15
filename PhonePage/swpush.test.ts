@@ -113,6 +113,65 @@ describe("a push, with the host out of reach", () => {
   });
 });
 
+describe("a message", () => {
+  /** The host's tab, with the session's title and what it said. */
+  const hostSays = (title: string, messageFields: unknown, status = 200) => async () =>
+    new Response(JSON.stringify({ ok: true, host: "Studio", tab: { panes: [{ id: pane, title, message: messageFields }] } }), { status });
+
+  test("on the tailnet shows the message's own title, its body, and then the session and the host", async () => {
+    const world = load("Mac Studio", hostSays("Fix the parser", { title: "Tests passed: 214", body: "all green" }));
+    await push(world, { v: 1, tab, pane, kind: "message" });
+    expect(world.shown).toHaveLength(1);
+    expect(world.shown[0].title).toBe("Tests passed: 214");
+    expect(world.shown[0].options.body).toBe("all green\nFix the parser · Mac Studio");
+    expect(world.shown[0].options.tag).toBe(pane);
+    expect(world.shown[0].options.renotify).toBe(true);
+    expect(world.shown[0].options.data).toEqual({ tab, pane });
+  });
+
+  test("with no body the line of the session and the host is the body", async () => {
+    const world = load("Mac Studio", hostSays("Fix the parser", { title: "Deploy started" }));
+    await push(world, { v: 1, tab, pane, kind: "message" });
+    expect(world.shown[0]).toMatchObject({ title: "Deploy started", options: { body: "Fix the parser · Mac Studio" } });
+  });
+
+  test("with no session title the host alone follows the words", async () => {
+    const world = load("Mac Studio", hostSays("", { title: "Deploy started", body: "b" }));
+    await push(world, { v: 1, tab, pane, kind: "message" });
+    expect(world.shown[0]).toMatchObject({ title: "Deploy started", options: { body: "b\nMac Studio" } });
+  });
+
+  test("off the tailnet names only the host, whichever way the read fails, and never any words", async () => {
+    for (const network of [unreachable, hostSays("A secret title", { title: "A secret message" }, 502), hostSays("A secret title", { title: "A secret message" }, 403), async () => new Response("not json")]) {
+      const world = load("Mac Studio", network);
+      await push(world, { v: 1, tab, pane, kind: "message" });
+      expect(world.shown[0]).toMatchObject({ title: "Mac Studio", options: { body: "A session sent you a message" } });
+    }
+  });
+
+  test("a message that has gone by the time the tab is read is the session's title and that it sent one", async () => {
+    for (const gone of [undefined, null, {}, { title: "  " }, { title: 7 }]) {
+      const world = load("Mac Studio", hostSays("Fix the parser", gone));
+      await push(world, { v: 1, tab, pane, kind: "message" });
+      expect(world.shown[0]).toMatchObject({ title: "Fix the parser", options: { body: "Sent you a message · Mac Studio" } });
+    }
+  });
+
+  test("the words are text, cut again to the limits, and shown only as a notification", async () => {
+    const world = load("Mac <b>Studio</b>", hostSays("<i>s</i>", { title: "<script>alert(1)</script>" + "t".repeat(200), body: "b".repeat(500) }));
+    await push(world, { v: 1, tab, pane, kind: "message" });
+    expect(world.shown[0].title).toBe(("<script>alert(1)</script>" + "t".repeat(200)).slice(0, 80));
+    expect(world.shown[0].options.body).toBe(`${"b".repeat(300)}\n<i>s</i> · Mac <b>Studio</b>`);
+  });
+
+  test("a payload that carries words is not read for them: only the host's tab is", async () => {
+    const world = load("Mac Studio", unreachable);
+    await push(world, { v: 1, tab, pane, kind: "message", title: "In the payload", body: "also" });
+    expect(world.shown[0].title).toBe("Mac Studio");
+    expect(world.shown[0].options.body).toBe("A session sent you a message");
+  });
+});
+
 describe("every push shows a notification", () => {
   test("one it can't read, or has no data, or a kind it doesn't know, still shows the host", async () => {
     for (const data of ["unreadable", null, { v: 2, kind: "done", tab, pane }, { v: 1, kind: "launch", tab, pane }, { v: 1, kind: "done" }, { v: 1, kind: "done", tab: "x", pane }, 7, "text"]) {

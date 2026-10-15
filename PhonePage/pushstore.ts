@@ -39,6 +39,8 @@ export function readSwitches(value: unknown, fallback: Switches = defaultSwitche
     needsMe: isBool(value.needsMe) ? value.needsMe : fallback.needsMe,
     done: isBool(value.done) ? value.done : fallback.done,
     errors: isBool(value.errors) ? value.errors : fallback.errors,
+    // A subscription saved before messages existed has none, and reads as on.
+    messages: isBool(value.messages) ? value.messages : fallback.messages,
   };
 }
 

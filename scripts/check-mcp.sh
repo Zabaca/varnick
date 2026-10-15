@@ -103,8 +103,44 @@ else:
     if schema.get("required"):
         fail("keys requires %s: text, keys or both are enough" % schema.get("required"))
 
+# The notify tool (option 04 of phone-page-is-only-a-browser-tab): its own set, in every Claude pane. Named alone it lists notify alone; named
+# with the others it comes last; with none named the server still lists the screen tools alone.
+only_notify, screen_notify, all_three = listed(["--notify"]), listed(["--screen", "--notify"]), listed(["--screen", "--panel", "--notify"])
+if only_notify != ["notify"]:
+    fail("--notify lists %s, not notify alone" % only_notify)
+if screen_notify != screen + ["notify"]:
+    fail("--screen --notify lists %s, not the screen tools then notify" % screen_notify)
+if all_three != screen + only_panel + ["notify"]:
+    fail("all three sets list %s, not the screen tools, Panel access's and notify" % all_three)
+if "notify" in none or "notify" in only_screen or "notify" in only_panel or "notify" in both:
+    fail("a server started without --notify lists notify")
+notify = [t for t in listed(["--notify"], full=True) if t["name"] == "notify"]
+if not notify:
+    fail("--notify lists no notify")
+else:
+    schema = notify[0]["inputSchema"]
+    properties = schema.get("properties", {})
+    if schema.get("required") != ["title"] or properties.get("title", {}).get("type") != "string" or properties.get("body", {}).get("type") != "string":
+        fail("notify's schema is %s: a required string title and an optional string body" % schema)
+
+# A notify call is answered by the server alone: it checks the arguments and acts on nothing. Only an empty title is refused, and longer text is cut.
+def called(arguments):
+    replies = talk(["--notify"], [{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "notify", "arguments": arguments}}])
+    return replies.get(4, {}).get("result", {})
+
+ok = called({"title": "Tests passed: 214", "body": "all green"})
+if ok.get("isError") is not False or "phone" not in ok.get("content", [{}])[0].get("text", ""):
+    fail("a notify call with a title was not answered with what Varnick will do: %s" % ok)
+for empty in ({}, {"title": ""}, {"title": "  \n "}, {"body": "no title"}, {"title": 7}):
+    refused = called(empty)
+    if refused.get("isError") is not True:
+        fail("a notify call with %s was not refused" % empty)
+long_title = called({"title": "x" * 200, "body": "y" * 500})
+if long_title.get("isError") is not False or "title was cut to 80" not in long_title["content"][0]["text"] or "body was cut to 300" not in long_title["content"][0]["text"]:
+    fail("a notify call with long text did not say what it cut: %s" % long_title)
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
-for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours")):
+for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))

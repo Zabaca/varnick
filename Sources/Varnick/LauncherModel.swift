@@ -2287,6 +2287,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let pane = ref else { return }
             self.notifier.turnChanged(in: pane, from: old, to: new)
         }
+        session.onMessageChange = { [weak self] old, new, first in
+            guard let self, let pane = ref else { return }
+            self.notifier.messageChanged(in: pane, from: old, to: new, first: first)
+        }
         // A close that doesn't happen (the question answered No, the pane taken over): the tab isn't closing any more, Done or ×.
         session.onKept = { [weak self] in
             guard let self, let kept = ref, let tab = self.tabs.first(where: { $0.contains(kept) }) else { return }

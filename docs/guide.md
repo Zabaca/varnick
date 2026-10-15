@@ -99,8 +99,16 @@ happened. Choosing it shows the panel on that pane.
   phone is in control, or its host doesn't answer) is silent. A session on a paired Mac is read every 5 seconds, so Done can
   come up to 5 seconds late. Sessions already waiting when Varnick starts, or when a Mac comes back, raise nothing, and
   notices are not kept across a restart.
-- **Switches.** Settings › Claude › **Notify me when a session…** has one for each of needs me, is done and stops on an
-  error, all on by default.
+- **Switches.** Settings › Claude › **Notify me when a session…** has one for each of needs me, is done, stops on an
+  error and sends me a message, all on by default.
+- **A session can tell you something itself.** Every Claude pane has a `notify` tool (a title and an optional body), and
+  Claude Code's own push notification, where you have it on, counts too. Ask a session "notify me when the tests pass" and
+  it raises a notice of its own: the orange dot, the louder sound and the menu line showing the message's title. A turn
+  that ends right after a message adds no second notice, a session alerts at most once a minute, and the message clears
+  at your next prompt or a `/clear`. A pane started before this build has `notify` after its next start. On the phone the
+  message comes after 2 seconds, with the message as the notification on the tailnet and only "a session sent you a
+  message" off it. While a host has a phone subscribed, Varnick tells Claude Code not to send its own mobile push, so the
+  phone is not buzzed twice.
 - **A session that stopped on an error** shows "API error" on its board card, in Stopped. A paired Mac on an older build
   shows "Turn not known" for it, and a headless host raises Done for it until its relay is reinstalled.
 
@@ -173,13 +181,13 @@ browser's error page; Try again loads the page once the host answers. The app ke
 
 The page can also notify the phone. At the foot of the home page, Notifications has a switch (Turn on asks the phone's permission, from
 that tap; on an iPhone it needs the page added to the Home Screen first). Each host is its own app and its own switch. With it on, the phone
-gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, or stops on an API error
-(with its kind), each with a switch of its own (Needs me, Done, Errors), Send a test and Turn off. It comes when you are away from the Mac that
-controls the session (CONTEXT.md, Presence, says how Varnick tells), after a short wait to be sure (10 seconds for Done, 2 for a session that needs you or stopped on an error); at the Mac you get the Mac's own
+gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, stops on an API error
+(with its kind) or sends a message of its own (Notices, above), each with a switch of its own (Needs me, Done, Errors, Messages), Send a test and Turn off. It comes when you are away from the Mac that
+controls the session (CONTEXT.md, Presence, says how Varnick tells), after a short wait to be sure (10 seconds for Done, 2 for a session that needs you, stopped on an error or sent a message); at the Mac you get the Mac's own
 notice and the phone stays quiet, nor does it buzz for a notice you have already seen at the Mac, and the phone has none for a session it has open. A session you
 drive from the phone, or that runs on a headless host, always notifies it. With the phone on the tailnet the notification names the session;
 off it, only the host. Tapping it opens that session. As on the Mac (Notices, above), a turn that leaves background agents or shells running gives
-no Done until they have ended, so a shell forgotten in a session keeps its Done from the phone too. Every Mac and a headless host must run the same Varnick commit (protocol 27). Settings › Peers
+no Done until they have ended, so a shell forgotten in a session keeps its Done from the phone too. Every Mac and a headless host must run the same Varnick commit (protocol 28). Settings › Peers
 says which of your devices get notifications from a Mac.
 
 ## Listening

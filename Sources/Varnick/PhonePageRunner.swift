@@ -29,6 +29,7 @@ enum PhonePageRunner {
         let running = Zmx.labels(of: PhonePage.sessionName)
         guard enabled else {
             if running != nil, !stop() { return .failed("The server's session didn't end") }
+            removePresenceMarker()
             return .stopped
         }
         guard Zmx.isAvailable else { return .failed("zmx isn't next to Varnick: build with make") }
@@ -46,11 +47,18 @@ enum PhonePageRunner {
         return start(bun: bun, folder: folder, digest: digest, mode: mode, relay: relay, tailscale: tailscale, key: key)
     }
 
+    /// The server removes Claude Code's presence marker as it stops, but a kill it doesn't survive leaves it, and with the page off nothing of
+    /// Varnick's pushes: Claude Code's own pushes would stay muted. A server started again makes it again if a subscription stands.
+    private static func removePresenceMarker() {
+        try? FileManager.default.removeItem(at: PhonePage.folder(in: SupportFolder.url).appendingPathComponent(ClaudeCommand.presenceMarkerName))
+    }
+
     /// Ends the session, then waits for it to be gone and for the server to let go of its socket and port. False when
     /// it is still there: a new server would find the old one on the port.
     private static func stop() -> Bool {
         Zmx.killNow(named: PhonePage.sessionName)
         for _ in 0..<30 where Zmx.labels(of: PhonePage.sessionName) != nil { usleep(100_000) }
+        removePresenceMarker()
         guard Zmx.labels(of: PhonePage.sessionName) == nil else { return false }
         usleep(500_000)
         return true

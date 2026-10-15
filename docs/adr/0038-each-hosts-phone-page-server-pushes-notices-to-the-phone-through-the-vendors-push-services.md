@@ -1,6 +1,6 @@
 # Each host's Phone page server pushes notices to the phone through the vendors' push services
 
-Amends [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page server answers the tailnet and asks nobody outside it), and reads the turns [ADR 0010](0010-a-panes-turn-comes-from-hooks-that-write-to-the-pane-folder.md) describes. The problem and the option are in `docs/problems/phone-page-is-only-a-browser-tab/` (option 02, accepted 2026-10-14, with the user's decisions of that day). The mechanics and what breaks them are in `docs/agents/where-it-breaks.md` (Phone page › Push, and Peers › Presence); **Presence** and **Notice** are defined in `CONTEXT.md`.
+Amends [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page server answers the tailnet and asks nobody outside it), and reads the turns [ADR 0010](0010-a-panes-turn-comes-from-hooks-that-write-to-the-pane-folder.md) describes. The problem and the options are in `docs/problems/phone-page-is-only-a-browser-tab/` (option 02, accepted 2026-10-14, with the user's decisions of that day; option 04, accepted 2026-10-15, amends it below). The mechanics and what breaks them are in `docs/agents/where-it-breaks.md` (Phone page › Push, and Peers › Presence); **Presence** and **Notice** are defined in `CONTEXT.md`.
 
 The page server of a host sends a standard Web Push (RFC 8030, VAPID RFC 8292, `aes128gcm` RFC 8291) to the phone's browser when a Claude session of that host needs the user and the user is away from it. It is the first request the server makes outside the tailnet.
 
@@ -10,7 +10,10 @@ The page server of a host sends a standard Web Push (RFC 8030, VAPID RFC 8292, `
 - **A push carries ids and the kind, never session content,** padded to one size and sent alike, so a push service learns that a push went, when and to which browser, and nothing about the session. The service worker reads the title from the host over the tailnet when the push arrives, and names only the host when it can't.
 - **One key per host,** bound to every subscription, so it must never change by itself: a Keychain item of Varnick's own on a Mac, handed to the server as a file it deletes, and an owner-only file on a headless host.
 - **A push may go only to a push service** (Google's, Apple's, Mozilla's or Microsoft's), never to an address a device chose.
-- **Protocol 27** carries what the rule needs from other machines: the presence on a Mac's `status` request, the Esc mark and the failure kind on a pane's turn in `status` and `tabs`, and the controllers' ids for the host's own page server. A Mac that follows a peer's pane takes the mark and the kind, so a peer's Esc raises no Done there and its error names its kind. Every Mac and the headless host run one commit.
+- **A session can raise a notice itself (option 04, 2026-10-15).** A Message is a notice the session chooses to raise, through the `notify` tool of Varnick's MCP server (in every Claude pane, the headless host's included) or Claude Code's own PushNotification. One PostToolUse hook records either call raw in the pane's folder, so the MCP server still never acts, and each host's page server reads the message from its own panes' `tabs`, as it reads the turn. It joins the table at the Needs-you settle (2 s); a Done that follows it is folded into it with no time limit, and Needs you and an error replace it. A pane alerts for a message at most once a minute, with the newest words pushed at the end of it if the message still stands.
+- **A message's words never go in a push.** The payload is the kind (`message`) and the ids, padded like every other, so the push service can't tell a message from any other push. The words travel only over the user's own links (`status` to the Macs that follow the pane, `tabs` to the host's page server and to a listed device), and the phone's worker reads them from the host when the push arrives; off the tailnet the notification says only that a session sent a message.
+- **Claude Code's own mobile push is muted while Varnick's is on.** Varnick sets `CLAUDE_CLIENT_PRESENCE_FILE` in every Claude pane to a marker in the page server's folder, which the server keeps while the host has a push subscription and removes when it has none or stops. Claude Code then skips its Remote Control mobile pushes (its desktop notification is a separate check), so Varnick's routing alone decides and the phone isn't buzzed twice.
+- **Protocol 27** carries what the rule needs from other machines: the presence on a Mac's `status` request, the Esc mark and the failure kind on a pane's turn in `status` and `tabs`, and the controllers' ids for the host's own page server. A Mac that follows a peer's pane takes the mark and the kind, so a peer's Esc raises no Done there and its error names its kind. Every Mac and the headless host run one commit. **Protocol 28** adds `message` (a message's title, body and id, the message file's date) to a pane in `status` and `tabs`.
 
 ## Considered Options
 
@@ -21,6 +24,7 @@ The page server of a host sends a standard Web Push (RFC 8030, VAPID RFC 8292, `
 - **Asking `tabs` every 5 s:** about 17,000 Varnick processes a day on a Mac.
 - **The title in the encrypted payload, or a push app such as ntfy:** the title would pass through the push service (encrypted, but sized and timed with the session), and ntfy adds a server and an app.
 - **The key in the server's environment:** `ps eww` shows it to the account's other programs.
+- **A message's words in the encrypted payload,** so they would show off the tailnet: rejected (option 04, open question 5). They are what the rule protects, and on the tailnet the worker shows them anyway.
 
 ## Consequences
 
@@ -28,5 +32,7 @@ The page server of a host sends a standard Web Push (RFC 8030, VAPID RFC 8292, `
 - **A key per host that must never change by itself.** A Keychain item that is refused leaves the host without push until the user allows it; replacing it would void every subscription.
 - **Presence is a guess at attention, and it leans toward pushing.** Every case where a host can't tell (an asleep Mac, a dropped link) pushes. The lock notifications it reads are undocumented names; the idle counter and the display state are public.
 - **A host that is asleep or offline sends nothing,** and a push is held at most an hour.
-- **The page server reads Varnick's files:** the turn files, the presence files and the saved tabs' date.
+- **The page server reads Varnick's files:** the turn files, the message files, the presence files and the saved tabs' date.
+- **A session's words can reach a lock screen.** A message shows on the phone's lock screen when the worker could read the host, and the model decides when to interrupt; the once-a-minute alert, the 60-an-hour cap and the tool's description bound that, they don't judge what it says.
+- **Varnick turns off Claude Code's own mobile pushes while its own are on,** for a user who relies on the Claude app's push as well as subscribing the Phone page.
 - **Not verified on a phone at build time:** the worker's title read passing the page's fetch-site check, how long iOS lets a push event run, and whether iOS honours a notification's `tag`.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-  allows, awayAfterSeconds, decide, defaultSwitches, decideRoute, failureWord, macView, payloadOf, presenceOf, route, seenAfterMs, doneSettleMs, settleOf, urgentSettleMs, staleAfterSeconds, turnWords,
+  allows, awayAfterSeconds, decide, decideMessage, defaultSwitches, decideRoute, failureWord, macView, merge, messageGapMs, payloadOf, presenceOf, route, seenAfterMs, doneSettleMs, settleOf, urgentSettleMs, staleAfterSeconds, turnWords,
   type Controller, type Decision, type Notice, type Presence, type TurnWord, type View,
 } from "./pushrule";
 
@@ -80,15 +80,88 @@ describe("the table (NoticeRule.decide)", () => {
   });
 });
 
+describe("a message the session sent itself (NoticeRule.decide(message:) and merge)", () => {
+  const message = raise({ kind: "message" });
+  const t = 1_000_000;
+
+  test("the first message read for a pane is a starting point", () => {
+    expect(decideMessage({ old: null, next: t, first: true })).toEqual(none);
+  });
+
+  test("the first reading with no message clears a standing one: a host that answers again may have lost it", () => {
+    expect(decideMessage({ old: null, next: null, first: true })).toEqual(clear);
+  });
+
+  test("a message after a reading is a Message, and another replaces it", () => {
+    expect(decideMessage({ old: null, next: t, first: false })).toEqual(message);
+    expect(decideMessage({ old: t, next: t + 30_000, first: false })).toEqual(message);
+  });
+
+  test("a message is the same exactly when its id is: a second one close behind the first is another", () => {
+    expect(decideMessage({ old: t, next: t, first: false })).toEqual(none);
+    expect(decideMessage({ old: t, next: t + 1, first: false })).toEqual(message);
+    expect(decideMessage({ old: t, next: t - 1, first: false })).toEqual(message);
+  });
+
+  test("a message that is gone clears, and nothing to clear is nothing", () => {
+    expect(decideMessage({ old: t, next: null, first: false })).toEqual(clear);
+    expect(decideMessage({ old: null, next: null, first: false })).toEqual(none);
+  });
+
+  test("a Done folds into a standing message, whatever the turn did", () => {
+    expect(merge(raise({ kind: "done" }), { kind: "message" })).toEqual(none);
+  });
+
+  test("the turn going on, or a dialog answered, leaves the message standing", () => {
+    expect(merge(clear, { kind: "message" })).toEqual(none);
+    expect(merge(none, { kind: "message" })).toEqual(none);
+  });
+
+  test("Needs you and an error replace a message", () => {
+    expect(merge(raise({ kind: "needs", turn: "plan" }), { kind: "message" })).toEqual(raise({ kind: "needs", turn: "plan" }));
+    expect(merge(raise({ kind: "failed", failure: null }), { kind: "message" })).toEqual(raise({ kind: "failed", failure: null }));
+  });
+
+  test("with no message standing the turn's decision is the only one", () => {
+    for (const standing of [undefined, { kind: "done" }, { kind: "needs", turn: "question" }, { kind: "failed", failure: null }] as Array<Notice | undefined>) {
+      for (const decision of [none, clear, raise({ kind: "done" }), raise({ kind: "needs", turn: "plan" })]) expect(merge(decision, standing)).toEqual(decision);
+    }
+  });
+
+  test("a message settles as Needs you does, and pushes at most once a minute", () => {
+    expect(settleOf({ kind: "message" })).toBe(urgentSettleMs);
+    expect(messageGapMs).toBe(60_000);
+  });
+
+  test("the Swift rule's message table says what this one does", () => {
+    const swift = readFileSync(new URL("../Packages/VarnickPeer/Sources/VarnickPeer/NoticeRule.swift", import.meta.url), "utf8");
+    const rows = [...swift.matchAll(/^\s*\/\/\/ \| ([^|]+?) \| ([^|]+?) \|$/gm)].map((match) => match[2]);
+    expect(rows).toEqual([
+      "Notice",
+      "none: a starting point",
+      "Message, replacing what stands",
+      "none, clears a standing message",
+    ]);
+    // The fold is the same rows in both languages.
+    expect(swift).toMatch(/case \.raise\(\.done\), \.clear, \.none: return \.none/);
+  });
+});
+
 describe("the switches", () => {
   test("each category has its own, all on by default", () => {
-    expect(defaultSwitches).toEqual({ needsMe: true, done: true, errors: true });
-    expect(allows({ needsMe: false, done: true, errors: true }, { kind: "needs", turn: "plan" })).toBe(false);
-    expect(allows({ needsMe: true, done: false, errors: true }, { kind: "done" })).toBe(false);
-    expect(allows({ needsMe: true, done: true, errors: false }, { kind: "failed", failure: null })).toBe(false);
-    expect(allows({ needsMe: false, done: false, errors: true }, { kind: "failed", failure: null })).toBe(true);
-    expect(allows({ needsMe: true, done: false, errors: false }, { kind: "needs", turn: "permission" })).toBe(true);
-    expect(allows({ needsMe: false, done: true, errors: false }, { kind: "done" })).toBe(true);
+    expect(defaultSwitches).toEqual({ needsMe: true, done: true, errors: true, messages: true });
+    expect(allows({ needsMe: false, done: true, errors: true, messages: true }, { kind: "needs", turn: "plan" })).toBe(false);
+    expect(allows({ needsMe: true, done: false, errors: true, messages: true }, { kind: "done" })).toBe(false);
+    expect(allows({ needsMe: true, done: true, errors: false, messages: true }, { kind: "failed", failure: null })).toBe(false);
+    expect(allows({ needsMe: false, done: false, errors: true, messages: true }, { kind: "failed", failure: null })).toBe(true);
+    expect(allows({ needsMe: true, done: false, errors: false, messages: true }, { kind: "needs", turn: "permission" })).toBe(true);
+    expect(allows({ needsMe: false, done: true, errors: false, messages: true }, { kind: "done" })).toBe(true);
+  });
+
+  test("a message has its own, and no other switch decides it", () => {
+    expect(allows({ needsMe: true, done: true, errors: true, messages: false }, { kind: "message" })).toBe(false);
+    expect(allows({ needsMe: false, done: false, errors: false, messages: true }, { kind: "message" })).toBe(true);
+    expect(allows({ needsMe: true, done: true, errors: true, messages: false }, { kind: "done" })).toBe(true);
   });
 });
 
@@ -278,6 +351,10 @@ describe("the payload and the words", () => {
     expect(payloadOf({ kind: "needs", turn: "permission" }, "t", "p")).toEqual({ v: 1, kind: "permission", tab: "t", pane: "p" });
     expect(payloadOf({ kind: "failed", failure: "rate limit" }, "t", "p")).toEqual({ v: 1, kind: "failed", tab: "t", pane: "p", failure: "rate limit" });
     expect(payloadOf({ kind: "failed", failure: null }, "t", "p")).toEqual({ v: 1, kind: "failed", tab: "t", pane: "p" });
+  });
+
+  test("a message's payload is its kind and the ids: the words never travel in a push (ADR 0038)", () => {
+    expect(payloadOf({ kind: "message" }, "t", "p")).toEqual({ v: 1, kind: "message", tab: "t", pane: "p" });
   });
 
   test("the error kinds are the Mac's words", () => {

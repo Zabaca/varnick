@@ -33,6 +33,31 @@ describe("the proxied address of a pane", () => {
   });
 });
 
+describe("a Claude pane's message (for the push worker)", () => {
+  const shape = (fields: Record<string, unknown>) => shapePane({ id: "aaaaaaaa-0000-4000-8000-0000000000a1", kind: "claude", running: true, ...fields }, device)!;
+
+  test("is its title and body, cleaned and cut", () => {
+    expect(shape({ message: { title: "Tests passed: 214", body: "all green", age: 3 } }).message).toEqual({ title: "Tests passed: 214", body: "all green" });
+    expect(shape({ message: { title: "t" } }).message).toEqual({ title: "t", body: null });
+    const long = shape({ message: { title: `  a\u0007b\u202E ${"x".repeat(200)}`, body: `${"y".repeat(250)}\n\n\n\t${"z".repeat(100)}` } }).message!;
+    expect(long.title).toHaveLength(80);
+    expect(long.title.startsWith("ab xxx")).toBe(true);
+    expect(long.title.endsWith("…")).toBe(true);
+    expect(long.title).not.toContain("\u202E");
+    expect(long.body).toHaveLength(300);
+    expect(long.body!.endsWith("…")).toBe(true);
+    expect(shape({ message: { title: "t", body: "line one\n\n\n\nline two" } }).message!.body).toBe("line one\n\nline two");
+  });
+
+  test("is none when the host says none, or says something that isn't a message", () => {
+    for (const message of [undefined, null, "text", 7, [], {}, { title: "" }, { title: "   " }, { title: 7 }, { body: "no title" }]) expect(shape({ message }).message).toBeNull();
+  });
+
+  test("only a Claude pane has one", () => {
+    expect(shapePane({ id: "aaaaaaaa-0000-4000-8000-0000000000a1", kind: "terminal", message: { title: "t" } }, device)!.message).toBeNull();
+  });
+});
+
 describe("a pane", () => {
   const rows = (panes: Record<string, unknown>[], control: Record<string, unknown> = {}) => {
     const home = shapeHome({ host, loopback: false, device, tabs: ok({ tabs: [{ tab: tabA, panes, ...control }] }), recent: ok({ recent: [] }), hosts: [] });

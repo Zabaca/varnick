@@ -35,9 +35,9 @@ describe("the Notifications section's state", () => {
     expect(pushState(base)).toBe("off");
   });
 
-  test("the switches are the Mac's three, Needs me, Done and Errors", () => {
-    expect(switchLabels.map(([, label]) => label)).toEqual(["Needs me", "Done", "Errors"]);
-    expect(switchLabels.map(([key]) => key)).toEqual(["needsMe", "done", "errors"]);
+  test("the switches are the Mac's four, Needs me, Done, Errors and Messages", () => {
+    expect(switchLabels.map(([, label]) => label)).toEqual(["Needs me", "Done", "Errors", "Messages"]);
+    expect(switchLabels.map(([key]) => key)).toEqual(["needsMe", "done", "errors", "messages"]);
   });
 });
 

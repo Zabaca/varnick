@@ -238,6 +238,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var onTurnWordChange: (_ old: PaneTurn?, _ new: PaneTurn) -> Void = { _, _ in }
     /// When a pane on a peer last took in its host's reply: a change of the turn's word is settled by a reply after it (`SessionNotifier`).
     private(set) var turnHeardAt = Date.distantPast
+    /// The pane's standing message (option 04 of `phone-page-is-only-a-browser-tab`), read by `checkMessage` when its file's date changes, or for
+    /// a session on a peer taken from the host's `status` (`follow`); nil when there is none.
+    private(set) var message: PaneMessage?
+    /// Whether a reading of the message has been taken yet: the first is a starting point and raises nothing.
+    private var messageKnown = false
+    private var messageStamp: Date?
+    /// Called when the message changes, with the one before, and whether this is the first reading (`SessionNotifier`). A message is read before
+    /// the turn it comes with, so a Done that follows it is folded into it.
+    var onMessageChange: (_ old: PaneMessage?, _ new: PaneMessage?, _ first: Bool) -> Void = { _, _, _ in }
     /// What the turn file held when `checkTurn` last read it, before the transcript's correction, and the
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
@@ -598,6 +607,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         try? FileManager.default.removeItem(at: conversationFile)
         PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: record.id)
         PaneFolder.clearSubagentWork(for: record.id)
+        PaneFolder.clearMessage(for: record.id)
         if restarting { PaneFolder.clearStop(for: record.id) }
         // claude exits on an unknown --agent, so a session whose agent file has since gone
         // resumes without it.
@@ -617,7 +627,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // PATH, and nothing from the launcher's own environment leaks into claude.
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
             + ["VARNICK_SESSION_FILE=\(conversationFile.path)", paneIDVariable,
-               "VARNICK_PROJECT=\(CustomApp.projectRoot(of: record.directory))"]
+               "VARNICK_PROJECT=\(CustomApp.projectRoot(of: record.directory))",
+               ClaudeCommand.presenceEntry(phoneFolder: PhonePage.folder(in: SupportFolder.url))]
         // A pane already in zmx stays there whatever the setting says now: a bare claude beside its
         // session would be a second one.
         startInTerminal(Self.claudeShell, ClaudeCommand.shellArguments(claudeArgs), environment: env, alwaysInZmx: inZmx,
@@ -1225,6 +1236,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Reads the turn file when its date changes, and the transcript when its date does, whatever the word
     /// (`PaneFolder.corrected`). The board calls it for panes with no watch of their own. A peer's file is on its host.
     func checkTurn() {
+        // The message first: a Done in this read is folded into a message the same read holds.
+        checkMessage()
         guard isClaude, !isOnPeer, let stamp = PaneFolder.modificationDate(PaneFolder.turnFile(for: record.id).path)
         else { return }
         let fileChanged = stamp != recordedTurn?.since
@@ -1235,6 +1248,23 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         recordedTurn = recorded
         transcriptStamp = transcriptDate
         turn = PaneFolder.corrected(recorded, for: record.id, transcriptPath: transcriptPath)
+    }
+
+    /// Reads the message file when its date changes, one stat a tick. A peer's file is on its host.
+    func checkMessage() {
+        guard isClaude, !isOnPeer else { return }
+        let stamp = PaneFolder.modificationDate(PaneFolder.messageFile(for: record.id).path)
+        guard !messageKnown || stamp != messageStamp else { return }
+        messageStamp = stamp
+        take(message: stamp == nil ? nil : PaneFolder.message(for: record.id))
+    }
+
+    private func take(message new: PaneMessage?) {
+        let first = !messageKnown
+        messageKnown = true
+        let old = message
+        message = new
+        if first || new != old { onMessageChange(old, new, first) }
     }
 
     /// Reads the work records and the log when the log's date changes: every hook that changes a record appends to it, so otherwise this
@@ -1278,6 +1308,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func follow(_ status: PeerSessionStatus) -> Bool {
         guard isClaude, isOnPeer else { return false }
         turnHeardAt = Date()
+        // Its message, before the turn (protocol 28): a Done that comes with it is folded into it.
+        take(message: status.running ? status.message?.paneMessage : nil)
         // The host's Esc mark and error kind come with the word (protocol 27): its Esc raises no Done here, and its error names its kind.
         turn = status.running ? status.turn.map {
             PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date()), failure: status.failure, interrupted: status.esc == true)
@@ -1306,6 +1338,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// The host didn't answer: its last word on the turn is no longer known to hold.
     func clearHostTurn() {
         turn = nil
+        // Not known to hold either; the next reply is a starting point again, as for the turn.
+        message = nil
+        messageKnown = false
         dropHostLive()
     }
 
