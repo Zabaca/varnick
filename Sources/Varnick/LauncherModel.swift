@@ -289,7 +289,8 @@ final class LauncherModel: ObservableObject {
     private var pendingDone: Set<UUID> = []
     /// Runs while this Mac has a pane on a peer (`updatePeerFollowing`); nil otherwise.
     private var peerFollowTask: Task<Void, Never>?
-    private var followingPeers = false
+    private var hostFollowTasks: [String: Task<Void, Never>] = [:]
+    private var followingHosts: Set<String> = []
     private static let peerFollowInterval: TimeInterval = 5
     private var peerProjectsLoading = false
     private var peerAgentsLoading = false
@@ -1314,7 +1315,7 @@ final class LauncherModel: ObservableObject {
         refreshPeerOpenSessions()
         refreshPeerRecent()
         loadProjectsForRows()
-        Task { await followPeerSessions() }
+        followPeerSessionsNow()
         if showingBoard { board.appear() }
         if showingResources { resources.appear() }
         settingsResources.panelDidShow()
@@ -1695,12 +1696,26 @@ final class LauncherModel: ObservableObject {
 
     // MARK: Following sessions on peers
 
-    /// Keeps `followPeerSessions` running every few seconds for as long as a pane here is on a peer,
-    /// and stops it when none is: no asking while there is nothing to ask about. Called on every save,
-    /// which is every change to the tabs.
+    /// Keeps a follow of each host running every few seconds for as long as a pane here is on it, each on a timer of its own, and the shown
+    /// tab's listing alongside; stops what has nothing to ask about. Called on every save, which is every change to the tabs. A host's follow
+    /// is also the status request that carries this Mac's presence (`PresenceReader`), so one host that is slow or unreachable must not delay
+    /// the others' reports past the page server's 20 s: no round waits on every host.
     private func updatePeerFollowing() {
-        let any = tabs.flatMap(\.sessions).contains { $0.isOnPeer }
-        guard any else {
+        let hosts = Set(tabs.flatMap(\.sessions).filter { $0.isClaude && $0.isOnPeer }.compactMap(\.record.host))
+        for (host, task) in hostFollowTasks where !hosts.contains(host) {
+            task.cancel()
+            hostFollowTasks[host] = nil
+        }
+        for host in hosts where hostFollowTasks[host] == nil {
+            hostFollowTasks[host] = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(Self.peerFollowInterval))
+                    guard !Task.isCancelled, let self else { return }
+                    await self.followPeerSessions(on: host)
+                }
+            }
+        }
+        guard tabs.flatMap(\.sessions).contains(where: { $0.isOnPeer }) else {
             peerFollowTask?.cancel()
             peerFollowTask = nil
             return
@@ -1710,44 +1725,40 @@ final class LauncherModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.peerFollowInterval))
                 guard !Task.isCancelled, let self else { return }
-                await self.followPeerSessions()
                 await self.followShownHostTab()
             }
         }
     }
 
-    /// Asks each host once, for every pane this Mac has on it, which conversation the session is on
-    /// and what it is called there, and saves what changed: the hook that follows /clear and /resume
-    /// writes its file on the host, so this is how the Mac in control learns of them. The SSH call
-    /// runs off the main actor; a host that doesn't answer changes nothing. Not while another round
-    /// is still waiting on a host.
-    private func followPeerSessions() async {
-        guard !followingPeers else { return }
-        followingPeers = true
-        defer { followingPeers = false }
-        let panes = tabs.flatMap(\.sessions).filter { $0.isClaude && $0.isOnPeer }
-        let byHost = Dictionary(grouping: panes.compactMap { pane in pane.record.host.map { ($0, pane) } }, by: \.0)
-        await withTaskGroup(of: (String, [String: PeerSessionStatus]?).self) { group in
-            for (host, entries) in byHost {
-                // The request names at most 50 sessions (`PeerRelay.status`).
-                let names = entries.prefix(50).map { Zmx.sessionName($0.1.id) }
-                group.addTask { (host, await PeerManager.shared.sessionStatuses(names, on: host)) }
-            }
-            for await (host, found) in group {
-                guard !Task.isCancelled else { continue }
-                // A host that doesn't answer leaves its panes' turns unknown rather than stale.
-                guard let found else {
-                    for pane in claudePanes(on: host) { pane.clearHostTurn() }
-                    continue
-                }
-                var changed = false
-                // The panes as they are now: one may have closed or moved while the host answered.
-                for pane in claudePanes(on: host) {
-                    if let status = found[Zmx.sessionName(pane.id)], pane.follow(status) { changed = true }
-                }
-                if changed { saveSessions() }
-            }
+    /// Asks every host that has a pane of this Mac's now (the panel came up), each on its own.
+    private func followPeerSessionsNow() {
+        let hosts = Set(tabs.flatMap(\.sessions).filter { $0.isClaude && $0.isOnPeer }.compactMap(\.record.host))
+        for host in hosts { Task { await followPeerSessions(on: host) } }
+    }
+
+    /// Asks one host, for every pane this Mac has on it, which conversation the session is on and what it is called there, and saves what
+    /// changed: the hook that follows /clear and /resume writes its file on the host, so this is how the Mac in control learns of them. The SSH
+    /// call runs off the main actor; a host that doesn't answer changes nothing. Not while the last ask of the same host is still waiting.
+    private func followPeerSessions(on host: String) async {
+        guard !followingHosts.contains(host) else { return }
+        followingHosts.insert(host)
+        defer { followingHosts.remove(host) }
+        // The request names at most 50 sessions (`PeerRelay.status`).
+        let names = claudePanes(on: host).filter(\.isOnPeer).prefix(50).map { Zmx.sessionName($0.id) }
+        guard !names.isEmpty else { return }
+        let found = await PeerManager.shared.sessionStatuses(names, on: host)
+        guard !Task.isCancelled else { return }
+        // A host that doesn't answer leaves its panes' turns unknown rather than stale.
+        guard let found else {
+            for pane in claudePanes(on: host) { pane.clearHostTurn() }
+            return
         }
+        var changed = false
+        // The panes as they are now: one may have closed or moved while the host answered.
+        for pane in claudePanes(on: host) {
+            if let status = found[Zmx.sessionName(pane.id)], pane.follow(status) { changed = true }
+        }
+        if changed { saveSessions() }
     }
 
     private func claudePanes(on host: String) -> [ClaudeSession] {
