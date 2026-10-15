@@ -8,8 +8,14 @@ import Foundation
 public enum AutomationTools {
     public static let nameLimit = 80
     public static let workingLimits = 5...1440
-    /// The values of `permissions`. A session never gets Skip: it is the user's to choose in Settings › Automations.
-    public static let permissionNames = ["varnick_setting", "ask", "allowed_tools_only"]
+    /// The values of `permissions` and what each means. A session never gets Skip: it is the user's to choose in Settings › Automations.
+    private static let permissionChoices: [(name: String, value: AutomationPermissions?)] = [("varnick_setting", nil), ("ask", .ask), ("allowed_tools_only", .allowedOnly)]
+    public static var permissionNames: [String] { permissionChoices.map(\.name) }
+
+    /// A permission's name as the tools say it, Skip's included (a list shows the user's choice).
+    public static func permissionName(_ permissions: AutomationPermissions?) -> String {
+        permissions == .skip ? "skip" : permissionChoices.first { $0.value == permissions }?.name ?? "varnick_setting"
+    }
     public static let cadenceKinds = ["minutes", "hours", "daily", "weekdays", "weekly"]
     /// The arguments create and edit take; edit takes `id` besides.
     public static let fieldNames = ["name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled"]
@@ -63,7 +69,7 @@ public enum AutomationTools {
     public static func read(_ arguments: [String: String], creating: Bool, in context: Context) -> Result<Fields, Problems> {
         var fields = Fields()
         var problems: [String] = []
-        for name in arguments.keys.sorted() where !fieldNames.contains(name) && name != "id" {
+        for name in arguments.keys.sorted() where !fieldNames.contains(name) && (creating || name != "id") {
             problems.append("\(name) is not a field: the fields are \(fieldNames.joined(separator: ", "))")
         }
         func given(_ key: String) -> String? { arguments[key] }
@@ -94,13 +100,12 @@ public enum AutomationTools {
             }
         }
         if let text = given("permissions") {
-            switch text.trimmingCharacters(in: .whitespaces).lowercased() {
-            case "varnick_setting": fields.permissions = .some(nil)
-            case "ask": fields.permissions = .some(.ask)
-            case "allowed_tools_only": fields.permissions = .some(.allowedOnly)
-            case "skip", "skip permissions", "skip_permissions":
+            let word = text.trimmingCharacters(in: .whitespaces).lowercased()
+            if let choice = permissionChoices.first(where: { $0.name == word }) {
+                fields.permissions = .some(choice.value)
+            } else if ["skip", "skip permissions", "skip_permissions"].contains(word) {
                 problems.append("permissions: a session may not set Skip. The user sets it in Settings › Automations; use \(permissionNames.joined(separator: ", ")) or leave it out")
-            default:
+            } else {
                 problems.append("permissions is one of \(permissionNames.joined(separator: ", "))")
             }
         }
@@ -123,6 +128,10 @@ public enum AutomationTools {
             case "false": fields.enabled = false
             default: problems.append("enabled is true or false")
             }
+        }
+        // A folder taken from the calling session (create's, when none is given) may have gone since the session started.
+        if creating, fields.folder == nil, case .failure = folder(context.sessionFolder) {
+            problems.append("folder: this session's folder \(context.sessionFolder) is no longer a folder on this Mac; give folder")
         }
         // The agent is judged against the folder the automation will have, so it is read after the folder.
         let folderNow = fields.folder ?? (creating ? context.sessionFolder : context.current?.folder ?? context.defaultFolder)
@@ -160,33 +169,55 @@ public enum AutomationTools {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    /// A number as a model sends it: a whole number, or a whole number as text. A JSON boolean is neither (a cast would read it as 1), so it is nil.
+    /// `text` is the value when it was a string, for a day's name.
+    private struct Loose: Decodable {
+        var number: Int?
+        var text: String?
+
+        init(from decoder: Decoder) throws {
+            let value = try decoder.singleValueContainer()
+            if let whole = try? value.decode(Int.self) {
+                number = whole
+            } else if let words = try? value.decode(String.self) {
+                text = words
+                number = Int(words.trimmingCharacters(in: .whitespaces))
+            } else if let fraction = try? value.decode(Double.self), fraction.rounded() == fraction, abs(fraction) < 1e9 {
+                number = Int(fraction)
+            }
+        }
+    }
+
+    private struct CadenceArguments: Decodable {
+        var kind: String?
+        var every: Loose?
+        var weekday: Loose?
+        var hour: Loose?
+        var minute: Loose?
+    }
+
     /// `{"kind": "daily", "hour": 9, "minute": 0}`, `{"kind": "minutes", "every": 15}`, `{"kind": "weekly", "weekday": "monday", "hour": 9}`.
     static func cadence(_ text: String) -> Result<AutomationCadence, Why> {
-        guard let data = text.data(using: .utf8), let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        guard let data = text.data(using: .utf8), let given = try? JSONDecoder().decode(CadenceArguments.self, from: data) else {
             return .failure(Why(text: "it is an object such as {\"kind\": \"daily\", \"hour\": 9, \"minute\": 0}"))
         }
-        func number(_ key: String) -> Int? {
-            if let value = object[key] as? Int { return value }
-            if let value = object[key] as? Double, value.rounded() == value { return Int(value) }
-            return (object[key] as? String).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-        }
-        guard let kind = (object["kind"] as? String)?.lowercased(), cadenceKinds.contains(kind) else {
+        guard let kind = given.kind?.lowercased(), cadenceKinds.contains(kind) else {
             return .failure(Why(text: "kind is one of \(cadenceKinds.joined(separator: ", "))"))
         }
         func time() -> Result<(Int, Int), Why> {
-            guard let hour = number("hour"), (0..<24).contains(hour) else { return .failure(Why(text: "hour is a whole number from 0 to 23")) }
-            let minute = object["minute"] == nil ? 0 : number("minute")
+            guard let hour = given.hour?.number, (0..<24).contains(hour) else { return .failure(Why(text: "hour is a whole number from 0 to 23")) }
+            let minute = given.minute == nil ? 0 : given.minute?.number
             guard let minute, (0..<60).contains(minute) else { return .failure(Why(text: "minute is a whole number from 0 to 59")) }
             return .success((hour, minute))
         }
         switch kind {
         case "minutes":
-            guard let every = number("every"), AutomationCadence.minuteSteps.contains(every) else {
+            guard let every = given.every?.number, AutomationCadence.minuteSteps.contains(every) else {
                 return .failure(Why(text: "every is \(AutomationCadence.minuteSteps.map(String.init).joined(separator: " or ")) minutes, the shortest being \(Int(AutomationCadence.shortest / 60))"))
             }
             return .success(.minutes(every))
         case "hours":
-            guard let every = number("every"), AutomationCadence.hourSteps.contains(every) else {
+            guard let every = given.every?.number, AutomationCadence.hourSteps.contains(every) else {
                 return .failure(Why(text: "every is \(AutomationCadence.hourSteps.map(String.init).joined(separator: ", ")) hours"))
             }
             return .success(.hours(every))
@@ -196,7 +227,7 @@ public enum AutomationTools {
             return time().map { .weekdays(hour: $0.0, minute: $0.1) }
         default:
             let names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
-            let day = number("weekday") ?? (object["weekday"] as? String).flatMap { names.firstIndex(of: $0.lowercased()).map { $0 + 1 } }
+            let day = given.weekday?.number ?? given.weekday?.text.flatMap { names.firstIndex(of: $0.trimmingCharacters(in: .whitespaces).lowercased()).map { $0 + 1 } }
             guard let day, (1...7).contains(day) else { return .failure(Why(text: "weekday is 1 to 7 from Sunday, or a day's name")) }
             return time().map { .weekly(weekday: day, hour: $0.0, minute: $0.1) }
         }
@@ -248,9 +279,8 @@ public enum AutomationTools {
             : nil
     }
 
-    /// The automation with only the given fields changed, as the editor's Save applies them, and the names of the fields that differ. Nil when
-    /// nothing differs. Like the Save it stamps this Mac's zone, and a changed cadence or zone, or turning it on, starts the slots from `now`.
-    /// The runs and the last slot are the automation's own, as passed in.
+    /// The automation with only the given fields changed, as the editor's Save applies them, and the names of the fields that differ; nil when
+    /// none does. Like the Save it stamps this Mac's zone, and a changed cadence or zone, or turning it on, starts the slots from `now`.
     public static func edit(_ automation: Automation, with fields: Fields, now: Date, zone: TimeZone = .current) -> (automation: Automation, changed: [String])? {
         var next = automation
         var changed: [String] = []
@@ -273,6 +303,23 @@ public enum AutomationTools {
         next.timeZone = zone.identifier
         if changed.contains("cadence") || newZone || (fields.enabled == true && !automation.enabled) { next.lastSlot = now }
         return (next, changed)
+    }
+
+    /// What a mark says a session made. Allowed tools are named by their rules, here and in `markText(edited:to:)`: a session may set them (the
+    /// user's decision, 2026-10-15), and a broad rule such as `Bash` lets an unattended run do more than a typed prompt gets with Skip off.
+    public static func markText(made automation: Automation) -> String {
+        automation.allowedTools.isEmpty ? "Made" : "Made, with allowed tools: " + rulesText(automation.allowedTools)
+    }
+
+    /// What a mark says a session changed, given `edit`'s names of the fields.
+    public static func markText(edited changed: [String], to automation: Automation) -> String {
+        "Edited: " + changed.map { $0 == "allowed tools" ? "allowed tools " + (automation.allowedTools.isEmpty ? "cleared" : "set to " + rulesText(automation.allowedTools)) : $0 }
+            .joined(separator: ", ")
+    }
+
+    private static func rulesText(_ rules: [String]) -> String {
+        let text = rules.joined(separator: ", ")
+        return text.count > 120 ? String(text.prefix(119)) + "…" : text
     }
 
     /// The automation switched on or off, as the row's switch does: turning it on starts its slots from `now`, turning it off releases nothing.

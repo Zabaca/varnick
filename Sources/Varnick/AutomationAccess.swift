@@ -23,8 +23,6 @@ enum AutomationRefusal: Error {
     case unknownID
     /// The arguments are not ones the tool takes, one line each.
     case refused([String])
-    /// A refusal in one sentence.
-    case bad(String)
     /// The write did not reach the disk.
     case notSaved(String)
 
@@ -40,7 +38,6 @@ enum AutomationRefusal: Error {
         case .unknownTool(let name): "Unknown tool \(name)"
         case .unknownID: "No automation has this id. automations_list gives them"
         case .refused(let lines): "Nothing was saved. " + lines.joined(separator: "; ")
-        case .bad(let why): why
         case .notSaved(let why): why
         }
     }
@@ -57,7 +54,6 @@ enum AutomationRefusal: Error {
         case .unknownTool: "unknown tool"
         case .unknownID: "unknown id"
         case .refused: "refused"
-        case .bad: "bad arguments"
         case .notSaved: "not saved"
         }
     }
@@ -119,9 +115,8 @@ final class AutomationAccess {
         }
         let now = Date()
         var automation = AutomationTools.make(fields, in: context, now: now)
-        automation.mark = AutomationMark(what: "Made", by: Self.title(of: caller), at: now)
-        model.automations.save(automation)
-        try confirmSaved(automation.id, in: model)
+        automation.mark = AutomationMark(what: AutomationTools.markText(made: automation), by: Self.title(of: caller), at: now)
+        guard model.automations.save(automation, rollingBack: true) else { throw notSaved(model) }
         let first = automation.enabled
             ? AutomationSlot.next(automation.cadence, zone: automation.zone, after: now).map { "It first runs \(Self.time($0))." } ?? "It has no next run."
             : "It is off, so it runs when it is turned on."
@@ -131,23 +126,25 @@ final class AutomationAccess {
 
     private func edit(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
         let store = model.automations
-        let current = try automation(args, store)
-        if let refusal = AutomationTools.editRefusal(for: current) { throw AutomationRefusal.bad(refusal) }
-        let context = AutomationTools.Context(sessionFolder: caller.record.directory, defaultFolder: LauncherModel.claudeDirectory, current: current)
-        let fields: AutomationTools.Fields
+        // Every wrong part is named at once: the id, a Skip automation, and the fields.
+        let found = automation(args, store)
+        var problems = found.problem.map { [$0] } ?? []
+        if let current = found.automation, let refusal = AutomationTools.editRefusal(for: current) { problems.append(refusal) }
+        let context = AutomationTools.Context(sessionFolder: caller.record.directory, defaultFolder: LauncherModel.claudeDirectory, current: found.automation)
+        var fields = AutomationTools.Fields()
         switch AutomationTools.read(args, creating: false, in: context) {
-        case .success(let found): fields = found
-        case .failure(let problems): throw AutomationRefusal.refused(problems.lines)
+        case .success(let read): fields = read
+        case .failure(let wrong): problems += wrong.lines
         }
+        guard problems.isEmpty, let current = found.automation else { throw AutomationRefusal.refused(problems) }
         let now = Date()
         guard var edited = AutomationTools.edit(current, with: fields, now: now) else {
             return "Nothing changed: \"\(current.name)\" already has those values."
         }
-        edited.automation.mark = AutomationMark(what: "Edited: " + edited.changed.joined(separator: ", "), by: Self.title(of: caller), at: now)
+        edited.automation.mark = AutomationMark(what: AutomationTools.markText(edited: edited.changed, to: edited.automation), by: Self.title(of: caller), at: now)
         // Onto the store's current copy, which is the one just read: nothing awaits between the two.
         let next = edited.automation
-        store.update(current.id) { $0 = next }
-        try confirmSaved(current.id, in: model, expecting: next)
+        guard store.update(current.id, rollingBack: true, { $0 = next }) else { throw notSaved(model) }
         let after = next.enabled
             ? AutomationSlot.next(next.cadence, zone: next.zone, after: now).map { "It next runs \(Self.time($0))." } ?? "It has no next run."
             : "It is off."
@@ -156,10 +153,12 @@ final class AutomationAccess {
 
     private func switchOnOff(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
         let store = model.automations
-        let current = try automation(args, store)
-        guard let word = args["on"]?.trimmingCharacters(in: .whitespaces).lowercased(), word == "true" || word == "false" else {
-            throw AutomationRefusal.refused(["on is true or false"])
-        }
+        var problems = args.keys.sorted().filter { $0 != "id" && $0 != "on" }.map { "\($0) is not an argument: the arguments are id and on" }
+        let found = automation(args, store)
+        if let problem = found.problem { problems.append(problem) }
+        let word = args["on"]?.trimmingCharacters(in: .whitespaces).lowercased()
+        if word != "true", word != "false" { problems.append("on is true or false") }
+        guard problems.isEmpty, let current = found.automation, let word else { throw AutomationRefusal.refused(problems) }
         let on = word == "true"
         let now = Date()
         guard var next = AutomationTools.switching(current, on: on, now: now) else {
@@ -167,8 +166,7 @@ final class AutomationAccess {
         }
         next.mark = AutomationMark(what: on ? "Turned on" : "Turned off", by: Self.title(of: caller), at: now)
         let marked = next
-        store.update(current.id) { $0 = marked }
-        try confirmSaved(current.id, in: model, expecting: marked)
+        guard store.update(current.id, rollingBack: true, { $0 = marked }) else { throw notSaved(model) }
         let after = on
             ? AutomationSlot.next(marked.cadence, zone: marked.zone, after: now).map { "Its slots start from now; it next runs \(Self.time($0))." } ?? "It has no next run."
             : "It runs no more until it is turned on; a run that is going goes on."
@@ -201,7 +199,7 @@ final class AutomationAccess {
                 "cadence_label": automation.cadence.label,
                 "folder": text(automation.folder),
                 "agent": text(automation.agent),
-                "permissions": Self.permissionName(automation.permissions),
+                "permissions": AutomationTools.permissionName(automation.permissions),
                 "allowed_tools": automation.allowedTools,
                 "working_limit_minutes": automation.workingLimitMinutes,
                 "enabled": automation.enabled,
@@ -229,47 +227,36 @@ final class AutomationAccess {
         return session
     }
 
-    private func automation(_ args: PanelArguments, _ store: AutomationStore) throws -> Automation {
+    /// The automation an `id` argument names, else the line saying why not.
+    private func automation(_ args: PanelArguments, _ store: AutomationStore) -> (automation: Automation?, problem: String?) {
         guard let text = args["id"]?.trimmingCharacters(in: .whitespaces), let id = UUID(uuidString: text), let found = store.automation(id) else {
-            throw AutomationRefusal.unknownID
+            return (nil, AutomationRefusal.unknownID.message)
         }
-        return found
+        return (found, nil)
     }
 
-    /// The write reached the store and the disk: the store skips a write it can't make, and says so in `writeError`.
-    private func confirmSaved(_ id: UUID, in model: LauncherModel, expecting expected: Automation? = nil) throws {
-        let store = model.automations
-        guard let saved = store.automation(id), expected.map({ $0 == saved }) ?? true else {
-            throw AutomationRefusal.notSaved("The automation could not be saved")
-        }
-        if let error = store.writeError { throw AutomationRefusal.notSaved(error) }
+    /// The write failed and was rolled back (`AutomationStore.save`): nothing is in memory or on disk.
+    private func notSaved(_ model: LauncherModel) -> AutomationRefusal {
+        AutomationRefusal.notSaved((model.automations.writeError ?? "The automation could not be saved") + " Nothing was changed.")
     }
 
     private static func title(of session: ClaudeSession) -> String { PanelAccess.oneLine(session.label, limit: 60) }
 
     private static func time(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .shortened) }
 
-    static func permissionName(_ permissions: AutomationPermissions?) -> String {
-        switch permissions {
-        case nil: "varnick_setting"
-        case .ask?: "ask"
-        case .allowedOnly?: "allowed_tools_only"
-        case .skip?: "skip"
-        }
-    }
-
     /// "Daily at 9:00, in ~/Projects/x, as @reviewer, permissions: ask."
     private static func sentence(_ automation: Automation) -> String {
         var parts = [automation.cadence.label + " (\(automation.timeZone))", "in " + (automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the Default folder")]
         if let agent = automation.agent { parts.append("as @" + agent) }
-        parts.append("permissions: " + (automation.permissions.map(permissionName) ?? "follow Varnick's Skip permissions setting (\(Settings.shared.skipPermissions ? "on" : "off"))"))
+        parts.append("permissions: " + (automation.permissions.map { AutomationTools.permissionName($0) } ?? "follow Varnick's Skip permissions setting (\(Settings.shared.skipPermissions ? "on" : "off"))"))
+        if !automation.allowedTools.isEmpty { parts.append("allowed tools: " + automation.allowedTools.joined(separator: ", ")) }
         return parts.joined(separator: ", ") + "."
     }
 }
 
 extension AutomationMark {
-    /// "Edited: prompt by "Planning" · Oct 15, 9:07 AM": what the row and the Runs tab show until the user has seen it.
+    /// "A session: Edited: prompt by "Planning" · Oct 15, 9:07 AM": what the row and the Runs tab show until the user has seen it.
     var line: String {
-        "\(what) by \u{201C}\(by)\u{201D} \u{00B7} \(at.formatted(date: .abbreviated, time: .shortened))"
+        "A session: \(what) by \u{201C}\(by)\u{201D} \u{00B7} \(at.formatted(date: .abbreviated, time: .shortened))"
     }
 }

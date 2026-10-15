@@ -259,8 +259,7 @@ enum ScreenMCP {
 
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
-    /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off. `--automations` comes with the Automations switch, not
-    /// with a run's own session.
+    /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]

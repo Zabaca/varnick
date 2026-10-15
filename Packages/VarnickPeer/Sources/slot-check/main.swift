@@ -353,6 +353,28 @@ expect("a create's slots start from now, in this Mac's zone", inTokyo.lastSlot =
 expect("an edit takes id beside the fields", fields(["id": "x", "name": "New"], creating: false)?.name == "New")
 expect("an edit with nothing to change is refused", problems(["id": "x"], creating: false).first?.hasPrefix("Nothing to change") == true)
 
+// A JSON boolean is not a number (a cast would read true as 1, a valid hour step).
+expect("a boolean is not a number", cadence("{\"kind\":\"hours\",\"every\":true}") == nil && cadence("{\"kind\":\"daily\",\"hour\":true}") == nil
+       && cadence("{\"kind\":\"weekly\",\"weekday\":true,\"hour\":9}") == nil && cadence("{\"kind\":\"daily\",\"hour\":9,\"minute\":false}") == nil)
+expect("1 and 9.0 still are", cadence("{\"kind\":\"hours\",\"every\":1}") == .hours(1) && cadence("{\"kind\":\"daily\",\"hour\":9.0}") == .daily(hour: 9, minute: 0))
+expect("id is not a field of a create", !problems(plus(["id": "x"])).isEmpty)
+
+// A session's folder that has gone is refused when it would be the automation's folder.
+let goneContext = AutomationTools.Context(sessionFolder: toolsRoot.path + "/gone", defaultFolder: otherFolder)
+let goneProblems = problems(minimal, creating: true, goneContext)
+expect("a gone session folder is refused when none is given", goneProblems.count == 1 && goneProblems[0].hasPrefix("folder"), "\(goneProblems)")
+expect("but not when a folder is given", fields(plus(["folder": otherFolder]), creating: true, goneContext) != nil)
+
+// The permission names are one table, Skip's included for a list.
+expect("the permission names map both ways", AutomationTools.permissionName(nil) == "varnick_setting" && AutomationTools.permissionName(.ask) == "ask"
+       && AutomationTools.permissionName(.allowedOnly) == "allowed_tools_only" && AutomationTools.permissionName(.skip) == "skip"
+       && AutomationTools.permissionNames == ["varnick_setting", "ask", "allowed_tools_only"])
+
+// A mark names the rules a session set: a broad one lets an unattended run do more than a typed prompt gets with Skip off.
+let broad = AutomationTools.make(fields(plus(["allowed_tools": "Bash\nEdit"]))!, in: toolsContext, now: now)
+expect("a create's mark names its allowed tools", AutomationTools.markText(made: broad) == "Made, with allowed tools: Bash, Edit", AutomationTools.markText(made: broad))
+expect("a create without any says only Made", AutomationTools.markText(made: AutomationTools.make(made!, in: toolsContext, now: now)) == "Made")
+
 // Edit: only the given fields change, onto the current copy.
 var current = AutomationTools.make(fields(plus(["permissions": "ask"]))!, in: toolsContext, now: at("2026-10-01 08:00"), zone: utc)
 current.runs = [AutomationRun(slot: at("2026-10-14 09:00"), state: .done)]
@@ -378,6 +400,12 @@ let turnedOn = edited(["enabled": "true"], off)
 expect("an edit that turns it on starts the slots from now", turnedOn?.automation.enabled == true && turnedOn?.automation.lastSlot == now)
 let cleared = edited(["permissions": "varnick_setting"], current)
 expect("an edit can clear the override", cleared?.automation.permissions == nil && cleared?.changed == ["permissions"])
+let toolsSet = edited(["allowed_tools": "Bash"], current)
+expect("an edit of the allowed tools says so, naming the rules", toolsSet?.changed == ["allowed tools"]
+       && toolsSet.map { AutomationTools.markText(edited: $0.changed, to: $0.automation) } == "Edited: allowed tools set to Bash")
+let toolsGone = toolsSet.flatMap { edited(["allowed_tools": "[]"], $0.automation) }
+expect("and clearing them says cleared", toolsGone.map { AutomationTools.markText(edited: $0.changed, to: $0.automation) } == "Edited: allowed tools cleared")
+expect("other fields are named by name", AutomationTools.markText(edited: ["prompt", "cadence"], to: current) == "Edited: prompt, cadence")
 var withAgent = current
 withAgent.agent = "slot-check-reviewer"
 let agentCleared = edited(["agent": ""], withAgent)

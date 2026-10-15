@@ -87,7 +87,7 @@ struct AutomationsSettingsView: View {
                     if let mark = automation.mark {
                         // What a Claude session did to it through the automation tools: the only notice of it, until seen.
                         HStack(spacing: 8) {
-                            Text("A session: " + mark.line).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
+                            Text(mark.line).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
                             Button("Seen") { store.update(automation.id) { $0.mark = nil } }
                                 .controlSize(.small).disabled(store.problem != nil)
                         }

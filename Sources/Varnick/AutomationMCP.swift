@@ -80,7 +80,7 @@ enum AutomationMCP {
             "agent": ["type": "string", "description": "A Claude Code agent of that folder, by name. On edit, an empty string clears it."],
             "permissions": ["type": "string", "enum": AutomationTools.permissionNames,
                             "description": "Absent follows Varnick's Skip permissions setting, as a prompt the user types does (with it on, a run runs any command without asking). ask: a command that isn't allowed waits for the user (Needs you). allowed_tools_only: anything not allowed is refused with no dialog. A session may not set Skip permissions; varnick_setting on an edit goes back to following the setting."],
-            "allowed_tools": ["type": "array", "items": ["type": "string"], "description": "Claude Code permission rules the run may use without a dialog, one each (Bash(git status), Edit, WebSearch)."],
+            "allowed_tools": ["type": "array", "items": ["type": "string"], "description": "Claude Code permission rules the run may use without a dialog, one each (Bash(git status), Edit, WebSearch). A run uses them with nobody to ask, so give no more than it needs; the mark the user sees names them."],
             "working_limit_minutes": ["type": "integer", "minimum": AutomationTools.workingLimits.lowerBound, "maximum": AutomationTools.workingLimits.upperBound,
                                       "description": "A run still working after this is ended, its conversation kept. \(Automation.defaultWorkingLimitMinutes) when absent."],
             "enabled": ["type": "boolean", "description": "On when absent. Turning one on starts its slots from now."],
@@ -95,7 +95,7 @@ enum AutomationMCP {
 
     private static let editTool = tool(edit,
         summary: "Changes the fields given of one automation (by the id automations_list gives) and leaves the rest, its runs and its last slot as "
-            + "they are. A changed cadence, or turning it on, starts its slots from now. It is refused for an automation the user set to Skip "
+            + "they are. A changed cadence or time zone (an edit stamps this Mac's), or turning it on, starts its slots from now. It is refused for an automation the user set to Skip "
             + "permissions (switch still works on it), and an edit made while the user has its editor open is overwritten by their Save. "
             + "Tell the user what you changed.",
         properties: ["id": ["type": "string", "description": "The automation's id from automations_list."]].merging(fields) { first, _ in first },

@@ -1227,6 +1227,14 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                  startedAt: startedAt, lastUsed: Date())
         left.conversation = record.conversationID
         left.agent = record.agent
+        // A run that changed conversation (plan mode's clear context, /resume) leaves one that is still a run's: resumed from Recent it keeps
+        // what a run has, as `openRun` and `applyRunFields` do.
+        if record.automation != nil {
+            left.automation = record.automation
+            left.skipPermissions = record.skipPermissions
+            left.dontAsk = record.dontAsk
+            left.allowedTools = record.allowedTools
+        }
         // Recent keeps the name the pane showed for it, and the record.
         left.titleRecord = record.currentTitleRecord
         left.title = left.titleRecord?.name ?? left.transcriptTitle ?? ""

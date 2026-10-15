@@ -51,7 +51,7 @@ final class RunsBoard: ObservableObject {
                 let now = model.displayed(run)
                 next.append(Row(id: run.id, automation: automation.name, when: run.startedAt ?? run.slot, state: now.state, detail: now.detail,
                                 late: run.late, manual: run.manual, count: run.count ?? 1, opens: run.state.ran, place: here,
-                                mark: index == 0 ? automation.mark.map { "A session: " + $0.line } : nil))
+                                mark: index == 0 ? automation.mark?.line : nil))
             }
         }
         next.sort { $0.when > $1.when }
