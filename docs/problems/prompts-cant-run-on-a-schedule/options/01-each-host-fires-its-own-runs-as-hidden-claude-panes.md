@@ -248,7 +248,7 @@ They are routed by **Presence** as for any pane: on the Mac in control when the 
 
 - **Scheduling a Task** (the website loop), terminal commands, or anything but a Claude prompt.
 - **Cron expressions.** Presets only, by the user's decision.
-- **A session making an automation,** deferred by the user beyond this build. It is either a `propose` tool on Varnick's MCP server, recorded by a hook as `notify` is and saved by the user from a prefilled editor, or option 04's files.
+- **A session deleting an automation or running one now.** Settings and the board keep those. A session makes, edits and switches automations from slice 3.
 - **Keeping a closed Mac awake** for its runs (`closed-lid-pauses-sessions`).
 - **A cap on usage** beyond the floor and the overlap rule.
 - **Runs started by the phone,** or automations edited there.
@@ -272,6 +272,8 @@ The user accepted this option, a run as a hidden Claude pane, over option 02's p
 "Takes the setting" is read as a pane already reads it: the automation stores no permission until it is overridden, and each run takes the setting at its start and keeps it on its record. A typed prompt's record works the same way.
 
 ### Slice 1: this Mac only, no protocol bump
+
+Built and merged at af9ead1.
 
 **In it:**
 1. **The switch and the Settings section.** The Automations switch in Settings › Experimental, off by default, and Settings › Automations with it on. The host is this Mac alone, and the host picker comes in slice 2.
@@ -316,6 +318,120 @@ If the refusal brings up a dialog, Allowed tools only is left out and Ask and Sk
 
 Its file and the protocol 29 requests, the systemd timer and the relay's firing step, the label for the saving Mac, the Mac holding remote runs, the run flag in `tabs`, and the phone's Runs. ADR 0009 is amended then.
 
+### Slice 3: sessions make, edit and switch automations (this Mac only)
+
+**Decided by the user, later on 2026-10-15** (relayed by the coordinator): a Claude session can create an automation, edit one, and turn one on or off, through Varnick's MCP server, with no approval step. This replaces the `propose` tool and the deferral in item 5 above. The rest was fixed with it:
+- a read-only list comes with them, since editing and switching need ids;
+- a run's own session never gets them, and stays `notify`-only;
+- this Mac only, like slice 1.
+
+It is built next, before slice 2.
+
+**The tools,** a set of their own on Varnick's MCP server:
+- **`automations_list`** gives every automation of this Mac with its id and every field create takes, plus:
+  - its next run;
+  - whether a run is going;
+  - its last outcome;
+  - its mark.
+
+  It reads and changes nothing.
+- **`automation_create`** makes one, and answers its id and when it first runs.
+- **`automation_edit`** takes an id and any of create's fields, and changes only those given.
+- **`automation_switch`** takes an id and on or off.
+
+Deleting and Run now stay in Settings › Automations and on the board. A delete drops the run history and releases the automation's run tabs, and can't be undone. A session that wants an automation to stop can switch it off, so the user keeps the one act that loses anything.
+
+**Which panes list them.** Every Claude pane on this Mac started or restarted while the Automations switch is on. Not a run's session, and not a run opened later, whose tool set stays `notify` alone. Not a headless host's pane either. The tools are not behind Panel access and have no switch of their own:
+- Panel access grants reading every terminal's screen, the board and the Outline, and pressing keys in the panel. Tying automations to it would make the user grant all of that to get this.
+- The Automations switch is already the user's opt-in to this feature. A third switch would gate the same decision the user has just made: that a session may turn an automation on itself.
+
+The set is read at each start, as Screen and Panel access's are, so a pane gains or loses it at its next start or restart. The running Varnick refuses every call while Automations is off, as it refuses Panel access's calls while that switch is off, since the MCP server's process can't read a switch.
+
+**They follow the pane's permissions.** Only `notify` is allowed in a session's settings; these four are not.
+- A pane with Skip permissions on calls them with no dialog.
+- A pane with it off shows Claude Code's dialog before each call, which raises Needs you like any dialog. That is Claude Code's own check, the same for every MCP tool, not a step of Varnick's.
+
+**What create takes:**
+
+| Field | |
+|---|---|
+| name | required, one line, cut to 80 characters |
+| prompt | required, given to Claude as written |
+| cadence | required: a kind (every N minutes, every N hours, daily, weekdays or weekly) with its numbers, as the presets have them. Anything else is refused, and the reply lists the presets |
+| folder | an existing folder on this Mac. Absent is the calling session's own folder: "this repo every morning" means the session's folder, and the Default folder is a Settings choice the session can't see. The editor already shows a folder that isn't a project |
+| agent | an agent of that folder; another is refused, and the reply lists them |
+| permissions | absent follows Varnick's setting; else Ask or Allowed tools only. Skip is open question 3 |
+| allowed tools | a list of Claude Code rules, one line each |
+| working limit | minutes, 5 to 1440, as the editor's; 60 when absent |
+| enabled | on when absent, as the editor's Add |
+
+- **Checks before writing.** Every field is checked before anything is written. A refusal names each wrong field and saves nothing.
+- **The zone and the slots.** The zone is this Mac's, and the slots start from now, as the editor's Add does.
+
+**Edit and switch.**
+- **Only the fields given change.** They are applied onto the store's current copy, as the editor's Save does. The runs and the last slot stay.
+- **Like the Save, an edit stamps this Mac's zone,** and a changed cadence or zone starts the slots from now.
+- **Turning one on,** by edit or switch, starts its slots from now, as the row's switch does.
+- **Turning one off** releases nothing: a run that is going goes on, as in slice 1.
+- **The editor and a session at once.** A session's edit made while the user has the editor open is overwritten by the user's Save, for the fields the editor holds. The user's own edit wins.
+
+**The user sees it as a mark, not a notice.**
+- **What the mark says.** Every create, edit and switch by a session leaves a mark on the automation: what was done, by which session (its title), and when.
+- **Where it shows.** On the automation's row in Settings › Automations and beside its runs on the board's Runs tab, until the user opens its editor, switches it or presses Seen.
+- **Why not a notice:**
+  - the session the user just asked is usually the pane they are looking at, and no notice is raised for that pane;
+  - a Message is written only by the hook, from Claude's own call;
+  - a new notice kind would change the table in both languages.
+- **The run tells them anyway.** A run raises its own notices, named after the automation. So an automation a session made or turned on while the user was away is seen at its first run at the latest.
+- **The tool's reply asks Claude to tell the user what it did.**
+- **A notice as well** is open question 4.
+
+**How a call reaches the store.** As Panel access's calls do:
+- **The MCP server sends one line.** It turns each call into one request line on Varnick's socket, with a key and a version of its own, and prints the reply.
+- **The running Varnick answers on the main actor,** checking in order:
+  1. the switch;
+  2. Varnick having started;
+  3. the calling pane (a Claude pane on this Mac, and not a run's);
+  4. the file being readable;
+  5. then the tool.
+
+  It writes only through the automation store, the one writer of the file. A pane another Mac or the phone controls may call: it runs here, so its automations are this Mac's.
+- **With Varnick quit,** the reply is that it isn't running.
+- **Not the `notify` path.** A hook records a call after it has been answered, so it can't hand back an id, a list or a refusal, and the app would have to watch a file in every pane's folder.
+- **Any process on this Mac can open the socket and name a pane,** as for Panel access. It needs no grant, and where-it-breaks says so.
+- **The log** says the tool and the kind of outcome only, never a name, a prompt or a title, as Panel access's log does.
+
+**What `make check-mcp` covers:**
+- the set listed alone and with the others;
+- each tool's schema and description;
+- create's required fields and the cadence's kinds;
+- the permissions' values, with no Skip if the user takes recommendation 3;
+- a call to one of these tools on a server without the set, refused before anything is sent.
+
+It never calls a tool the set lists. With Varnick running on the user's Mac, that call would reach it and make a real automation.
+
+**Documents:**
+- **ADR 0040, amended:** sessions make, edit and switch automations through the running Varnick, with no approval step, behind the Automations switch, never from a run. Deleting stays the user's.
+- **`CONTEXT.md`,** the Automation entry.
+- **The privacy page:** a session can set up unattended runs, and a session that lists the automations sends their prompts to Anthropic with it.
+- **where-it-breaks,** Automations: the request and its checks, a run's exclusion, the permission rule, and check-mcp's rule.
+
+**By hand, after the user restarts Varnick with Automations on, in a pane started since:**
+- **The tools:** `/mcp` lists the four beside `notify`. An opened run lists `notify` alone.
+- **Create:** "make an automation that says hello every 15 minutes in this folder". It is made and on, Settings shows the mark, and its first run comes at the next quarter hour with its notice.
+- **Switch:**
+  - "turn it off": no more runs, and a mark;
+  - "turn it on": its slots start from now.
+- **Edit:**
+  - "change its prompt to …": only the prompt changes, and its runs and next run stay;
+  - "make it daily at 9:00": the next run moves, and its slots start from now.
+- **Refusals,** each with nothing saved: an agent the folder doesn't have, a folder that isn't there, every 5 minutes, and Skip if recommendation 3 is taken.
+- **With Skip permissions off,** Claude Code asks before each call.
+- **The switch:**
+  - Automations off: every call is refused;
+  - after a restart of the pane, the tools are gone.
+- **Varnick quit:** the call says Varnick isn't running.
+
 ### Verified and inferred
 
 - **Verified at d70f766:**
@@ -329,8 +445,8 @@ Its file and the protocol 29 requests, the systemd timer and the relay's firing 
   - the installer's user unit and its linger warning;
   - `SavedTab` and `PeerTab` having no hiding field;
   - Claude Code 2.1.301's permission modes, by name only.
+- **Checked by hand in slice 1 (2026-10-15):** `dontAsk` in an interactive session refuses a call no rule allows with no dialog and goes on (where-it-breaks, Automations).
 - **Inferred, unverified:**
-  - what `dontAsk` does interactively (the check above);
   - that a hidden pane on a Mac starts and attaches as a background tab does;
   - that session search indexes runs' conversations like any other;
   - that a systemd timer with linger fires with no login;
@@ -340,3 +456,5 @@ Its file and the protocol 29 requests, the systemd timer and the relay's firing 
 
 1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** For slice 2. Recommendation: attach. It is how every Mac-controlled session there already works, and it needs no change to the routing.
 2. **Should a run ended at its working limit raise a notice?** The pane is gone, so it needs one of two things: a notice the notifier keeps for a run rather than a pane, or a way to end the turn and leave the pane. Recommendation: decide after slice 1's hand test shows how often limits are hit. Until then it is marked in the run list only.
+3. **May a session set the Skip override?** For slice 3. Recommendation: no. A session may choose to follow Varnick's setting, Ask or Allowed tools only, and may switch an automation set to Skip but not edit it. A session then never gives an unattended run more than the user's own setting gives a typed prompt. Editing a Skip automation's prompt would turn the user's choice of Skip for one prompt into Skip for anything a session writes. With Varnick's setting on Skip, an automation that follows it still runs with Skip: that is the user's own setting.
+4. **Should a session's create or switch on also raise a notice on the Mac,** besides the mark? For slice 3. Recommendation: the mark alone. A notice is mostly raised for the pane the user is looking at, where none is shown. It needs either Varnick writing the message file, which only the hook writes, or a new notice kind in both languages. The automation's first run tells the user anyway.
