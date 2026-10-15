@@ -210,9 +210,31 @@ var sample = Automation(name: "Morning summary", prompt: "Say hello", cadence: .
                         permissions: .allowedOnly, allowedTools: ["Bash(git status)", "Edit"], createdAt: at("2026-10-15 09:00"))
 sample.lastSlot = at("2026-10-15 16:00")
 for index in 0..<(Automation.runLimit + 5) {
-    sample.record(AutomationRun(slot: at("2026-10-15 16:00").addingTimeInterval(Double(index) * 60), state: .done))
+    let slot = at("2026-10-15 16:00").addingTimeInterval(Double(index) * 60)
+    sample.record(AutomationRun(slot: slot, endedAt: slot, state: .done))
 }
 expect("a run list keeps twenty, newest first", sample.runs.count == 20 && sample.runs.first!.slot > sample.runs.last!.slot)
+// A run that may still have a pane is never the one dropped, and slots that did not run fold.
+var going = Automation(name: "Going", prompt: "x", cadence: .minutes(15), createdAt: at("2026-10-15 09:00"))
+let oldest = AutomationRun(slot: at("2026-10-15 09:00"), startedAt: at("2026-10-15 09:00"), state: .running)
+going.record(oldest)
+for index in 1...30 {
+    let slot = at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900)
+    going.record(AutomationRun(slot: slot, startedAt: slot, endedAt: slot, state: .done))
+}
+expect("a run still going outlives twenty newer ones", going.runs.count == 20 && going.runs.contains { $0.id == oldest.id }, "\(going.runs.count) runs")
+var flood = Automation(name: "Flood", prompt: "x", cadence: .minutes(15), createdAt: at("2026-10-15 09:00"))
+for index in 0..<40 {
+    flood.record(AutomationRun(slot: at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900), state: .skipped, detail: "The last run was still going"))
+}
+expect("40 skipped slots are one record that counts them", flood.runs.count == 1 && flood.runs[0].count == 40
+       && flood.runs[0].slot == at("2026-10-15 09:00").addingTimeInterval(39 * 900), "\(flood.runs.count) records")
+flood.record(AutomationRun(slot: at("2026-10-16 09:00"), state: .missed, detail: "Over 12 hours old at the next check"))
+flood.record(AutomationRun(slot: at("2026-10-16 09:15"), state: .skipped, detail: "The last run was still going"))
+expect("a different state or reason is another record", flood.runs.count == 3, "\(flood.runs.count) records")
+flood.record(AutomationRun(slot: at("2026-10-16 09:30"), startedAt: at("2026-10-16 09:30"), state: .running))
+flood.record(AutomationRun(slot: at("2026-10-16 09:45"), state: .skipped, detail: "The last run was still going"))
+expect("a run between two skipped slots splits them", flood.runs.count == 5, "\(flood.runs.count) records")
 sample.runs[0].state = .message
 sample.runs[0].detail = "Found 3"
 do {

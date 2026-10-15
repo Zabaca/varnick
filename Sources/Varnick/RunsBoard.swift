@@ -17,6 +17,8 @@ final class RunsBoard: ObservableObject {
         let detail: String?
         let late: Bool
         let manual: Bool
+        /// How many consecutive slots a skipped or missed record stands for.
+        let count: Int
         /// A session was started for it, so it can be opened.
         let opens: Bool
         /// Where it ran: this Mac, until runs can be on a headless host.
@@ -24,7 +26,8 @@ final class RunsBoard: ObservableObject {
 
         /// "Running", "Waiting on you: Needs permission", a message's title, "Missed: over 12 hours old".
         var text: String {
-            state == .message ? detail ?? state.text : detail.map { state.text + ": " + $0 } ?? state.text
+            let words = state == .message ? detail ?? state.text : detail.map { state.text + ": " + $0 } ?? state.text
+            return count > 1 ? "\(count) slots · " + words : words
         }
     }
 
@@ -45,7 +48,7 @@ final class RunsBoard: ObservableObject {
             for run in automation.runs {
                 let now = model.displayed(run)
                 next.append(Row(id: run.id, automation: automation.name, when: run.startedAt ?? run.slot, state: now.state, detail: now.detail,
-                                late: run.late, manual: run.manual, opens: run.state.ran, place: here))
+                                late: run.late, manual: run.manual, count: run.count ?? 1, opens: run.state.ran, place: here))
             }
         }
         next.sort { $0.when > $1.when }

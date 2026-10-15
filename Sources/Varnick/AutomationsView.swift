@@ -11,11 +11,31 @@ struct AutomationsSettingsView: View {
     @State private var editingIsNew = false
     /// What Run now answered, by automation: a refusal, or why the run could not start.
     @State private var notes: [UUID: String] = [:]
+    /// The automation whose Delete was pressed once: the row asks, and a second press does it.
+    @State private var confirmingDelete: UUID?
 
     var body: some View {
         if let draft = editing {
-            AutomationEditor(draft: draft, isNew: editingIsNew, projects: model.projects, onSave: { saved in
-                store.save(saved)
+            AutomationEditor(draft: draft, isNew: editingIsNew, projects: model.projects, onSave: { saved, resetsAnchor in
+                if editingIsNew {
+                    store.save(saved)
+                } else {
+                    // Only the fields the editor has go to the automation as it is now: a run that started since Edit was pressed, and the slot it
+                    // ran for, are the store's, not the draft's.
+                    store.update(saved.id) { current in
+                        current.name = saved.name
+                        current.prompt = saved.prompt
+                        current.folder = saved.folder
+                        current.agent = saved.agent
+                        current.cadence = saved.cadence
+                        current.timeZone = saved.timeZone
+                        current.permissions = saved.permissions
+                        current.allowedTools = saved.allowedTools
+                        current.workingLimitMinutes = saved.workingLimitMinutes
+                        // A new cadence or zone starts from now: the slots before it are not caught up.
+                        if resetsAnchor { current.lastSlot = Date() }
+                    }
+                }
                 editing = nil
             }, onCancel: { editing = nil })
         } else {
@@ -40,7 +60,7 @@ struct AutomationsSettingsView: View {
             }
             SectionLabel(text: PeerIdentity.name ?? "This Mac")
             if store.automations.isEmpty {
-                Text("No automations yet.").font(.system(size: 12)).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 8)
+                Text("No automations yet.").font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 8)
             }
             ForEach(store.automations) { automation in
                 row(automation)
@@ -73,6 +93,8 @@ struct AutomationsSettingsView: View {
                     editing = automation
                 }
                 .disabled(store.problem != nil)
+                Button("Delete") { confirmingDelete = automation.id }
+                    .disabled(store.problem != nil)
                 Toggle("", isOn: Binding(get: { automation.enabled }, set: { on in
                     store.update(automation.id) { next in
                         next.enabled = on
@@ -84,15 +106,29 @@ struct AutomationsSettingsView: View {
             if let note = notes[automation.id] {
                 Text(note).font(.system(size: 11.5)).foregroundStyle(.orange)
             }
+            if confirmingDelete == automation.id {
+                HStack(spacing: 8) {
+                    Text("Delete \(automation.name.isEmpty ? "this automation" : "\"\(automation.name)\"") and its run list? A run still going stays as an ordinary tab.")
+                        .font(.system(size: 11.5)).foregroundStyle(.orange)
+                    Spacer(minLength: 8)
+                    Button("Keep") { confirmingDelete = nil }
+                    Button("Delete") {
+                        confirmingDelete = nil
+                        notes[automation.id] = nil
+                        model.deleteAutomation(automation.id)
+                    }
+                }
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
     }
 
-    /// "Daily at 9:00 · in ~/Projects/x · asks first".
+    /// "Daily at 9:00 · ~/Projects/x · @reviewer · Ask": the cadence, the folder, the agent and the permissions when it overrides Varnick's.
     private func summary(_ automation: Automation) -> String {
         var parts = [automation.cadence.label]
         parts.append(automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Default folder")
         if let agent = automation.agent { parts.append("@" + agent) }
+        if let permissions = automation.permissions { parts.append(permissions.title) }
         return parts.joined(separator: " · ")
     }
 
@@ -116,7 +152,8 @@ private struct AutomationEditor: View {
     @State var draft: Automation
     let isNew: Bool
     let projects: [Project]
-    let onSave: (Automation) -> Void
+    /// The edited automation and whether its slots start from now (a new cadence or zone).
+    let onSave: (Automation, Bool) -> Void
     let onCancel: () -> Void
     @ObservedObject private var settings = Settings.shared
 
@@ -220,7 +257,7 @@ private struct AutomationEditor: View {
             }
             field("Working limit", detail: "A run still working after this is ended; its conversation is kept, and opening it resumes it.") {
                 Stepper(value: $draft.workingLimitMinutes, in: 5...1440, step: 5) {
-                    Text("\(draft.workingLimitMinutes) minutes").font(.system(size: 12).monospacedDigit())
+                    Text("\(draft.workingLimitMinutes) minutes").font(.system(size: 11.5).monospacedDigit())
                 }
                 .frame(width: 200)
             }
@@ -302,10 +339,10 @@ private struct AutomationEditor: View {
         case .weekdays: .weekdays(hour: hour, minute: minute)
         case .weekly: .weekly(weekday: weekday, hour: hour, minute: minute)
         }
-        // A new cadence or zone starts from now: the slots before it are not caught up.
-        if cadence != draft.cadence || next.timeZone != TimeZone.current.identifier || isNew { next.lastSlot = Date() }
+        let resets = cadence != draft.cadence || draft.timeZone != TimeZone.current.identifier || isNew
         next.cadence = cadence
         next.timeZone = TimeZone.current.identifier
-        onSave(next)
+        if isNew { next.lastSlot = Date() }
+        onSave(next, resets)
     }
 }

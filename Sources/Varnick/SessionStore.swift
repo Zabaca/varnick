@@ -72,7 +72,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var automation: UUID?
 
     /// A run nobody has opened: its tab is kept out of the strip, the session list, the board, Recent and search until the user opens it, from the
-    /// board's Runs tab or a notice. Cleared when the tab is shown, taken over, or Automations is turned off (`LauncherModel.isHiddenRun`).
+    /// board's Runs tab or a notice. Cleared when the tab is shown, taken over, or Automations is turned off (`ClaudeTab.isHiddenRun`).
     var runUnopened: Bool?
 
     /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude

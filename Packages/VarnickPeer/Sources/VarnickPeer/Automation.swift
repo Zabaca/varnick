@@ -64,10 +64,17 @@ public struct Automation: Codable, Identifiable, Equatable {
     /// The run of this automation that is going, if any: running, or waiting on the user.
     public var goingRun: AutomationRun? { runs.first { $0.state.isGoing } }
 
-    /// Adds a run to the front and drops the oldest past `runLimit`.
+    /// Adds a run to the front. Consecutive slots that did not run for the same reason are one record that counts them, so a Mac asleep through
+    /// a day of 15-minute slots is a line, not a flood. Past `runLimit` the oldest runs go, but never one that may still have a pane: a run that
+    /// started and has no end date is kept, because the overlap rule, the limits and the hidden tab all find it through this list.
     public mutating func record(_ run: AutomationRun) {
+        if !run.state.ran, let front = runs.first, front.state == run.state, front.detail == run.detail {
+            runs[0].count = (front.count ?? 1) + (run.count ?? 1)
+            runs[0].slot = max(front.slot, run.slot)
+            return
+        }
         runs.insert(run, at: 0)
-        if runs.count > Self.runLimit { runs = Array(runs.prefix(Self.runLimit)) }
+        while runs.count > Self.runLimit, let drop = runs.lastIndex(where: { !$0.isKept }) { runs.remove(at: drop) }
     }
 }
 
@@ -169,6 +176,10 @@ public struct AutomationRun: Codable, Identifiable, Equatable {
     /// The user opened it (its tab was shown, or another Mac or the phone took it over). An opened run is never ended by a check.
     public var opened: Bool
     public var launch: RunLaunch?
+    /// How many consecutive slots this record stands for, nil for one: skipped and missed slots that follow each other with the same reason.
+    public var count: Int?
+    /// Seconds the run's turn has worked or run background work while the Mac was awake, which the working limit counts (sleep is not work).
+    public var worked: TimeInterval?
 
     public init(id: UUID = UUID(), slot: Date, startedAt: Date? = nil, endedAt: Date? = nil, late: Bool = false, manual: Bool = false,
                 state: RunState, detail: String? = nil, conversation: String? = nil, opened: Bool = false, launch: RunLaunch? = nil) {
@@ -184,6 +195,9 @@ public struct AutomationRun: Codable, Identifiable, Equatable {
         self.opened = opened
         self.launch = launch
     }
+
+    /// A run with a session that may still be here (it started and nothing has ended it): never dropped from the list.
+    public var isKept: Bool { state.ran && endedAt == nil }
 
     /// The conversation to resume.
     public var conversationID: String { conversation ?? id.uuidString.lowercased() }

@@ -1953,6 +1953,8 @@ final class LauncherModel: ObservableObject {
         record.title = result.title
         record.agent = store.agent(ofSession: id, directory: result.url)
         record.conversation = id
+        // A run's conversation found in search keeps what a run has: its MCP server lists `notify` alone, and its permissions.
+        applyRunFields(to: &record)
         resume(record)
     }
 
@@ -2612,11 +2614,13 @@ final class LauncherModel: ObservableObject {
                 : "Claude exited immediately (code \(code.map(String.init) ?? "?")). Is `claude` installed and logged in?"
             query = prompt
             focusSearchField()
-        } else if !tabs.isEmpty {
-            // Like closing a tab: show the neighbour in the strip, or in all the tabs when the chosen project ended with this one.
+        } else if !shownTabs.isEmpty {
+            // Like closing a tab: show the neighbour in the strip, or in all the tabs shown when the chosen project ended with this one. Never a
+            // run nobody opened: showing it would open it.
             let rest = inStrip.filter { $0 !== tab }
             let at = inStrip.firstIndex { $0 === tab } ?? 0
-            activate(rest.isEmpty ? tabs[min(index, tabs.count - 1)] : rest[min(at, rest.count - 1)], keepingBoard: true)
+            let shown = shownTabs
+            activate(rest.isEmpty ? shown[min(index, shown.count - 1)] : rest[min(at, rest.count - 1)], keepingBoard: true)
         } else {
             showSearch()
         }

@@ -89,6 +89,10 @@ final class AutomationRunner {
     private weak var model: LauncherModel?
     private var ticker: Task<Void, Never>?
     private var wakeObserver: NSObjectProtocol?
+    /// When the last check ran, so a run's working time counts the minutes the Mac was awake and not a sleep between two checks.
+    private var lastCheck: Date?
+    /// A gap between checks longer than this was a sleep (or a stopped run loop): it adds no working time.
+    private static let awakeGap: TimeInterval = 150
 
     func start(model: LauncherModel) {
         guard ticker == nil else { return }
@@ -113,15 +117,17 @@ final class AutomationRunner {
         guard let model, Settings.shared.automationsOn else { return }
         let store = model.automations
         guard store.problem == nil else { return }
+        let elapsed = lastCheck.map { now.timeIntervalSince($0) }.flatMap { $0 > 0 && $0 <= Self.awakeGap ? $0 : nil } ?? 0
+        lastCheck = now
         for id in store.automations.map(\.id) {
-            model.tendRuns(of: id, now: now)
+            model.tendRuns(of: id, now: now, elapsed: elapsed)
             guard let automation = store.automation(id), automation.enabled, automation.isRunnable else { continue }
             let check = AutomationSlot.check(automation.cadence, zone: automation.zone, after: automation.anchor, now: now)
             guard let newest = check.due ?? check.missed.first else { continue }
             var recorded: [AutomationRun] = []
             // Oldest first, so the newest ends up first in the list.
             for slot in check.missed.reversed() {
-                let reason = check.due == nil ? "Over 12 hours old at the next check" : "Passed while the Mac slept or Varnick was quit; a newer slot ran"
+                let reason = check.due == nil ? "Over 12 hours old at the next check" : "Passed while the Mac slept or Varnick was quit; only the newest slot was acted on"
                 recorded.append(AutomationRun(slot: slot, state: .missed, detail: reason))
             }
             if let slot = check.due {
@@ -166,19 +172,29 @@ extension LauncherModel {
         automationRunner.start(model: self)
     }
 
-    /// Every run tab not yet opened becomes an ordinary tab, as it is when its automation is turned off: nothing runs out of sight with the switch off.
-    func releaseRuns() {
+    /// Every run tab not yet opened becomes an ordinary tab: when Automations is turned off (nothing runs out of sight with the switch off), and
+    /// when an automation is deleted (`deleteAutomation`). An automation's own switch releases nothing: its unopened runs stay hidden and are
+    /// still ended by their limits.
+    func releaseRuns(of automation: UUID? = nil) {
         var changed = false
         for tab in tabs {
-            for pane in tab.sessions where pane.record.runUnopened == true {
+            for pane in tab.sessions where pane.record.runUnopened == true && (automation == nil || pane.record.automation == automation) {
                 pane.markRunOpened()
-                if let automation = pane.record.automation { automations.updateRun(pane.id, in: automation) { $0.opened = true } }
+                if let owner = pane.record.automation { automations.updateRun(pane.id, in: owner) { $0.opened = true } }
                 changed = true
             }
         }
         guard changed else { return }
         saveSessions()
         strip.refresh()
+        objectWillChange.send()
+    }
+
+    /// Deletes an automation. Its runs that are going stay as ordinary tabs, opened, since nothing would tend them any more; the ones that ended
+    /// are gone from the list with it.
+    func deleteAutomation(_ id: UUID) {
+        releaseRuns(of: id)
+        automations.remove(id)
     }
 
     /// The run tab is shown: it is an ordinary tab from now on (`activate`), and the run list says it was opened. An opened run is never ended by a check.
@@ -282,23 +298,28 @@ extension LauncherModel {
         return liveState(of: pane)
     }
 
-    /// Brings an automation's runs up to date from their panes, and ends what its limits end: a run whose turn has worked past the working limit,
+    /// Brings an automation's runs up to date from their panes, and ends what its limits end: a run that has worked past the working limit,
     /// one that waited on the user for 24 hours, and a finished one nobody opened 10 minutes after its turn came to wait. An opened run is never
-    /// ended. Called by every check.
-    func tendRuns(of id: UUID, now: Date = Date()) {
+    /// ended. Called by every check, with `elapsed`, the seconds the Mac was awake since the last one: working time counts those and not a sleep,
+    /// and a turn that isn't known yet counts as working.
+    func tendRuns(of id: UUID, now: Date = Date(), elapsed: TimeInterval = 0) {
         guard let automation = automations.automation(id) else { return }
         for run in automation.runs where run.state.ran {
             // The ones a limit or a failure ended have said all they will.
-            if run.state == .stoppedAtLimit || run.state == .endedAfterWaiting || (run.state == .couldntStart) { continue }
+            if run.state == .stoppedAtLimit || run.state == .endedAfterWaiting { continue }
             guard let pane = claudePane(run.id) else {
-                // The pane is gone and nothing recorded how: it ended with its session (a restart that lost it), or a restored pane had no
-                // conversation to come back to.
-                if run.state.isGoing {
+                // The pane is gone. Anything that ended it recorded how (a limit, `runClosed`); one that didn't ended with its session (a restart that
+                // lost it), or was an ordinary tab the user closed, or a restored pane had no conversation to come back to. Its end is dated, so
+                // the list may drop it.
+                if run.endedAt == nil {
                     let started = run.startedAt.map { now.timeIntervalSince($0) } ?? 0
+                    let neverStarted = run.state.isGoing && !run.opened && started < 60
                     automations.updateRun(run.id, in: id) {
-                        $0.state = started < 60 ? .couldntStart : .done
-                        $0.detail = started < 60 ? "The session ended right after it started" : "The session had ended"
-                        $0.endedAt = $0.endedAt ?? now
+                        if $0.state.isGoing {
+                            $0.state = neverStarted ? .couldntStart : .done
+                            $0.detail = neverStarted ? "The session ended right after it started" : "The session had ended"
+                        }
+                        $0.endedAt = now
                     }
                 }
                 continue
@@ -312,23 +333,28 @@ extension LauncherModel {
             }
             let live = liveState(of: pane)
             let conversation = pane.record.conversation
-            if live.state != run.state || live.detail != run.detail || conversation != run.conversation {
+            let working = pane.turn?.turn.isRunning ?? true
+            let worked = (run.worked ?? 0) + (unopened && working ? elapsed : 0)
+            if live.state != run.state || live.detail != run.detail || conversation != run.conversation || worked != (run.worked ?? 0) {
                 automations.updateRun(run.id, in: id) {
                     $0.state = live.state
                     $0.detail = live.detail
                     $0.conversation = conversation
+                    $0.worked = worked > 0 ? worked : nil
                 }
             }
-            guard unopened, let turn = pane.turn else { continue }
+            guard unopened else { continue }
             // A restored pane's turn file is believed only while zmx still lists its session.
             if !pane.started, !hasZmxSession(pane) {
                 endRun(pane, in: id, as: .done, detail: "The session had ended", now: now)
-            } else if turn.turn.isRunning, let started = run.startedAt, now.timeIntervalSince(started) > TimeInterval(automation.workingLimitMinutes * 60) {
+            } else if working, worked > TimeInterval(automation.workingLimitMinutes * 60) {
                 endRun(pane, in: id, as: .stoppedAtLimit, detail: "Worked past \(automation.workingLimitMinutes) minutes", now: now)
-            } else if live.state == .waiting, now.timeIntervalSince(turn.since) > Automation.waitingLimit {
-                endRun(pane, in: id, as: .endedAfterWaiting, detail: "Waited on you for 24 hours", now: now)
-            } else if turn.turn == .waiting || turn.turn == .failed, now.timeIntervalSince(turn.since) > Automation.endAfterDone {
-                endRun(pane, in: id, as: live.state, detail: live.detail, now: now)
+            } else if let turn = pane.turn {
+                if live.state == .waiting, now.timeIntervalSince(turn.since) > Automation.waitingLimit {
+                    endRun(pane, in: id, as: .endedAfterWaiting, detail: "Waited on you for 24 hours", now: now)
+                } else if turn.turn == .waiting || turn.turn == .failed, now.timeIntervalSince(turn.since) > Automation.endAfterDone {
+                    endRun(pane, in: id, as: live.state, detail: live.detail, now: now)
+                }
             }
         }
     }
@@ -380,18 +406,49 @@ extension LauncherModel {
             return nil
         }
         guard let found = automations.run(id), found.run.state.ran else { return "That slot never ran" }
+        // Already open in a tab (resumed from here before, or from search): a second claude on one conversation would fight it.
+        if let open = tabs.flatMap(\.sessions).first(where: { $0.isClaude && !$0.isOnPeer && $0.record.conversationID == found.run.conversationID }) {
+            notifier.clear(id)
+            showPane(open.id)
+            return nil
+        }
         let launch = found.run.launch
         var record = SessionRecord(id: UUID(), prompt: "", title: found.automation.name, directory: launch?.folder ?? found.automation.folder ?? Self.claudeDirectory,
                                    startedAt: Date(), lastUsed: Date())
         record.agent = launch?.agent ?? found.automation.agent
         record.conversation = found.run.conversationID
+        // Still a run's record: its MCP server lists `notify` alone, as the run's did.
+        record.automation = found.automation.id
         record.skipPermissions = launch?.skipPermissions
         record.dontAsk = launch?.dontAsk == true ? true : nil
         record.allowedTools = (launch?.allowedTools.isEmpty ?? true) ? nil : launch?.allowedTools
         guard record.transcriptExists else { return "Claude Code no longer has that conversation" }
         claudeError = nil
+        notifier.clear(id)
         addTab(PaneNode(session: makeSession(record, resuming: true, query: "")), name: found.automation.name)
         return nil
+    }
+
+    /// A conversation that was a run's, resumed from anywhere, keeps what a run has: `automation` (so its MCP server lists `notify` alone) and the
+    /// permissions it started with. Nothing changes for a conversation that was not a run's.
+    func applyRunFields(to record: inout SessionRecord) {
+        let conversation = record.conversationID
+        for automation in automations.automations {
+            guard let run = automation.runs.first(where: { $0.state.ran && $0.conversationID == conversation }) else { continue }
+            record.automation = automation.id
+            if let launch = run.launch {
+                record.skipPermissions = launch.skipPermissions
+                record.dontAsk = launch.dontAsk ? true : nil
+                record.allowedTools = launch.allowedTools.isEmpty ? nil : launch.allowedTools
+            }
+            return
+        }
+    }
+
+    /// A run nobody opened whose process has ended: its notice stays in the menu, and choosing it resumes the conversation (`openRun`).
+    func endedRun(_ id: UUID) -> (automation: Automation, run: AutomationRun)? {
+        guard claudePane(id) == nil, let found = automations.run(id), found.run.state.ran, !found.run.opened else { return nil }
+        return found
     }
 
     /// Where the places that place a tab among all of them (the strip's drop, the session list's) turn a gap among the tabs shown into one in `tabs`.
