@@ -10,7 +10,7 @@ import type { ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import type { Config, Device } from "./checks";
 import { buildRequest, clean, relayArguments, relayEnvironment, Admissions, firstMessageMs, type Admission } from "./relay";
 import { closeCode, fitReason } from "./terminal";
-import type { OpenPanes } from "./pushwatch";
+import type { OpenPane, OpenPanes } from "./pushwatch";
 import { Outbox, parseWatchOpen, WatchDecoder, watchMessage, type WatchEvent } from "./watch";
 
 /** The relay is asked to end this long after its input closes, and killed this long after. */
@@ -38,8 +38,8 @@ export interface WatchData {
   outbox: Outbox;
   frames: number;
   flushTimer?: ReturnType<typeof setTimeout>;
-  /** Counted as open in `OpenPanes`, so it is counted out once. */
-  counted?: boolean;
+  /** This socket in `OpenPanes`: the pane is open on the device while the page says it is visible. */
+  pane?: OpenPane | null;
 }
 
 type Socket = ServerWebSocket<WatchData>;
@@ -102,8 +102,7 @@ export class Watches {
     }
     data.process = process;
     data.phase = "live";
-    this.panes?.add(data.device.id, session);
-    data.counted = true;
+    data.pane = this.panes?.open(data.device.id, session);
     this.log(`watch start ${clean(data.device.name)} ${session}`);
     // The slot goes back when the relay does, not when the websocket does: a page that reconnects quickly can't pile relays up.
     void process.exited.then(() => {
@@ -196,10 +195,8 @@ export class Watches {
   }
 
   private stopRelay(data: WatchData): void {
-    if (data.counted && data.session) {
-      data.counted = false;
-      this.panes?.remove(data.device.id, data.session);
-    }
+    data.pane?.close();
+    data.pane = null;
     const process = data.process;
     if (!process || stopped.has(process)) return;
     stopped.add(process);

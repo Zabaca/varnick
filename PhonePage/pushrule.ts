@@ -108,19 +108,45 @@ export type Route = "push" | "wait" | "drop";
  * | a Mac that can't be told (no report, or its client detached) | after the settle |
  * | a device | after the settle |
  *
- * `drop` is for good: the category is switched off, this device has the pane open, or the controlling Mac has shown the user the notice
- * (`seen`, from `macView`). `wait` is for now.
+ * `drop` is for good: the category is switched off, this device has looked at the pane while the notice stood (`view`), or the controlling Mac
+ * has shown the user the notice (`seen`, from `macView`). `wait` is for now, and includes a device that has the pane open and visible but not yet
+ * long enough to have seen the notice: it either keeps looking (drop) or leaves (the push goes).
  * The host itself is a Mac like any other, except that a pane of its own with no client attached (a restored pane nobody opened) is still
  * its own Varnick's to notify, so it isn't "can't be told" for that.
  */
-export function route(input: { controller: Controller; presence: Presence; elapsedMs: number; deviceHasPaneOpen: boolean; allowed: boolean; seen: boolean }): Route {
-  if (!input.allowed || input.deviceHasPaneOpen || input.seen) return "drop";
-  if (input.elapsedMs < settleMs) return "wait";
-  const { controller } = input;
-  if (controller.kind === "device") return "push";
-  if (controller.kind === "mac" && controller.detached) return "push";
-  return input.presence === "present" ? "wait" : "push";
+export function route(input: RouteInput): Route {
+  return decideRoute(input).route;
 }
+
+/** What this device has of the pane: it is not looking, it is looking (open and visible) but not yet for long, or it looked long enough to have seen. */
+export type View = "none" | "viewing" | "seen";
+
+export interface RouteInput {
+  controller: Controller;
+  presence: Presence;
+  elapsedMs: number;
+  view: View;
+  allowed: boolean;
+  seen: boolean;
+}
+
+/** Why a notice goes, waits or is dropped: what the log says, so a hand test can tell. */
+export type Why = "switch" | "open-pane" | "seen-on-mac" | "viewing" | "settle" | "present" | "away" | "unknown" | "detached" | "device";
+
+export function decideRoute(input: RouteInput): { route: Route; why: Why } {
+  if (!input.allowed) return { route: "drop", why: "switch" };
+  if (input.view === "seen") return { route: "drop", why: "open-pane" };
+  if (input.seen) return { route: "drop", why: "seen-on-mac" };
+  if (input.view === "viewing") return { route: "wait", why: "viewing" };
+  if (input.elapsedMs < settleMs) return { route: "wait", why: "settle" };
+  const { controller } = input;
+  if (controller.kind === "device") return { route: "push", why: "device" };
+  if (controller.kind === "mac" && controller.detached) return { route: "push", why: "detached" };
+  return input.presence === "present" ? { route: "wait", why: "present" } : { route: "push", why: input.presence };
+}
+
+/** A device that has the pane open and visible this long while a notice stands has seen it. */
+export const seenAfterMs = 3000;
 
 /**
  * What the controlling Mac's report says of one standing notice. The page server only has its own copy of the notice; the Mac may have shown it

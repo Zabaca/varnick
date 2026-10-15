@@ -8,7 +8,7 @@
 import type { ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import type { Config, Device } from "./checks";
 import { buildRequest, clean, relayArguments, relayEnvironment, Admissions, firstMessageMs, type Admission, type Relay } from "./relay";
-import type { OpenPanes } from "./pushwatch";
+import type { OpenPane, OpenPanes } from "./pushwatch";
 import {
   attachEnvironment, closeCode, decideExit, firstOutput, fitReason, inputLimit, parseClient, parseOpen, recheckControl, refusal, type OpenRequest,
 } from "./terminal";
@@ -35,8 +35,8 @@ export interface TerminalData {
   held: Uint8Array[];
   holdTimer?: ReturnType<typeof setTimeout>;
   recheckTimer?: ReturnType<typeof setTimeout>;
-  /** Counted as open in `OpenPanes`, so it is counted out once. */
-  counted?: boolean;
+  /** This socket in `OpenPanes`: the pane is open on the device while the page says it is visible. */
+  pane?: OpenPane | null;
 }
 
 type Socket = ServerWebSocket<TerminalData>;
@@ -71,6 +71,11 @@ export class Terminals {
         }
         if (data.phase === "closed") return;
         const input = parseClient(message);
+        // Whether the page is visible: Android keeps a hidden app's socket for over a minute, and a pane nobody is looking at isn't open (pushwatch.ts).
+        if (input?.t === "visibility") {
+          data.pane?.setVisible(input.visible);
+          return;
+        }
         const terminal = data.process?.terminal;
         if (!input || !terminal) return;
         // Typed bytes wait for the screen: before it is live the pty may only be echoing a refused attach's reply line.
@@ -93,8 +98,7 @@ export class Terminals {
     const data = ws.data;
     data.open = open;
     data.phase = "holding";
-    this.panes?.add(data.device.id, open.session);
-    data.counted = true;
+    data.pane = this.panes?.open(data.device.id, open.session);
     // `take` is whatever the page said it pressed: the relay is what decides, and without it refuses a session this device doesn't control.
     const request = buildRequest(this.version, "attach", data.device.id, open.take ? { session: open.session, take: true } : { session: open.session });
     let process: Subprocess;
@@ -206,10 +210,8 @@ export class Terminals {
     clearTimeout(data.holdTimer);
     clearTimeout(data.recheckTimer);
     data.held = [];
-    if (data.counted && data.open) {
-      data.counted = false;
-      this.panes?.remove(data.device.id, data.open.session);
-    }
+    data.pane?.close();
+    data.pane = null;
     const process = data.process;
     if (process) {
       try { process.terminal?.close(); } catch { /* closed already */ }

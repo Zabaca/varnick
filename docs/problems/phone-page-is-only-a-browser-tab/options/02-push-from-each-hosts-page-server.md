@@ -41,7 +41,7 @@ status: accepted
 
   Anything else is **away**.
 - **The settle** is 10 seconds. A notice still standing then is pushed. It absorbs a turn that flickers and the up to 5 seconds a presence report takes.
-- **A device with the pane open gets no push for it.** Open means its terminal or its live view, which the page holds only while visible. That holds in every row.
+- **A device that has looked at the pane while the notice stood gets no push for it.** The pane is open on a device while its terminal or live view is open and its page is visible: the page tells the host when it hides or shows, because Android keeps a hidden app's socket for over a minute. Looking for 3 seconds without a break is seeing; a shorter look waits, and the push goes once the pane is left. That holds in every row.
 - **A notice the controlling Mac has shown the user gets no push.** The page server only has its own copy of a notice, so the Mac's report also lists the panes it holds a notice for and the panes it shows on screen. A notice that a report written after it was raised listed and a later one doesn't, or whose pane a report of a present user shows on screen, is dropped for good, in every Mac row. A Mac that never listed it (its Settings switch for the category is off, or an older report) is no evidence, and the notice stands. A pane on the screen of a Mac that is away doesn't count.
 - **Each subscription has switches** for Needs me, Done and Errors, all on by default.
 
@@ -313,6 +313,7 @@ One bump (27), Swift and the server's version together:
 - **The per-device line lives in Settings › Peers › Devices,** beside the device's other facts, not under Serve the phone page. It says whether the device gets notifications from this Mac, from a count in the subscription file.
 - **`status` gaining `failure` and `esc` closes the gap** the user wanted closed: a Mac's own notices on a peer's panes take the Esc mark and the error's kind, so a peer's Esc raises no Done there. It is recorded in `sessions-finish-unnoticed` option 01's Trade-offs, where the gap was written down.
 - **Send a test has its own 5-second limit** per device, and is sent once with no retry.
+- **Open on the phone means visible (first hand test, 2026-10-15).** A push did not come for a session the user sent a prompt to from the installed app and then left for the home screen: the terminal socket stayed up for 86 s, which counted as the pane being open, and the suppression was final. Now a hidden page is not an open pane, a suppression needs a 3-second look, and the log names each decision (`push decide …`).
 - **The presence report lists the panes** the Mac holds a notice for and shows (protocol 27, which was unreleased, so no further bump), so a notice the user saw on the Mac is not pushed when they lock and leave.
 
 ### Asked by the user, 2026-10-14

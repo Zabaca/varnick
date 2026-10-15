@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-  allows, awayAfterSeconds, decide, defaultSwitches, failureWord, macView, payloadOf, presenceOf, route, settleMs, staleAfterSeconds, turnWords,
-  type Controller, type Decision, type Presence, type TurnWord,
+  allows, awayAfterSeconds, decide, defaultSwitches, decideRoute, failureWord, macView, payloadOf, presenceOf, route, seenAfterMs, settleMs, staleAfterSeconds, turnWords,
+  type Controller, type Decision, type Presence, type TurnWord, type View,
 } from "./pushrule";
 
 const raise = (notice: object): Decision => ({ action: "raise", notice } as Decision);
@@ -126,7 +126,7 @@ describe("presence", () => {
 });
 
 describe("where a notice goes (the routing table)", () => {
-  const base = { elapsedMs: settleMs, deviceHasPaneOpen: false, allowed: true, seen: false };
+  const base = { elapsedMs: settleMs, view: "none" as View, allowed: true, seen: false };
   const mac = (detached = false): Controller => ({ kind: "mac", detached });
   const host: Controller = { kind: "host" };
   const device: Controller = { kind: "device" };
@@ -168,24 +168,44 @@ describe("where a notice goes (the routing table)", () => {
     expect(route({ ...base, controller: device, presence: "away", elapsedMs: 9_999 })).toBe("wait");
   });
 
-  test("a device with the pane open gets no push for it, in every row", () => {
+  test("a device that has looked at the pane while the notice stood gets no push for it, in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
       for (const presence of ["present", "away", "unknown"] as Presence[]) {
-        expect(route({ controller, presence, elapsedMs: settleMs * 10, deviceHasPaneOpen: true, allowed: true, seen: false })).toBe("drop");
+        expect(decideRoute({ controller, presence, elapsedMs: settleMs * 10, view: "seen", allowed: true, seen: false })).toEqual({ route: "drop", why: "open-pane" });
       }
     }
   });
 
+  test("a device looking at the pane for a moment waits: it keeps looking and has seen it, or leaves and is pushed", () => {
+    for (const controller of [host, mac(), mac(true), device]) {
+      expect(decideRoute({ controller, presence: "away", elapsedMs: settleMs * 10, view: "viewing", allowed: true, seen: false })).toEqual({ route: "wait", why: "viewing" });
+      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, view: "none", allowed: true, seen: false })).toBe("push");
+    }
+    expect(seenAfterMs).toBe(3000);
+  });
+
+  test("each decision says why", () => {
+    const input = { controller: mac(), presence: "present" as Presence, elapsedMs: settleMs, view: "none" as const, allowed: true, seen: false };
+    expect(decideRoute({ ...input, allowed: false }).why).toBe("switch");
+    expect(decideRoute({ ...input, seen: true }).why).toBe("seen-on-mac");
+    expect(decideRoute({ ...input, elapsedMs: 0 }).why).toBe("settle");
+    expect(decideRoute(input)).toEqual({ route: "wait", why: "present" });
+    expect(decideRoute({ ...input, presence: "away" })).toEqual({ route: "push", why: "away" });
+    expect(decideRoute({ ...input, presence: "unknown" })).toEqual({ route: "push", why: "unknown" });
+    expect(decideRoute({ ...input, controller: mac(true) })).toEqual({ route: "push", why: "detached" });
+    expect(decideRoute({ ...input, controller: device })).toEqual({ route: "push", why: "device" });
+  });
+
   test("a switched-off category is dropped in every row", () => {
     for (const controller of [host, mac(), mac(true), device]) {
-      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, deviceHasPaneOpen: false, allowed: false, seen: false })).toBe("drop");
+      expect(route({ controller, presence: "away", elapsedMs: settleMs * 10, view: "none", allowed: false, seen: false })).toBe("drop");
     }
   });
 
   test("a notice the controlling Mac has shown the user is dropped in every row, however long it has stood", () => {
     for (const controller of [host, mac(), mac(true)]) {
       for (const presence of ["present", "away", "unknown"] as Presence[]) {
-        expect(route({ controller, presence, elapsedMs: settleMs * 10, deviceHasPaneOpen: false, allowed: true, seen: true })).toBe("drop");
+        expect(route({ controller, presence, elapsedMs: settleMs * 10, view: "none", allowed: true, seen: true })).toBe("drop");
       }
     }
   });

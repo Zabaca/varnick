@@ -5,8 +5,8 @@
 import { objects } from "./json";
 import type { RelayResult } from "./home";
 import {
-  allows, decide, failureWord, isTurnWord, macView, payloadOf, presenceOf, route, settleMs, type Controller, type Notice, type PresenceReport, type PushPayload,
-  type TurnWord,
+  allows, decide, decideRoute, failureWord, isTurnWord, macView, payloadOf, presenceOf, seenAfterMs, settleMs, type Controller, type Notice, type Presence,
+  type PresenceReport, type PushPayload, type Route, type TurnWord, type View, type Why,
 } from "./pushrule";
 import type { SendOptions, SendResult } from "./pushsend";
 import type { Subscription, SubscriptionStore } from "./pushstore";
@@ -47,6 +47,9 @@ export interface PushWorld {
   log(line: string): void;
 }
 
+/** A notice as the log names it: its kind, the payload's word (`done`, `permission`, `failed`). */
+const noticeLabel = (notice: Notice): string => payloadOf(notice, "", "").kind;
+
 interface PaneReading {
   turn: TurnWord;
   /** When the turn began, in ms on the host's clock (the ask's start less the age). */
@@ -66,6 +69,11 @@ interface Standing {
   /** The controlling Mac listed it in a report, and has shown it to the user since (`macView`): once true, true. */
   held: boolean;
   seen: boolean;
+  /** Per device: since when its pane has been open and visible without a break, and those that looked long enough to have seen the notice. */
+  viewing: Map<string, number>;
+  looked: Set<string>;
+  /** The last decision logged for each subscription (by endpoint), so a line is written when it changes and not at every tick. */
+  logged: Map<string, string>;
   /** Read again after the settle, before it is pushed (the turn file is written just before the transcript says whether background work or an error goes with a waiting). */
   confirmed: boolean;
   /** The subscriptions (by endpoint) it was pushed to, and those it was dropped for. */
@@ -191,9 +199,12 @@ export class PushWatcher {
           const replaces = before!.turn === "waiting" && decision.notice.kind === "failed" ? this.standing.get(id) : undefined;
           this.standing.set(id, {
             notice: decision.notice, tab: tab.tab.toLowerCase(), raisedAt: replaces?.raisedAt ?? now, held: false, seen: false,
-            confirmed: false, pushed: new Set(), handled: new Set(),
+            viewing: new Map(), looked: new Set(), logged: new Map(), confirmed: false, pushed: new Set(), handled: new Set(),
           });
+          this.world.log(`push notice ${noticeLabel(decision.notice)} raised`);
         } else if (decision.action === "clear") {
+          const gone = this.standing.get(id);
+          if (gone) this.world.log(`push notice ${noticeLabel(gone.notice)} cleared`);
           this.standing.delete(id);
         }
         this.readings.set(id, { turn: pane.turn, since });
@@ -232,12 +243,13 @@ export class PushWatcher {
     const due: Subscription[] = [];
     for (const subscription of this.store.all()) {
       if (standing.pushed.has(subscription.endpoint) || standing.handled.has(subscription.endpoint)) continue;
-      const decision = route({
+      const decision = decideRoute({
         controller, presence, elapsedMs: now - standing.raisedAt, seen: standing.seen,
-        deviceHasPaneOpen: this.world.hasPaneOpen(subscription.device, id), allowed: allows(subscription.switches, standing.notice),
+        view: this.viewOf(standing, subscription.device, id, now), allowed: allows(subscription.switches, standing.notice),
       });
-      if (decision === "drop") standing.handled.add(subscription.endpoint);
-      else if (decision === "push") due.push(subscription);
+      this.logDecision(standing, subscription, decision, controller, presence);
+      if (decision.route === "drop") standing.handled.add(subscription.endpoint);
+      else if (decision.route === "push") due.push(subscription);
     }
     if (due.length === 0) return;
     // At most one push per pane per settle.
@@ -256,6 +268,40 @@ export class PushWatcher {
       const sending = this.push(standing, subscription, payload).finally(() => this.inFlight.delete(sending));
       this.inFlight.add(sending);
     }
+  }
+
+  /**
+   * What the device has of the pane while the notice stands: looking (open and visible) for under `seenAfterMs`, or long enough to have seen it.
+   * A view that ends before it counts starts over, so a pane glanced at and left is a pane to push for.
+   */
+  private viewOf(standing: Standing, device: string, pane: string, now: number): View {
+    if (standing.looked.has(device)) return "seen";
+    if (!this.world.hasPaneOpen(device, pane)) {
+      standing.viewing.delete(device);
+      return "none";
+    }
+    const since = standing.viewing.get(device) ?? now;
+    standing.viewing.set(device, since);
+    if (now - since < seenAfterMs) return "viewing";
+    standing.looked.add(device);
+    return "seen";
+  }
+
+  /**
+   * One line when a subscription's decision for a standing notice changes, so a hand test can tell why a push did or didn't come. The kind,
+   * the device's name, the controller's kind and what the report said, never a pane's or tab's id, a title or the report's numbers.
+   */
+  private logDecision(standing: Standing, subscription: Subscription, decision: { route: Route; why: Why }, controller: Controller, presence: Presence): void {
+    const outcome = {
+      drop: `suppressed(${decision.why})`,
+      wait: `waiting(${decision.why})`,
+      push: "pushing",
+    }[decision.route];
+    const by = controller.kind === "mac" ? (controller.detached ? "mac-detached" : "mac") : controller.kind;
+    const line = `push decide ${noticeLabel(standing.notice)} ${this.world.devices().get(subscription.device) ?? "device"} -> ${outcome} controller=${by}${controller.kind === "device" ? "" : ` presence=${presence}`}`;
+    if (standing.logged.get(subscription.endpoint) === line) return;
+    standing.logged.set(subscription.endpoint, line);
+    this.world.log(line);
   }
 
   private async push(standing: Standing, subscription: Subscription, payload: PushPayload): Promise<void> {
@@ -279,34 +325,52 @@ export class PushWatcher {
   }
 }
 
-/** Which panes each device has open, from the terminal and live-screen sockets (they close when the page hides). */
-export class OpenPanes {
-  private open = new Map<string, number>();
+/**
+ * One terminal or live-screen socket of a device, for a pane. The pane is open on the device while the page says it is visible: Android keeps a
+ * hidden app's socket for over a minute, and a pane nobody is looking at is not one a notice can have been seen on. The terminal's page sends
+ * `visibility` when it hides or shows (`terminal.ts`); the live screen's socket is closed when the page hides, so it is visible while it exists.
+ */
+export class OpenPane {
+  visible = true;
 
-  private key(device: string, pane: string): string {
-    return `${device}:${pane.toLowerCase()}`;
+  constructor(private panes: OpenPanes, readonly device: string, readonly pane: string) {}
+
+  setVisible(visible: boolean): void {
+    this.visible = visible;
   }
+
+  close(): void {
+    this.panes.release(this);
+  }
+}
+
+/** The panes each device has open and visible, from the terminal and live-screen sockets. */
+export class OpenPanes {
+  private entries = new Set<OpenPane>();
 
   /** A session name `varnick-<pane id>` as a socket opens it. */
   static paneOf(session: string): string | null {
     return isSessionName(session) ? session.slice("varnick-".length) : null;
   }
 
-  add(device: string, session: string): void {
+  /** Counts a socket as open, visible, until it is closed. Null for a name that isn't a pane's session. */
+  open(device: string, session: string): OpenPane | null {
     const pane = OpenPanes.paneOf(session);
-    if (pane) this.open.set(this.key(device, pane), (this.open.get(this.key(device, pane)) ?? 0) + 1);
+    if (!pane) return null;
+    const entry = new OpenPane(this, device, pane);
+    this.entries.add(entry);
+    return entry;
   }
 
-  remove(device: string, session: string): void {
-    const pane = OpenPanes.paneOf(session);
-    if (!pane) return;
-    const key = this.key(device, pane), count = (this.open.get(key) ?? 0) - 1;
-    if (count > 0) this.open.set(key, count);
-    else this.open.delete(key);
+  release(entry: OpenPane): void {
+    this.entries.delete(entry);
   }
 
+  /** Whether the device has the pane open and visible: any of its sockets for it. */
   has(device: string, pane: string): boolean {
-    return this.open.has(this.key(device, pane));
+    const wanted = pane.toLowerCase();
+    for (const entry of this.entries) if (entry.device === device && entry.pane === wanted && entry.visible) return true;
+    return false;
   }
 }
 

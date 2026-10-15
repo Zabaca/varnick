@@ -157,10 +157,12 @@ describe("what comes after it", () => {
     expect(parseClient(JSON.stringify({ t: "in", d: "ls\r" }))).toEqual({ t: "in", data: "ls\r" });
     expect(parseClient(JSON.stringify({ t: "bin", d: "\x1b[M\xff" }))).toEqual({ t: "bin", data: Buffer.from([0x1b, 0x5b, 0x4d, 0xff]) });
     expect(parseClient(JSON.stringify({ t: "resize", cols: 9999, rows: 1 }))).toEqual({ t: "resize", cols: 400, rows: 5 });
+    expect(parseClient(JSON.stringify({ t: "visibility", visible: false }))).toEqual({ t: "visibility", visible: false });
+    expect(parseClient(JSON.stringify({ t: "visibility", visible: true }))).toEqual({ t: "visibility", visible: true });
   });
 
   test("nothing else is a message", () => {
-    for (const text of ["", "x", "[]", '{"t":"in"}', '{"t":"in","d":""}', '{"t":"in","d":5}', '{"t":"other"}', '{"t":"bin","d":"あ"}']) expect(parseClient(text)).toBeNull();
+    for (const text of ["", "x", "[]", '{"t":"in"}', '{"t":"in","d":""}', '{"t":"in","d":5}', '{"t":"other"}', '{"t":"bin","d":"あ"}', '{"t":"visibility"}', '{"t":"visibility","visible":"no"}']) expect(parseClient(text)).toBeNull();
     expect(parseClient(JSON.stringify({ t: "in", d: "x".repeat((256 << 10) + 1) }))).toBeNull();
   });
 });

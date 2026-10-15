@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { busyAskMs, idleAskMs, OpenPanes, perDeviceHourLimit, PushWatcher, Shared, tickMs, type PushWorld } from "./pushwatch";
-import { defaultSwitches, settleMs, type PresenceReport, type PushPayload } from "./pushrule";
+import { defaultSwitches, seenAfterMs, settleMs, type PresenceReport, type PushPayload } from "./pushrule";
 import { SubscriptionStore, type StoreFile, type Subscription } from "./pushstore";
 import { b64u } from "./webpush";
 import type { SendResult } from "./pushsend";
@@ -460,11 +460,11 @@ describe("a send is off the tick", () => {
     await r.advance(settleMs + tickMs * 3);
     expect(r.state.asks).toBeGreaterThan(asks);
     expect(r.state.sends.map((s) => (s.payload as { pane: string }).pane)).toEqual([pane, other]);
-    expect(r.state.logs).toEqual([]);
+    expect(r.state.logs.filter((line) => line.startsWith("push ") && line.endsWith("201"))).toEqual([]);
     release();
     r.state.hold = null;
     await r.watcher.settled();
-    expect(r.state.logs).toEqual(["push Phone permission sent 201", "push Phone question sent 201"]);
+    expect(r.state.logs.filter((line) => line.endsWith("sent 201"))).toEqual(["push Phone permission sent 201", "push Phone question sent 201"]);
   });
 });
 
@@ -542,7 +542,7 @@ describe("what the push service says", () => {
     r.state.panes[0].control = phone;
     await finishTurn(r);
     await r.advance(settleMs + tickMs * 2);
-    expect(r.state.logs).toEqual(["push Phone done sent 201"]);
+    expect(r.state.logs.filter((line) => line.endsWith("sent 201"))).toEqual(["push Phone done sent 201"]);
   });
 
   test("60 pushes to a device an hour, then they are dropped", async () => {
@@ -646,19 +646,221 @@ describe("when the host is asked", () => {
 });
 
 describe("the panes a device has open", () => {
-  test("counted by socket, by session name", () => {
+  test("counted by socket, by session name, for as long as a socket is there", () => {
     const open = new OpenPanes();
-    open.add(phone, `varnick-${pane}`);
-    open.add(phone, `varnick-${pane}`);
+    const first = open.open(phone, `varnick-${pane}`)!;
+    const second = open.open(phone, `varnick-${pane}`)!;
     expect(open.has(phone, pane)).toBe(true);
     expect(open.has(tablet, pane)).toBe(false);
-    open.remove(phone, `varnick-${pane}`);
+    first.close();
     expect(open.has(phone, pane)).toBe(true);
-    open.remove(phone, `varnick-${pane}`);
+    second.close();
+    second.close();
     expect(open.has(phone, pane)).toBe(false);
-    open.add(phone, "not-a-session");
+    expect(open.open(phone, "not-a-session")).toBeNull();
     expect(open.has(phone, "not-a-session")).toBe(false);
-    open.remove(phone, `varnick-${other}`);
+  });
+
+  test("open means visible: a socket whose page says it is hidden is not an open pane, and is again when the page shows", () => {
+    const open = new OpenPanes();
+    const socket = open.open(phone, `varnick-${pane}`)!;
+    expect(open.has(phone, pane)).toBe(true);
+    socket.setVisible(false);
+    expect(open.has(phone, pane)).toBe(false);
+    socket.setVisible(true);
+    expect(open.has(phone, pane)).toBe(true);
+  });
+
+  test("one visible socket of two is enough, and a hidden one cannot hold the pane open", () => {
+    const open = new OpenPanes();
+    const hidden = open.open(phone, `varnick-${pane}`)!;
+    hidden.setVisible(false);
+    const live = open.open(phone, `varnick-${pane}`)!;
+    expect(open.has(phone, pane)).toBe(true);
+    live.close();
+    expect(open.has(phone, pane)).toBe(false);
+  });
+});
+
+describe("a notice the phone was and wasn't looking at", () => {
+  test("the app left for the home screen the moment the turn ended: the socket is still there, the page is hidden, the push goes", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.open.add(`${phone}:${pane}`);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(tickMs);
+    // Under a moment later the page hides (the terminal says so); its socket stays up for another minute.
+    r.state.open.delete(`${phone}:${pane}`);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("a pane looked at long enough while the notice stands is seen, and leaving afterwards pushes nothing", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.open.add(`${phone}:${pane}`);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(seenAfterMs + tickMs);
+    r.state.open.delete(`${phone}:${pane}`);
+    await r.advance(settleMs * 3);
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a notice that stood before the pane was opened is seen by opening it", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    await r.advance(tickMs);
+    r.state.open.add(`${phone}:${pane}`);
+    await r.advance(seenAfterMs + tickMs);
+    r.state.open.delete(`${phone}:${pane}`);
+    await r.advance(settleMs * 3);
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("a look that breaks off starts over: two glances are not a view, and the push goes once the pane is left", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    for (let glance = 0; glance < 3; glance += 1) {
+      r.state.open.add(`${phone}:${pane}`);
+      await r.advance(tickMs);
+      r.state.open.delete(`${phone}:${pane}`);
+      await r.advance(tickMs);
+    }
+    await r.advance(settleMs);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("a pane that stays open and visible while the notice stands never sends, and the page showing again later changes nothing", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    r.state.open.add(`${phone}:${pane}`);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "permission" };
+    r.state.dates.set(pane, 1);
+    await r.advance(settleMs * 3);
+    expect(r.state.sends).toEqual([]);
+    r.state.open.delete(`${phone}:${pane}`);
+    await r.advance(settleMs);
+    r.state.open.add(`${phone}:${pane}`);
+    await r.advance(settleMs);
+    expect(r.state.sends).toEqual([]);
+  });
+
+  test("each device is its own: the tablet that was looking, and the phone that left", async () => {
+    const r = rig({ subscribed: [{ device: phone }, { device: tablet }] });
+    r.state.panes[0].control = phone;
+    r.state.open.add(`${tablet}:${pane}`);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    await r.advance(settleMs + tickMs * 3);
+    expect(r.state.sends.map((s) => s.device)).toEqual([phone]);
+  });
+});
+
+describe("what the log says of each decision", () => {
+  const decisions = (r: ReturnType<typeof rig>) => r.state.logs.filter((line) => line.startsWith("push decide") || line.startsWith("push notice"));
+
+  test("a device in control: raised, waiting for the settle, pushing, sent", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    await r.advance(settleMs + tickMs * 2);
+    expect(r.state.logs).toEqual([
+      "push notice done raised",
+      "push decide done Phone -> waiting(settle) controller=device",
+      "push decide done Phone -> pushing controller=device",
+      "push Phone done sent 201",
+    ]);
+  });
+
+  test("a present Mac, and then away: which controller and what its report said", async () => {
+    const r = rig();
+    r.keep(own);
+    await r.watcher.tick();
+    r.state.panes[0] = { ...r.state.panes[0], turn: "waiting" };
+    r.state.dates.set(pane, 1);
+    for (let i = 0; i < 10; i += 1) { r.keep(own); await r.advance(tickMs); }
+    r.keep(own, { away: true });
+    await r.advance(tickMs * 3);
+    expect(decisions(r)).toEqual([
+      "push notice done raised",
+      "push decide done Phone -> waiting(settle) controller=host presence=present",
+      "push decide done Phone -> waiting(present) controller=host presence=present",
+      "push decide done Phone -> pushing controller=host presence=away",
+    ]);
+  });
+
+  test("a Mac that can't be told, and a peer whose client is detached", async () => {
+    const none = rig();
+    await finishTurn(none);
+    await none.advance(settleMs + tickMs * 2);
+    expect(decisions(none)).toContain("push decide done Phone -> pushing controller=host presence=unknown");
+
+    const detached = rig();
+    detached.state.panes[0].control = mac;
+    detached.state.panes[0].clients = 0;
+    detached.keep(mac);
+    await finishTurn(detached);
+    for (let i = 0; i < 8; i += 1) { detached.keep(mac); await detached.advance(tickMs); }
+    expect(decisions(detached)).toContain("push decide done Phone -> pushing controller=mac-detached presence=present");
+  });
+
+  test("suppressed by the pane being open, by the switch and by the Mac having shown it", async () => {
+    const open = rig();
+    open.state.panes[0].control = phone;
+    open.state.open.add(`${phone}:${pane}`);
+    await open.watcher.tick();
+    open.state.panes[0] = { ...open.state.panes[0], turn: "waiting" };
+    open.state.dates.set(pane, 1);
+    await open.advance(settleMs);
+    expect(decisions(open)).toEqual([
+      "push notice done raised",
+      "push decide done Phone -> waiting(viewing) controller=device",
+      "push decide done Phone -> suppressed(open-pane) controller=device",
+    ]);
+
+    const off = rig({ subscribed: [{ device: phone, switches: { done: false } }] });
+    off.state.panes[0].control = phone;
+    await finishTurn(off);
+    expect(decisions(off)).toContain("push decide done Phone -> suppressed(switch) controller=device");
+
+    const shown = rig();
+    shown.keep(own, { notices: [], onScreen: [] });
+    await shown.watcher.tick();
+    shown.state.panes[0] = { ...shown.state.panes[0], turn: "waiting" };
+    shown.state.dates.set(pane, 1);
+    await shown.advance(tickMs);
+    shown.keep(own, { notices: [pane], onScreen: [] });
+    await shown.advance(tickMs);
+    shown.keep(own, { notices: [], onScreen: [pane] });
+    await shown.advance(tickMs);
+    expect(decisions(shown).at(-1)).toBe("push decide done Phone -> suppressed(seen-on-mac) controller=host presence=present");
+  });
+
+  test("nothing in a line names a pane, a tab, a title or an endpoint", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r);
+    await r.advance(settleMs + tickMs * 2);
+    const text = r.state.logs.join("\n");
+    for (const secret of [pane, tab, own, phone, "fcm.googleapis"]) expect(text).not.toContain(secret);
+  });
+
+  test("a cleared notice says so", async () => {
+    const r = rig();
+    r.state.panes[0].control = phone;
+    await finishTurn(r, "permission");
+    r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
+    r.state.dates.set(pane, 2);
+    await r.advance(tickMs);
+    expect(decisions(r)).toContain("push notice permission cleared");
   });
 });
 

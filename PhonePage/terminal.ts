@@ -50,7 +50,9 @@ export function parseOpen(text: string): OpenRequest | null {
 export type ClientMessage =
   | { t: "in"; data: string }
   | { t: "bin"; data: Uint8Array }
-  | { t: "resize"; cols: number; rows: number };
+  | { t: "resize"; cols: number; rows: number }
+  /** The page was hidden or shown: a hidden page has no pane open, whatever its socket still holds. */
+  | { t: "visibility"; visible: boolean };
 
 /** The most one message may type: a paste, not a flood. */
 export const inputLimit = 256 << 10;
@@ -66,6 +68,7 @@ export function parseClient(text: string): ClientMessage | null {
     return { t: "bin", data: Buffer.from(message.d, "latin1") };
   }
   if (message.t === "resize") return { t: "resize", ...clampGrid(message.cols, message.rows) };
+  if (message.t === "visibility" && typeof message.visible === "boolean") return { t: "visibility", visible: message.visible };
   return null;
 }
 
