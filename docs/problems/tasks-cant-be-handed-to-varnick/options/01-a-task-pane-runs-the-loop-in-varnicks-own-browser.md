@@ -341,3 +341,16 @@ A throwaway app, or Varnick run by the user. Nothing in it starts a daemon or a 
   - real sites.
 - **Why this surface.** Options 02 and 03 weigh the other two. In short, this one needs no exception and no permission, lets the user watch and type their own password, and adds nothing to install. It gives up the user's existing logins, and the Chrome engine the pilots used.
 - **Suggested order:** follow-up tests 1 to 3, then the spike, then the build with tests 4 and 5 alongside.
+
+## Decisions made while building (2026-10-15)
+
+Recorded at the coordinator's direction after the first slice was reviewed. They add to the sections above and, where they differ, win.
+
+- **Below 0.7, System 1 asks Claude and waits,** however often. The pilots' rule that acts on System 1's best option after two asks in a row is not built. Claude's own suggestion, or a "continue", lets one choice below the bar stand for a step; the budgets end a task that asks forever.
+- **The two Claude conversations (values and guidance) are each told the other's replies** since their last message.
+- **System 1's state includes** the preview scores of the page's links, the bank's meanings and values (a value only the person gives is shown as "(the person's)", and a secret is never in it) and whether Claude is working on values in the background.
+- **A per-step log line** with the step's kind, who acted, the probability and the time, and nothing it said (no address, label, value or text). The spoken "I'm stuck on <page title>" is said when the no-progress or loop rule fires.
+- **Gates cover links as well as buttons** on a page with a form, and any link with no real address (`#`, `javascript:`, a link in a button's role). A submit the page makes itself as a field is filled is held and gated. A search box is a form with role search, a search element, or a form whose only text field is a search input.
+- **Deferred to a later ticket:** Claude's alarms (a surprise wakes it), and waking Claude on harness signals (no progress, a loop, a budget nearly spent). The pilots found alarms noisy, and the harness's own rules got a task unstuck better than Claude did.
+- **The reference implementation is hybrid-browser-15, not -13** (agent-lab, later, and it fixed the wizard). Follow-up tests 1 and 3 ran in agent-lab hybrid-browser-14 (`19d53ca`): no word rules passed (the answer's shape asked of System 1 matched the marker list's outcomes on the tasks that read), and peeking even when System 1 is confident partly passed (the dead end came down from 13 and 24 s to 9.6 s, not to the 5 s target; hybrid-browser-15's peek on every page load made it 7.8 and 8.8 s).
+- **Fine as built:** giving Jev up after three failures in a row, and eight answer shapes (the pilots' seven and "none, an action" for a task that reads nothing out).

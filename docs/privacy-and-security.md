@@ -173,10 +173,9 @@ types and steers, in two conversations kept open for the length of the task, on 
   visited, what was done there and what it led to; and the values Claude wrote itself. The first time Claude is shown a
   page, it is shown whole; after that, what changed. When Jev isn't used (the relevance filter isn't on TypeSafe with a key
   saved, or Jev failed three times in a row), Claude also makes each step's choices, so each step is a message.
-- **What never goes:** a password, a one-time code or a card field's value. The page script does not read them: it sends
-  only whether such a field is filled. That holds for a field that was ever a password, so a "show password" button
-  doesn't change it. You type them in the page. Anything else you type in the page, in a field that isn't one of those,
-  is shown to Claude (and to Jev) as that field's value, like one the task typed.
+- **What never goes:** a password, a one-time code or a card field's value (ADR 0039 says which fields). The page script
+  does not read them: it sends only whether such a field is filled. You type them in the page. Anything else you type in
+  the page, in a field that isn't one of those, is shown to Claude (and to Jev) as that field's value, like one the task typed.
 - **What Claude Code itself sends** with a call, as above. The conversations are not sessions: nothing is saved as a
   transcript.
 - Each message is a model turn and counts toward your plan's usage limits; a task takes from a handful of messages to
@@ -400,9 +399,10 @@ never on your screen, needs no permission, and brings nothing to the front.
   task and Claude filled in from it. What it doesn't do: type your password, a one-time code or a card number (you type those
   in the page), tick a terms box Claude marked as yours (you tick it), or press a form's submit without you. **Every form
   submit but a search box's asks** ("Allow" lets Varnick press it, "I'll do it" waits for you to press it in the page), and so
-  does any button on a page that has a form, a script-handled "Place order" included. On a page with no form, a button or a
-  link is an ordinary click: a site that changes things when a link is followed, or a script-handled button on a page with no
-  form, is not stopped by this (inferred, not tried).
+  does any button on a page that has a form, a script-handled "Place order" included, and any link on a page that has a form or
+  that has no real address (`#`, `javascript:`). A submit the page itself makes as a field is filled is held until you allow it.
+  On a page with no form, a link to a page is an ordinary click: a site that changes things when such a link is followed, or a
+  script-handled button on a page with no form, is not stopped by this (inferred, not tried).
 - **A click or a key of yours in the page pauses the task** before its next action; Resume hands it back. Stop ends it at once.
 - The pane's cookies and storage are its own, empty at the start and gone when it closes, so a site never sees your logins and a
   task can't use them.
