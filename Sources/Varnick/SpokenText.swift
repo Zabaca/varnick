@@ -295,19 +295,21 @@ enum SpokenText {
 
     private static let escalationLine = "If these results don't hold what the request asks for, reply with only \(escalation)."
     private static let plainlyLine = "If none of the results fits the request, say so plainly instead of guessing."
+    private static let sessionOfferedLine = "A Claude session whose prompts only ask the request's own question doesn't hold its answer. For a session that does, say what it shows."
     private static let sessionLine = "For a Claude session, say what it shows. If it asked for something but doesn't show it was done, say the session doesn't say whether it landed."
 
-    /// Whether the writer may hand the request to the web: Answer from the web is on, the request doesn't stay local, and no row it
-    /// reads is a session. The marker is left out rather than offered and ignored: an ignored one leaves no answer, and
-    /// the writer would be asked again.
-    static func offersEscalation(rows: [SearchResult], web: Bool, scope: Scope) -> Bool {
-        web && !scope.staysLocal && !rows.contains(where: \.isSession)
+    /// Whether the writer may hand the request to the web: Answer from the web is on and the request doesn't stay local. Which rows
+    /// are read doesn't matter: the writer is told to use the marker when they don't hold the answer, and a kept session that only
+    /// asked the same question doesn't (the model decides, ADR 0037; no word list does). Offered always, rather than left out when a
+    /// session is read, because rows kept for want of a judge are only the search's best guess.
+    static func offersEscalation(web: Bool, scope: Scope) -> Bool {
+        web && !scope.staysLocal
     }
 
     /// `escalation` takes the place of "say so plainly" when it is offered, as the first eval measured it; withheld, "say so plainly"
-    /// stays, as the second did, and a session adds its own line. `today` is `SpokenTime.today`.
+    /// stays, as the second did. A session adds its own line either way. `today` is `SpokenTime.today`.
     static func answerPrompt(for request: String, rows: String, today: String, several: Bool, escalation offered: Bool, session: Bool) -> String {
-        let fit = offered ? escalationLine : plainlyLine + (session ? "\n" + sessionLine : "")
+        let fit = offered ? escalationLine + (session ? "\n" + sessionOfferedLine : "") : plainlyLine + (session ? "\n" + sessionLine : "")
         return answerTemplate.replacingOccurrences(of: "{instruction}", with: several ? severalInstruction : oneInstruction)
             .replacingOccurrences(of: "{fit}", with: fit)
             .replacingOccurrences(of: "{today}", with: today)
@@ -858,8 +860,8 @@ enum SpokenPipeline {
         let context = run.context
         let rows = SpokenText.describe(run.rows, context: context)
         let session = run.rows.contains(where: \.isSession)
-        let offered = SpokenText.offersEscalation(rows: run.rows, web: run.web, scope: run.scope)
-        run.writer = WriterNote(offered: offered, withheld: offered ? nil : withheld(run: run, session: session))
+        let offered = SpokenText.offersEscalation(web: run.web, scope: run.scope)
+        run.writer = WriterNote(offered: offered, withheld: offered ? nil : withheld(run: run))
         let several = run.route?.several ?? false
         let limits = SpokenText.answerLimits(several: several)
         let prompt = SpokenText.answerPrompt(for: request, rows: rows, today: SpokenTime.today(now: context.now, calendar: context.calendar),
@@ -882,10 +884,9 @@ enum SpokenPipeline {
     }
 
     /// Why the writer was not offered the marker, for the timing line and `--ask`.
-    private static func withheld(run: Run, session: Bool) -> String {
+    private static func withheld(run: Run) -> String {
         if !run.web { return "Answer from the web off" }
-        if run.scope.staysLocal { return "stays local" }
-        return session ? "a session read" : "-"
+        return run.scope.staysLocal ? "stays local" : "-"
     }
 
     /// The web (`WebAnswer`): the request's words with the date, time and units, to the user's own Claude Code with WebSearch as its
