@@ -25,6 +25,10 @@ final class RunsBoard: ObservableObject {
         let place: String
         /// What a session last did to the automation through the automation tools, until the user has seen it: on its newest run only.
         let mark: String?
+        /// A Task's own Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a): ↩ shows its view, not a session.
+        var isTask = false
+        /// How a Task's Run started, for its row.
+        var startedBy: String?
 
         /// "Running", "Waiting on you: Needs permission", a message's title, "Missed: over 12 hours old".
         var text: String {
@@ -35,8 +39,10 @@ final class RunsBoard: ObservableObject {
 
     @Published private(set) var rows: [Row] = []
     @Published var selection: UUID?
+    /// The Task Run whose view shows in place of the list (`TaskRunView`); Esc goes back to the list.
+    @Published var detail: UUID?
     /// Why the last ↩ did not open anything, shown over the list until the selection moves.
-    @Published private(set) var refusal: String?
+    @Published var refusal: String?
     weak var model: LauncherModel?
 
     /// How many runs the tab lists: each automation keeps twenty.
@@ -54,6 +60,7 @@ final class RunsBoard: ObservableObject {
                                 mark: index == 0 ? automation.mark?.line : nil))
             }
         }
+        next += taskRows(model: model, place: here)
         next.sort { $0.when > $1.when }
         next = Array(next.prefix(Self.shown))
         if next != rows { rows = next }
@@ -62,6 +69,7 @@ final class RunsBoard: ObservableObject {
     }
 
     func key(_ event: NSEvent) -> Bool {
+        if detail != nil { return detailKey(event) }
         let plain = event.modifierFlags.intersection(KeyCombo.relevant).isEmpty
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter: if plain { openSelected() }
@@ -93,6 +101,7 @@ final class RunsBoard: ObservableObject {
             refusal = "That slot never ran, so there is nothing to open"
             return
         }
+        if row.isTask { return showDetail(of: id) }
         refusal = model?.openRun(id)
     }
 }
@@ -101,7 +110,9 @@ struct RunsBoardView: View {
     @ObservedObject var board: RunsBoard
 
     var body: some View {
-        if board.rows.isEmpty {
+        if let detail = board.detail, let model = board.model {
+            TaskRunView(board: board, store: model.taskRuns, id: detail)
+        } else if board.rows.isEmpty {
             Text("No runs yet. Settings › Automations makes an automation, and Run now tries one.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
@@ -152,6 +163,9 @@ private struct RunRowView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(when).font(.system(size: 11)).foregroundStyle(.tertiary)
+                if let startedBy = row.startedBy {
+                    Text(startedBy).font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
             }
             Spacer(minLength: 8)
             if row.state == .waiting { OrangeMark(text: "Needs you") }
@@ -171,7 +185,8 @@ private struct RunRowView: View {
         case .running: .blue
         case .waiting: .orange
         case .done, .message: .green
-        case .stoppedAtLimit, .endedAfterWaiting, .couldntStart: .red
+        case .stoppedAtLimit, .endedAfterWaiting, .couldntStart, .failed: .red
+        case .stopped: .secondary
         case .skipped, .missed: .secondary
         }
     }

@@ -171,6 +171,11 @@ public struct TaskCheck: Equatable {
     public var definition: TaskDefinition?
     public var problems: [String]
 
+    public init(definition: TaskDefinition?, problems: [String]) {
+        self.definition = definition
+        self.problems = problems
+    }
+
     public var isValid: Bool { definition != nil && problems.isEmpty }
 }
 

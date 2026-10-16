@@ -75,6 +75,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// board's Runs tab or a notice. Cleared when the tab is shown, taken over, or Automations is turned off (`ClaudeTab.isHiddenRun`).
     var runUnopened: Bool?
 
+    /// The Task's Run whose step this pane is (option 01 of `work-cant-be-saved-or-chained`, slice 2a), for the whole life of the record. Like
+    /// `automation`, it keeps the pane's MCP server to `notify` and `task_result`, and it hides the tab while `runUnopened`. Optional so older records
+    /// load, and an older build ignores it.
+    var taskRun: UUID?
+
     /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude
     /// pane here that another Mac marked. `SessionStore.State` turns it into a tab's mark and never writes it again. Optional so older files load.
     var completedAt: Date?

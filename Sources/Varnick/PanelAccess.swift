@@ -332,6 +332,7 @@ final class PanelAccess {
                     model.hideBoard()
                     model.hideOutline()
                     model.hideResources()
+                    model.hideTasks()
                     // With a tab showing the search takes its place; with none it is already underneath and its query stays. The keyboard
                     // moves to it only if the panel already has the keyboard.
                     if model.activeTab != nil { model.showSearch(focusing: key) } else if key { model.focusSearchField() }
@@ -424,6 +425,9 @@ final class PanelAccess {
         } else if model.showingResources {
             lines.append("Showing: Resources")
             focus = "Resources"
+        } else if model.showingTasks {
+            lines.append("Showing: Tasks")
+            focus = "Tasks"
         } else if let tab = model.activeTab {
             lines += tabLines(tab, caller: caller)
             listsCaller = tab.sessions.contains { $0.id == caller }

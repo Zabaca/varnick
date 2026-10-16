@@ -617,16 +617,19 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // Screen access (ADR 0023), Panel access (ADR 0031) and the Problems board's work-link hooks are read at each start, not stored: a
         // pane gains or loses them at its next start or restart. A run of an automation never gets the first two, nor the automation tools
         // (which come with the Automations switch alone), whatever they say: its MCP config lists `notify` alone (option 01 of
-        // `prompts-cant-run-on-a-schedule`).
-        let isRun = record.automation != nil
+        // `prompts-cant-run-on-a-schedule`). A step of a Task's Run is a run too: its config lists `notify` and, while its folder holds the step's
+        // result schema, `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a); never the task tools.
+        let isRun = record.automation != nil || record.taskRun != nil
+        let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
                                                  prompt: prompt, problems: Settings.shared.problemsBoard,
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
                                                                                     panel: !isRun && Settings.shared.panelAccess,
-                                                                                    automations: !isRun && Settings.shared.automationsOn),
-                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [])
+                                                                                    automations: !isRun && Settings.shared.automationsOn,
+                                                                                    tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult),
+                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.
@@ -1229,8 +1232,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         left.agent = record.agent
         // A run that changed conversation (plan mode's clear context, /resume) leaves one that is still a run's: resumed from Recent it keeps
         // what a run has, as `openRun` and `applyRunFields` do.
-        if record.automation != nil {
+        if record.automation != nil || record.taskRun != nil {
             left.automation = record.automation
+            left.taskRun = record.taskRun
             left.skipPermissions = record.skipPermissions
             left.dontAsk = record.dontAsk
             left.allowedTools = record.allowedTools

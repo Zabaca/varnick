@@ -89,6 +89,8 @@ public enum TaskEngine {
 
     public struct TaskRefusal: Error, Equatable {
         public var problems: [String]
+
+        public init(problems: [String]) { self.problems = problems }
     }
 
     // MARK: Advancing
@@ -171,10 +173,7 @@ public enum TaskEngine {
     }
 
     /// The step still in flight: the last entry, unless it has said all it will.
-    static func inFlight(_ run: TaskRun) -> Int? {
-        guard let last = run.steps.indices.last, !(run.steps[last].state ?? .done).isFinal else { return nil }
-        return last
-    }
+    static func inFlight(_ run: TaskRun) -> Int? { run.inFlightIndex }
 
     /// What the bindings read: the input, and for each step the result of its latest visit that gave one.
     static func context(of run: TaskRun) -> TaskTemplate.Context {
@@ -333,7 +332,8 @@ public enum TaskEngine {
         run.steps[index].state = failed ? .failed : step.capability == .notify ? .sent : .done
         run.steps[index].outcome = outcome
         run.steps[index].result = failed ? nil : result
-        run.steps[index].reason = reason
+        // A note the host put on the step when it started (Skip not granted) stays on a step that went well.
+        run.steps[index].reason = reason ?? (failed ? nil : run.steps[index].reason)
         run.steps[index].actor = actor
         run.steps[index].probability = probability
         run.steps[index].endedAt = now
@@ -454,6 +454,12 @@ public struct TaskRunLine: Equatable {
 }
 
 extension TaskRun {
+    /// The step still in flight: the last entry, unless it has said all it will. An automation's Run has no states, so none is in flight.
+    public var inFlightIndex: Int? {
+        guard let last = steps.indices.last, !(steps[last].state ?? .done).isFinal else { return nil }
+        return last
+    }
+
     /// The Run's lines, one for each visit to a step, in order.
     public var lines: [TaskRunLine] {
         steps.map { entry in
@@ -461,9 +467,10 @@ extension TaskRun {
             let capability = TaskCapability(rawValue: entry.capability)?.title ?? entry.capability
             func line(_ actor: String, _ text: String) -> TaskRunLine { TaskRunLine(actor: actor, text: text, step: entry.name, child: entry.child, pane: entry.pane) }
             switch (entry.capability, state) {
-            case ("claude", .started): return line("Claude", "\(entry.name): working")
+            case ("claude", .started): return line("Claude", "\(entry.name): working" + (entry.reason.map { " (\($0))" } ?? ""))
             case ("claude", .waiting): return line("Claude", "\(entry.name): waits on you")
-            case ("claude", .done): return line("Claude", "\(entry.name): finished" + (entry.result.map { " with " + Self.fields($0) } ?? ""))
+            case ("claude", .done):
+                return line("Claude", "\(entry.name): finished" + (entry.result.map { " with " + Self.fields($0) } ?? "") + (entry.reason.map { " (\($0))" } ?? ""))
             case ("judge", .started): return line(entry.actor ?? "Jev", "\(entry.name): judging")
             case ("judge", .done): return line(entry.actor ?? "Jev", entry.reason ?? "\(entry.name): \(entry.outcome ?? "done")")
             case ("notify", .sending): return line("Harness", "\(entry.name): telling you")

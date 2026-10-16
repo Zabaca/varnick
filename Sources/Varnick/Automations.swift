@@ -274,7 +274,8 @@ extension LauncherModel {
     /// when an automation is deleted (`deleteAutomation`). An automation's own switch releases nothing: its unopened runs stay hidden and are
     /// still ended by their limits.
     func releaseRuns(of automation: UUID? = nil) {
-        releaseHiddenRuns { pane in automation == nil || pane.record.automation == automation }
+        // A Task's Run tab is the Tasks switch's to release, never the Automations switch's.
+        releaseHiddenRuns { pane in pane.record.taskRun == nil && (automation == nil || pane.record.automation == automation) }
     }
 
     /// At launch, before the first check: a hidden run tab that no Run names becomes an ordinary tab. That covers an automations file of version 1,
@@ -530,7 +531,7 @@ extension LauncherModel {
             showPane(paneID)
             return nil
         }
-        guard let run, run.state.ran, let conversation = run.conversationID, let automation = automations.automation(run.trigger.automation) else {
+        guard let run, run.state.ran, let conversation = run.conversationID, let automation = run.trigger.automation.flatMap({ automations.automation($0) }) else {
             return "That slot never ran"
         }
         // Already open in a tab (resumed from here before, or from search): a second claude on one conversation would fight it.
@@ -564,6 +565,7 @@ extension LauncherModel {
         guard let run = taskRuns.runs.first(where: { $0.state.ran && $0.step(conversation: conversation) != nil }),
               let step = run.step(conversation: conversation) else { return }
         record.automation = run.trigger.automation
+        if run.trigger.automation == nil { record.taskRun = run.id }
         if let launch = step.launch {
             record.skipPermissions = launch.skipPermissions
             record.dontAsk = launch.dontAsk ? true : nil
@@ -575,7 +577,7 @@ extension LauncherModel {
     /// notice's, a pane's.
     func endedRun(_ id: UUID) -> (automation: Automation, run: TaskRun)? {
         guard claudePane(id) == nil, let run = taskRuns.run(pane: id), run.state.ran, !run.opened,
-              let automation = automations.automation(run.trigger.automation) else { return nil }
+              let automation = run.trigger.automation.flatMap({ automations.automation($0) }) else { return nil }
         return (automation, run)
     }
 

@@ -47,9 +47,11 @@ extension NoticeKind {
 @MainActor
 final class SessionNotifier: ObservableObject {
     struct Notice: Identifiable, Equatable {
-        /// The pane's id.
+        /// The pane's id, or a Task Run's own (`runLine` says it is one).
         let id: UUID
         var kind: NoticeKind
+        /// The menu line of a Task Run's notice, written from the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a): nil for a pane's.
+        var runLine: String?
     }
 
     /// A Done or an error waiting for a later read to confirm it: the running word the turn changed from, and when it was read.
@@ -90,13 +92,17 @@ final class SessionNotifier: ObservableObject {
     /// A pane's turn changed word (`ClaudeSession.onTurnWordChange`).
     func turnChanged(in pane: ClaudeSession, from old: PaneTurn?, to new: PaneTurn) {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
+        if pane.record.taskRun != nil { model.taskHost.paneTurnChanged(pane) }
         // A peer's date moves with each reply, so the same turn is told within a couple of seconds.
         let sameTurn = old.map { abs($0.since.timeIntervalSince(new.since)) <= 2 } ?? false
         // A standing message folds a Done into itself, and an error or Needs you replaces it (`NoticeRule.merge`).
-        let decision = NoticeRule.merge(
+        var decision = NoticeRule.merge(
             NoticeRule.decide(from: old?.turn, to: new.turn, failure: new.failure, interrupted: new.interrupted, sameTurn: sameTurn,
                               inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
             standing: notices.first { $0.id == pane.id }?.kind)
+        // A Task step's pane raises Needs you and Messages only: its Done and its errors are the step's outcome, and the Run's own notice says how
+        // the Run ended.
+        if pane.record.taskRun != nil, case .raise(let kind) = decision, kind.settles { decision = .none }
         // An error that follows its waiting stands for the running word before it.
         let from = unsettled[pane.id]?.from ?? (old?.turn == .waiting ? .working : old?.turn ?? .working)
         switch decision {
@@ -133,6 +139,7 @@ final class SessionNotifier: ObservableObject {
 
     /// What a notice shows in the menu: the pane's title as the board shows it, its Mac when it isn't this one, and what it says.
     func menuTitle(of notice: Notice) -> String? {
+        if let line = notice.runLine { return line }
         guard let pane = model?.claudePane(notice.id) else {
             // A run whose process ended (option 01 of `prompts-cant-run-on-a-schedule`): the automation's name, and choosing it resumes the run.
             return model?.endedRun(notice.id).map { "\($0.automation.name) · \(notice.kind.text)" }
@@ -158,7 +165,7 @@ final class SessionNotifier: ObservableObject {
                 NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
                                   inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
                 standing: notices.first { $0.id == id }?.kind)
-            if case .raise(let kind) = decision { raise(kind, for: pane) }
+            if case .raise(let kind) = decision, pane.record.taskRun == nil { raise(kind, for: pane) }
         }
     }
 
@@ -189,6 +196,44 @@ final class SessionNotifier: ObservableObject {
         if !quiet { play(kind) }
     }
 
+    // MARK: A Task Run's own notice
+
+    /// The notice of a Task Run, by the Run's id, beside the panes' with the same kinds and switches (option 01 of `work-cant-be-saved-or-chained`,
+    /// slice 2a). It stays on this Mac: the phone's push names a tab and a pane to open, and a Run has neither there until Runs are listed on the phone.
+    /// Not raised for a Run whose view the user is looking at.
+    private func postRun(_ run: TaskRun, kind: NoticeKind, line: String) {
+        guard let model, Settings.shared.noticeSwitches.allows(kind) else { return }
+        if model.showingBoard, !model.showingSettings, model.board.tab == .runs, model.board.runs.detail == run.id, SessionBoard.panelIsKey { return }
+        notices.removeAll { $0.id == run.id }
+        notices.insert(Notice(id: run.id, kind: kind, runLine: line), at: 0)
+        play(kind)
+    }
+
+    /// A Notify step's message.
+    func raiseRunMessage(_ run: TaskRun, title: String) {
+        postRun(run, kind: .message(title), line: "\(run.task) · \(title)")
+    }
+
+    /// How a Run ended: Done with its result, or Stopped on an error with the step and the outcome that led there ("Failed at check: no").
+    func raiseRunEnd(_ run: TaskRun) {
+        switch run.state {
+        case .done:
+            postRun(run, kind: .done, line: "\(run.task) · Done" + (run.result.map { Self.summary(of: $0) }.flatMap { $0.isEmpty ? nil : ": " + $0 } ?? ""))
+        case .failed, .stoppedAtLimit, .endedAfterWaiting:
+            postRun(run, kind: .failed(nil), line: "\(run.task) · Stopped on an error (\(run.detail ?? "failed"))")
+        default:
+            break
+        }
+    }
+
+    /// A result's fields on one line, cut to fit a menu.
+    static func summary(of result: TaskValue) -> String {
+        guard let object = result.object else { return "" }
+        let text = object.keys.sorted().map { "\($0): \(object[$0]!.inText)" }.joined(separator: ", ")
+        let line = text.replacingOccurrences(of: "\n", with: " ")
+        return line.count > 60 ? String(line.prefix(59)) + "…" : line
+    }
+
     /// One sound per notice; several in the same moment don't stack, but a louder one replaces a softer.
     private func play(_ kind: NoticeKind) {
         if Date().timeIntervalSince(lastSound) <= 0.5 {
@@ -206,7 +251,7 @@ final class SessionNotifier: ObservableObject {
     private func reportPanes() {
         guard let model else { return }
         let onScreen = model.tabs.flatMap(\.sessions).filter { $0.isClaude && model.isOnScreen($0) }
-        PresenceReader.shared.setPanes(notices: Set(notices.map { $0.id.uuidString.lowercased() }),
+        PresenceReader.shared.setPanes(notices: Set(notices.filter { $0.runLine == nil }.map { $0.id.uuidString.lowercased() }),
                                        onScreen: Set(onScreen.map { $0.id.uuidString.lowercased() }))
     }
 
@@ -220,6 +265,8 @@ final class SessionNotifier: ObservableObject {
         guard !notices.isEmpty else { return }
         let switches = Settings.shared.noticeSwitches
         let kept = notices.filter { notice in
+            // A Task Run's notice stands until it is chosen or the Run's view is shown.
+            if notice.runLine != nil { return switches.allows(notice.kind) }
             // The notice of a run nobody opened outlives its ended process: choosing it resumes the conversation.
             guard let pane = model.claudePane(notice.id) else { return model.endedRun(notice.id) != nil && switches.allows(notice.kind) }
             return switches.allows(notice.kind) && pane.away == nil && !model.isOnScreen(pane)

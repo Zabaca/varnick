@@ -989,6 +989,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(AutomationRequestHead.self, from: line)?.automation != nil {
             return AutomationAccess.shared.answer(line)
         }
+        // A task request (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is told apart the same way, by its own key.
+        if head.op == nil, PeerJSON.decode(TaskToolRequestHead.self, from: line)?.tasks != nil {
+            return await TaskAccess.shared.answer(line)
+        }
         // `upgrade` and `restart` are read before the version (the relay does the same), and only for a Mac in the list: not a device.
         if let op = head.op.flatMap(PeerOp.init), PeerProtocol.answersAnyVersion(op) {
             guard let by = head.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {

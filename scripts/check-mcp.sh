@@ -8,7 +8,7 @@ bin=${1:-.build/release/Varnick}
 [ -x "$bin" ] || { echo "error: check-mcp: no binary at $bin (make build first)" >&2; exit 1; }
 
 exec python3 -I - "$bin" <<'PY'
-import json, subprocess, sys
+import json, os, shutil, subprocess, sys, tempfile
 
 binary = sys.argv[1]
 pane = "00000000-0000-0000-0000-000000000000"
@@ -22,10 +22,12 @@ def fail(why):
     print("error: check-mcp: " + why, file=sys.stderr)
 
 
-def talk(arguments, messages):
-    """The replies to the messages, by id, from a server started with the arguments."""
+def talk(arguments, messages, home=None, pane=pane):
+    """The replies to the messages, by id, from a server started with the arguments. `home` is a scratch home folder: the server's support folder
+    (and so a pane's folder) is under it, so nothing is read or written in the real one."""
     lines = "".join(json.dumps(m) + "\n" for m in messages)
-    out = subprocess.run([binary, "--mcp", "--pane", pane] + arguments, input=lines, capture_output=True, text=True, timeout=30)
+    env = dict(os.environ, HOME=home, CFFIXED_USER_HOME=home) if home else None
+    out = subprocess.run([binary, "--mcp", "--pane", pane] + arguments, input=lines, capture_output=True, text=True, timeout=30, env=env)
     if out.returncode != 0:
         fail("%s exited with %d" % (arguments, out.returncode))
     replies = {}
@@ -196,8 +198,98 @@ if all(name in described for name in automation_tools):
     if described["automations_list"]["inputSchema"].get("required"):
         fail("automations_list requires %s" % described["automations_list"]["inputSchema"].get("required"))
 
+# The task tools (option 01 of work-cant-be-saved-or-chained, slice 2a): their own set, named by the app only while Tasks is on and never for a Run's
+# session. Named alone it lists the four; with the others it comes after the automation tools and before notify. NEVER call one of these tools here:
+# with Varnick running, the call reaches it and starts a real Run, which draws on the user's accounts. Only a call to a server that does not list them
+# is made (below), and that is refused before anything is sent.
+task_tools = ["tasks_list", "task_run", "task_run_status", "task_check"]
+only_tasks, every_set = listed(["--tasks"]), listed(["--screen", "--panel", "--automations", "--tasks", "--notify"])
+if only_tasks != task_tools:
+    fail("--tasks lists %s, not the four task tools" % only_tasks)
+if every_set != screen + only_panel + automation_tools + task_tools + ["notify"]:
+    fail("every set lists %s, not the screen tools, Panel access's, the automation tools, the task tools and notify" % every_set)
+if listed(["--tasks", "--notify"]) != task_tools + ["notify"]:
+    fail("--tasks --notify lists %s" % listed(["--tasks", "--notify"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--screen", "--panel", "--automations", "--notify"]):
+    if set(listed(arguments)) & set(task_tools):
+        fail("%s lists a task tool" % arguments)
+task_described = {t["name"]: t for t in listed(["--tasks"], full=True)}
+if all(name in task_described for name in task_tools):
+    run_schema = task_described["task_run"]["inputSchema"]
+    if run_schema.get("required") != ["task"] or run_schema.get("properties", {}).get("input", {}).get("type") != "object" \
+            or run_schema.get("properties", {}).get("task", {}).get("type") != "string":
+        fail("task_run is %s: a required string task and an object input" % run_schema)
+    status_schema = task_described["task_run_status"]["inputSchema"]
+    if status_schema.get("required") != ["run"] or status_schema.get("properties", {}).get("run", {}).get("type") != "string":
+        fail("task_run_status is %s: a required string run" % status_schema)
+    check_schema = task_described["task_check"]["inputSchema"]
+    if check_schema.get("required") != ["path"] or check_schema.get("properties", {}).get("path", {}).get("type") != "string":
+        fail("task_check is %s: a required string path" % check_schema)
+    if task_described["tasks_list"]["inputSchema"].get("required"):
+        fail("tasks_list requires %s" % task_described["tasks_list"]["inputSchema"].get("required"))
+    if "task_run_status" not in task_described["task_run"]["description"]:
+        fail("task_run's description doesn't send the session to task_run_status for the result")
+else:
+    fail("--tasks lists %s" % sorted(task_described))
+
+# task_result: a Claude step's answer, listed only while the pane's folder holds the step's schema file, and answered by the server alone. It runs here
+# against a scratch home folder, so the schema and the result files are written only there.
+scratch = tempfile.mkdtemp(prefix="check-mcp-home-")
+try:
+    step_pane = "00000000-0000-0000-0000-0000000000aa"
+    folder = os.path.join(scratch, "Library", "Application Support", "Varnick", "panes", step_pane)
+    os.makedirs(folder)
+
+    def result_server(messages):
+        return talk(["--task-result"], messages, home=scratch, pane=step_pane)
+
+    def tool_list():
+        replies = result_server([{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}])
+        return replies.get(2, {}).get("result", {}).get("tools", [])
+
+    if tool_list():
+        fail("--task-result lists %s for a pane whose folder has no schema" % [t["name"] for t in tool_list()])
+    with open(os.path.join(folder, ".varnick-task-schema.json"), "w") as schema_file:
+        json.dump({"type": "object", "required": ["amount", "currency"], "properties": {
+            "amount": {"type": "number"}, "currency": {"type": "string", "enum": ["USD", "EUR"]}, "note": {"type": "string"}}}, schema_file)
+    listed_result = tool_list()
+    if [t["name"] for t in listed_result] != ["task_result"]:
+        fail("--task-result lists %s for a pane whose folder has a schema, not task_result alone" % [t["name"] for t in listed_result])
+    elif listed_result[0]["inputSchema"].get("required") != ["amount", "currency"] \
+            or set(listed_result[0]["inputSchema"].get("properties", {})) != {"amount", "currency", "note"}:
+        fail("task_result's input schema is %s, not the step's result schema" % listed_result[0]["inputSchema"])
+    if "task_result" in listed(["--notify"]) or "task_result" in listed(["--screen"]):
+        fail("a server started without --task-result lists task_result")
+
+    def task_result(call_id, arguments):
+        replies = result_server([{"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {"name": "task_result", "arguments": arguments}}])
+        return replies.get(call_id, {}).get("result", {})
+
+    refused_call = task_result(5, {"amount": "five", "extra": 1})
+    text = refused_call.get("content", [{}])[0].get("text", "")
+    if refused_call.get("isError") is not True or "amount must be" not in text or "currency is missing" not in text or "extra isn't a field" not in text:
+        fail("a task_result call that doesn't fit was not refused naming each wrong field: %s" % refused_call)
+    if os.path.exists(os.path.join(folder, ".varnick-task-result.json")):
+        fail("a refused task_result call left a result behind")
+    good = task_result(6, {"amount": 5, "currency": "USD"})
+    if good.get("isError") is not False:
+        fail("a task_result call that fits was refused: %s" % good)
+    try:
+        with open(os.path.join(folder, ".varnick-task-result.json")) as result_file:
+            kept = json.load(result_file)
+    except (OSError, ValueError):
+        kept = None
+    if kept != {"amount": 5, "currency": "USD"}:
+        fail("an accepted task_result call kept %s, not its value" % kept)
+    if task_result(7, {"amount": 6, "currency": "EUR"}).get("isError") is not True:
+        fail("a second task_result call was not refused")
+finally:
+    shutil.rmtree(scratch, ignore_errors=True)
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
-for arguments, name in (([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
+for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
+                        (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
+                        ([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
                         ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"),
                         (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])

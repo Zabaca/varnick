@@ -82,6 +82,8 @@ struct LauncherView: View {
                 OutlineView(outline: model.outline) { model.closeOutline() }
             } else if model.showingResources {
                 ResourcesView(resources: model.resources) { model.closeResources() }
+            } else if model.showingTasks {
+                TasksView(panel: model.tasksPanel, catalog: model.taskCatalog) { model.closeTasks() }
             } else if let tab = model.activeTab {
                 ClaudePane(model: model, tab: tab)
             } else {
