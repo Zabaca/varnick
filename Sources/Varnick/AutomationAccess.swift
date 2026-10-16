@@ -93,8 +93,7 @@ final class AutomationAccess {
         guard let model = PeerManager.shared.model else { throw AutomationRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
         guard caller.record.automation == nil else { throw AutomationRefusal.fromRun }
-        let store = model.automations
-        if let problem = store.problem { throw AutomationRefusal.fileProblem(problem) }
+        if let problem = model.automationFilesProblem { throw AutomationRefusal.fileProblem(problem) }
         switch request.tool {
         case AutomationMCP.list: return list(model)
         case AutomationMCP.create: return try create(request.args, model, caller: caller)
@@ -184,16 +183,18 @@ final class AutomationAccess {
         let rows: [[String: Any]] = model.automations.automations.map { automation in
             let cadence = (try? encoder.encode(automation.cadence)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull()
             var last: Any = NSNull()
-            if let run = automation.runs.first {
+            let runs = model.taskRuns.runs(of: automation.id)
+            if let run = runs.first {
                 let now = model.displayed(run)
-                last = ["state": now.state.text, "detail": text(now.detail), "slot": date(run.slot), "count": run.count ?? 1] as [String: Any]
+                last = ["state": now.state.text, "detail": text(now.detail), "slot": date(run.trigger.slot), "count": run.count ?? 1] as [String: Any]
             }
-            let going = automation.runs.contains { run in model.claudePane(run.id) != nil && model.displayed(run).state.isGoing }
+            let going = runs.contains { run in run.pane.flatMap { model.claudePane($0) } != nil && model.displayed(run).state.isGoing }
             var mark: Any = NSNull()
             if let found = automation.mark { mark = ["what": found.what, "by": found.by, "at": date(found.at)] as [String: Any] }
             return [
                 "id": automation.id.uuidString,
                 "name": automation.name,
+                "task": automation.task,
                 "prompt": automation.prompt,
                 "cadence": cadence,
                 "cadence_label": automation.cadence.label,

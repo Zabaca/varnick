@@ -1504,7 +1504,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if let file = record.file { return (file as NSString).lastPathComponent }
         if let task {
             // The tab title carries the task's state: running, needs you, done, stopped, gave up.
-            return task.titleSuffix.isEmpty ? "Task" : "Task: \(task.titleSuffix)"
+            return task.titleSuffix.isEmpty ? "Website" : "Website: \(task.titleSuffix)"
         }
         if isWeb {
             if !title.isEmpty { return title }

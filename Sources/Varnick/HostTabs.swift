@@ -273,7 +273,7 @@ extension LauncherModel {
         case .app:
             return target.showRefusal("An app of this Mac runs here: open \(hostName)'s own from the split picker's tiles for its tab.")
         case .task:
-            return target.showRefusal("A task runs in a pane of this Mac, not in a tab of \(hostName).")
+            return target.showRefusal("A Website pane works on this Mac, not in a tab of \(hostName).")
         }
         let start = ask
         askHost(toStart: start, in: tab, beside: target, axis: axis) { [self] reply in

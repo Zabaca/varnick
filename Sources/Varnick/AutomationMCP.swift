@@ -49,14 +49,14 @@ enum AutomationMCP {
         return ["name": name, "description": summary, "inputSchema": schema]
     }
 
-    private static let unattended = "An automation is a prompt that this Mac's Varnick starts as a Claude session, out of sight, on a cadence in a folder, "
-        + "while Varnick runs. Nobody is there to answer, each run draws on the user's Claude subscription, and nothing asks the user before you make or "
-        + "change one: tell the user what you did."
+    private static let unattended = "An automation is a cadence and a Task, and for now its Task is always the built-in Claude prompt: this Mac's Varnick "
+        + "starts the prompt as a Claude session, out of sight, on the cadence in a folder, while Varnick runs. Nobody is there to answer, each run draws "
+        + "on the user's Claude subscription, and nothing asks the user before you make or change one: tell the user what you did."
 
     private static let listTool = tool(list,
-        summary: "Lists this Mac's automations, each with its id and every field automation_create takes, plus its next run, whether a run is going, "
-            + "its last outcome, and its mark (what a session last did to it, until the user has seen it). It reads and changes nothing. The prompts "
-            + "go to Anthropic with this session. \(unattended)",
+        summary: "Lists this Mac's automations, each with its id, the task it runs (\"Claude prompt\") and every field automation_create takes, plus its "
+            + "next run, whether a run is going, its last outcome, and its mark (what a session last did to it, until the user has seen it). It reads and "
+            + "changes nothing. The prompts go to Anthropic with this session. \(unattended)",
         properties: [:])
 
     /// The fields create and edit share.
@@ -88,14 +88,14 @@ enum AutomationMCP {
     }
 
     private static let createTool = tool(create,
-        summary: "Makes an automation on this Mac and answers its id and when it first runs. \(unattended) It is on unless `enabled` is false, and its "
+        summary: "Makes an automation of the Claude prompt Task on this Mac (its prompt, folder and agent are that Task's input) and answers its id and when it first runs. \(unattended) It is on unless `enabled` is false, and its "
             + "slots start from now. Every field is checked before anything is saved; a refusal names each wrong field. Deleting and Run now stay in "
             + "Varnick's Settings › Automations, the user's.",
         properties: fields, required: ["name", "prompt", "cadence"])
 
     private static let editTool = tool(edit,
-        summary: "Changes the fields given of one automation (by the id automations_list gives) and leaves the rest, its runs and its last slot as "
-            + "they are. A changed cadence or time zone (an edit stamps this Mac's), or turning it on, starts its slots from now. It is refused for an automation the user set to Skip "
+        summary: "Changes the fields given of one automation (by the id automations_list gives), which runs the Claude prompt Task, and leaves the rest, "
+            + "its runs and its last slot as they are. A changed cadence or time zone (an edit stamps this Mac's), or turning it on, starts its slots from now. It is refused for an automation the user set to Skip "
             + "permissions (switch still works on it), and an edit made while the user has its editor open is overwritten by their Save. "
             + "Tell the user what you changed.",
         properties: ["id": ["type": "string", "description": "The automation's id from automations_list."]].merging(fields) { first, _ in first },

@@ -133,7 +133,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapRight: "Swap with pane right"
         case .webAddress: "Edit address (web pane)"
         case .webReload: "Reload (web pane)"
-        case .stopTask: "Stop the task (Task pane)"
+        case .stopTask: "Stop the work (Website pane)"
         case .fontBigger: "Bigger text"
         case .fontSmaller: "Smaller text"
         case .fontReset: "Default text size"
@@ -235,7 +235,7 @@ final class Settings: ObservableObject {
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
     static let outlineOnKey = "outlineOn"
-    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Task tile and the Task pane). Off by default, for every install;
+    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Website tile and the Website pane). Off by default, for every install;
     /// off means no command, no tile, and a running task stops at its next step.
     @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
     static let tasksOnKey = "tasksOn"
@@ -762,7 +762,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.notifyMessages).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             case .automations:
-                            AutomationsSettingsView(store: launcher.automations, model: launcher)
+                            AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)
                             case .search:
@@ -1046,7 +1046,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Tasks",
-                                       detail: "!task or the split picker's Task tile opens a Task pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops a running task. Experimental.") {
+                                       detail: "!task or the split picker's Website tile opens a Website pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops the work of a running Website pane. Experimental.") {
                                 Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Automations",

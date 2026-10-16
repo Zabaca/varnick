@@ -1,0 +1,26 @@
+# A Task is a checked state graph run by Varnick, and an Automation is its trigger
+
+Amends [ADR 0039](0039-varnick-carries-out-a-task-in-a-browser-of-its-own-with-jev-choosing-each-step-and-claude-steering.md) (its loop becomes the Website capability) and [ADR 0040](0040-automations-are-fired-by-the-host-that-keeps-them-and-a-run-is-a-pane-kept-out-of-sight-until-opened.md) (an Automation is now a trigger, and a Run is any Task's execution). Builds on [ADR 0030](0030-the-outline-is-one-json-file-varnick-owns-of-bullets-and-placements-never-written-over-when-unreadable.md) (a file that can't be read is never written over). The problem and the option are in `docs/problems/work-cant-be-saved-or-chained/`, option 01, accepted 2026-10-15 with the user's decisions of that day. The mechanics and what breaks them are in `docs/agents/where-it-breaks.md`, Automations and Tasks.
+
+Work that Varnick does is saved in two shapes that cannot meet: an automation is a fixed prompt on a cadence, and a task is a sentence typed into a browser pane. Neither can be saved with its values, started by another, or leave a result that code can read. The decision is one record that both become, and an order to build it in.
+
+- **A Task is a named piece of work with an input, steps and a result.** Each **Step** uses one **Capability**: Claude, Website, Judge, Notify or another Task. A Task is a JSON state graph that Varnick checks as a compiler would before it can run, with its input and result typed as a small subset of JSON Schema, run by a pure transition function in the shared Swift package (so the headless relay can run it later) and hosted by the running Varnick as it hosts automations. A Judge step's labels are its branches: Jev picks at 0.7 or more and Claude picks below that or without TypeSafe, as the website loop already does. Grants live in Varnick, never in a Task file. The whole design is the option's; this ADR records the decisions that cross files.
+- **An Automation is a trigger:** a cadence, a Task's name and the input values, with the permissions override, zone, working limit, switch, last slot and mark it had. Its prompt, folder and agent are the input of the built-in **Claude prompt** Task.
+- **The Website pane's loop is the Website capability.** ADR 0039 is unchanged in what it does: its gates, secrets and harness are the same. The Task pane is renamed the Website pane in everything the user reads (CONTEXT.md, Website pane, says what keeps its old name in the code).
+- **A Run is any Task's execution,** in a runs file of its own, never `sessions.json` and never `automations.json`. It holds the Task's name, a copy of the input, the trigger, its state, its steps and when it started and ended. Everything that looks up a pane goes through the step, so Runs of several panes change nothing there.
+- **The order of building is the decision.** The record shape first, on this Mac, with no protocol bump (slice 1, built); then the headless host's half of ADR 0040 on that shape; then Task files and the engine. Built the other way round, protocol 29 and the headless host's file would hold today's shape, a fixed prompt and a run with no value, and changing it would cost a protocol bump and a migration on every host.
+- **Two files, one order.** The automations file goes to version 2 (an older build reads it as newer and writes nothing), a version 1 file is read as Claude prompt triggers with its runs not carried over, and a check writes the Runs before the last slot. The rules and what they protect are in `where-it-breaks.md`, Automations.
+- **The automation tools gain one field:** `automations_list` says which Task each automation runs. Their arguments don't change; `task` and `input` arrive in slice 2, when there is another Task to name.
+
+## Considered Options
+
+- **Keeping the automation as it was and adding Tasks beside it:** not chosen. Two things that start work, store a prompt and keep a history would stay two, and the headless host would be built on the one that is going.
+- **A Task as TypeScript run by a Bun engine (option 02) and as one typed prompt a single Claude run carries out (option 03):** not chosen by this ADR's option; they are on record in the problem.
+- **Putting the Run in the automation's record:** not chosen. A Run belongs to any Task, not to a trigger, and a file of its own is what a Run started by hand, by a session or by a parent needs.
+
+## Consequences
+
+- **Two files can disagree after a crash,** and the write order is what makes every disagreement safe. A runs file lost on its own leaves automations that run on from their last slot and hidden tabs released at the next launch.
+- **A Run's panes are found through steps.** A lookup by the Run's id would work for the Claude prompt Task, where it is the pane's, and break for the first Task with two panes.
+- **The words change for users in one place:** the Website pane. Older records (problems, ADR bodies, commit messages) keep the old name, as ADR 0024 did for Launchy.
+- **Not built here:** Task files, the check, the schema subset, the engine, Judge, Notify and sub-tasks, `task_result`, the task tools, `!task`'s list and form, the Run's own notice, Runs started by hand, by a session or by a parent, the headless host and the phone.

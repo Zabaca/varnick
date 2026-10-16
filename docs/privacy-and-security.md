@@ -170,7 +170,7 @@ session was read. A request that names one of your session folders, or is only a
 
 ### Anthropic, through Tasks
 
-A task (Settings › Experimental › **Tasks**, off by default) is written in a Task pane and carried out in that pane's own
+A task (Settings › Experimental › **Tasks**, off by default) is written in a Website pane and carried out in that pane's own
 browser, which has none of your cookies or logins and keeps nothing when it closes. Your own `claude` writes the values it
 types and steers, in two conversations kept open for the length of the task, on your plan.
 
@@ -196,7 +196,8 @@ saved. It is a session like one you type: its prompt, what Claude reads and the 
 kept in Claude Code's own folders on this Mac. Nothing else leaves because of it. A run never gets Screen access's or Panel access's
 tools, so what those send is not sent. Each run is at least one model turn and counts toward your plan's usage limits; nothing
 caps how many a day's cadence adds up to beyond its 15-minute floor and one run of an automation at a time. The automations
-(names, prompts, folders) are in `automations.json` in Varnick's support folder, owner-only, and are not sent to paired Macs or the
+(names, prompts, folders) are in `automations.json` in Varnick's support folder, and what became of each run (its state, the prompt it
+started with and its conversation's id) in `runs.json` beside it; both are owner-only and are not sent to paired Macs or the
 phone; a run's tab is, as an ordinary tab with the automation's name, until a later version marks it.
 
 With Automations on, a Claude session you start can also list, make, edit and switch automations (below). A session that lists
@@ -430,7 +431,7 @@ take focus or clicks, and goes by itself.
 
 ### Tasks act as you on a site, and wait for you
 
-A task (Settings › Experimental › Tasks, off by default) clicks links and buttons and types into forms in a Task pane's own browser,
+A task (Settings › Experimental › Tasks, off by default) clicks links and buttons and types into forms in a Website pane's own browser,
 as you would, to carry out what you wrote. It is the other way round from Screen access: it acts inside Varnick's web view only,
 never on your screen, needs no permission, and brings nothing to the front.
 

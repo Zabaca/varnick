@@ -206,53 +206,189 @@ try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories
 defer { try? FileManager.default.removeItem(at: folder) }
 let file = AutomationFile.url(in: folder)
 expect("no file reads as missing, which is not a problem", AutomationFile.read(at: file) == .missing && AutomationFile.read(at: file).problem == nil)
-var sample = Automation(name: "Morning summary", prompt: "Say hello", cadence: .weekdays(hour: 9, minute: 0), timeZone: "America/Los_Angeles",
-                        permissions: .allowedOnly, allowedTools: ["Bash(git status)", "Edit"], createdAt: at("2026-10-15 09:00"))
+var sample = Automation(name: "Morning summary", prompt: "Say hello", folder: "/work/x", agent: "reviewer", cadence: .weekdays(hour: 9, minute: 0),
+                        timeZone: "America/Los_Angeles", permissions: .allowedOnly, allowedTools: ["Bash(git status)", "Edit"], createdAt: at("2026-10-15 09:00"))
 sample.lastSlot = at("2026-10-15 16:00")
-for index in 0..<(Automation.runLimit + 5) {
-    let slot = at("2026-10-15 16:00").addingTimeInterval(Double(index) * 60)
-    sample.record(AutomationRun(slot: slot, endedAt: slot, state: .done))
+expect("an automation names the Claude prompt Task, with its prompt, folder and agent as the input",
+       sample.task == "Claude prompt" && sample.input == ["prompt": .text("Say hello"), "folder": .text("/work/x"), "agent": .text("reviewer")], "\(sample.input)")
+sample.folder = nil
+sample.agent = nil
+expect("a folder or an agent set to nil leaves the input", sample.input == ["prompt": .text("Say hello")] && sample.folder == nil && sample.agent == nil)
+sample.folder = "/work/x"
+
+/// A Claude prompt Run of an automation, as a start records it: its pane's id is its own.
+func claudeRun(_ automation: UUID, slot: Date, state: RunState, ended: Bool = false, manual: Bool = false, detail: String? = nil) -> TaskRun {
+    let pane = UUID()
+    return TaskRun(id: pane, trigger: TaskRunTrigger(automation: automation, slot: slot, manual: manual), state: state, detail: detail, startedAt: slot,
+                   endedAt: ended ? slot : nil, steps: [TaskRunStep(name: "claude", capability: "claude", pane: pane)])
 }
-expect("a run list keeps twenty, newest first", sample.runs.count == 20 && sample.runs.first!.slot > sample.runs.last!.slot)
+/// A slot that did not run: no steps, a fresh id.
+func notRun(_ automation: UUID, slot: Date, _ state: RunState, _ detail: String) -> TaskRun {
+    TaskRun(trigger: TaskRunTrigger(automation: automation, slot: slot), state: state, detail: detail)
+}
+
+var list = TaskRunList()
+for index in 0..<(TaskRunList.limit + 5) {
+    list.record(claudeRun(sample.id, slot: at("2026-10-15 16:00").addingTimeInterval(Double(index) * 60), state: .done, ended: true))
+}
+let shown = list.runs(of: sample.id)
+expect("a run list keeps twenty, newest first", shown.count == 20 && shown.first!.trigger.slot > shown.last!.trigger.slot, "\(shown.count)")
+let other = Automation(name: "Other", prompt: "x", cadence: .minutes(15), createdAt: at("2026-10-15 09:00"))
+list.record(claudeRun(other.id, slot: at("2026-10-15 18:00"), state: .done, ended: true))
+expect("each automation keeps its own twenty", list.runs(of: sample.id).count == 20 && list.runs(of: other.id).count == 1)
+
 // A run that may still have a pane is never the one dropped, and slots that did not run fold.
-var going = Automation(name: "Going", prompt: "x", cadence: .minutes(15), createdAt: at("2026-10-15 09:00"))
-let oldest = AutomationRun(slot: at("2026-10-15 09:00"), startedAt: at("2026-10-15 09:00"), state: .running)
-going.record(oldest)
+var goingList = TaskRunList()
+let oldest = claudeRun(other.id, slot: at("2026-10-15 09:00"), state: .running)
+goingList.record(oldest)
 for index in 1...30 {
-    let slot = at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900)
-    going.record(AutomationRun(slot: slot, startedAt: slot, endedAt: slot, state: .done))
+    goingList.record(claudeRun(other.id, slot: at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900), state: .done, ended: true))
 }
-expect("a run still going outlives twenty newer ones", going.runs.count == 20 && going.runs.contains { $0.id == oldest.id }, "\(going.runs.count) runs")
-var flood = Automation(name: "Flood", prompt: "x", cadence: .minutes(15), createdAt: at("2026-10-15 09:00"))
+expect("a run still going outlives twenty newer ones", goingList.runs(of: other.id).count == 20 && goingList.runs.contains { $0.id == oldest.id },
+       "\(goingList.runs.count) runs")
+var flood = TaskRunList()
 for index in 0..<40 {
-    flood.record(AutomationRun(slot: at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900), state: .skipped, detail: "The last run was still going"))
+    flood.record(notRun(other.id, slot: at("2026-10-15 09:00").addingTimeInterval(Double(index) * 900), .skipped, "The last run was still going"))
 }
 expect("40 skipped slots are one record that counts them", flood.runs.count == 1 && flood.runs[0].count == 40
-       && flood.runs[0].slot == at("2026-10-15 09:00").addingTimeInterval(39 * 900), "\(flood.runs.count) records")
-flood.record(AutomationRun(slot: at("2026-10-16 09:00"), state: .missed, detail: "Over 12 hours old at the next check"))
-flood.record(AutomationRun(slot: at("2026-10-16 09:15"), state: .skipped, detail: "The last run was still going"))
+       && flood.runs[0].trigger.slot == at("2026-10-15 09:00").addingTimeInterval(39 * 900), "\(flood.runs.count) records")
+flood.record(notRun(other.id, slot: at("2026-10-16 09:00"), .missed, "Over 12 hours old at the next check"))
+flood.record(notRun(other.id, slot: at("2026-10-16 09:15"), .skipped, "The last run was still going"))
 expect("a different state or reason is another record", flood.runs.count == 3, "\(flood.runs.count) records")
-flood.record(AutomationRun(slot: at("2026-10-16 09:30"), startedAt: at("2026-10-16 09:30"), state: .running))
-flood.record(AutomationRun(slot: at("2026-10-16 09:45"), state: .skipped, detail: "The last run was still going"))
+flood.record(claudeRun(other.id, slot: at("2026-10-16 09:30"), state: .running))
+flood.record(notRun(other.id, slot: at("2026-10-16 09:45"), .skipped, "The last run was still going"))
 expect("a run between two skipped slots splits them", flood.runs.count == 5, "\(flood.runs.count) records")
-sample.runs[0].state = .message
-sample.runs[0].detail = "Found 3"
+var foldedTwice = TaskRunList()
+foldedTwice.record(notRun(sample.id, slot: at("2026-10-16 09:00"), .skipped, "The last run was still going"))
+foldedTwice.record(notRun(other.id, slot: at("2026-10-16 09:00"), .skipped, "The last run was still going"))
+foldedTwice.record(notRun(sample.id, slot: at("2026-10-16 09:15"), .skipped, "The last run was still going"))
+expect("slots of one automation fold across another's records", foldedTwice.runs.count == 2 && foldedTwice.runs(of: sample.id).first?.count == 2)
+
+// A run's pane and conversation are found through its step.
+var stepped = claudeRun(sample.id, slot: at("2026-10-15 16:00"), state: .running)
+expect("a Claude prompt Run's pane is its own id and its step's", stepped.pane == stepped.id && stepped.steps.count == 1)
+expect("its conversation is the pane's id until the pane moves", stepped.conversationID == stepped.id.uuidString.lowercased())
+stepped.conversation = "moved-conversation"
+stepped.worked = 90
+expect("a moved conversation and the time worked live on the step", stepped.steps[0].conversation == "moved-conversation" && stepped.conversationID == "moved-conversation"
+       && stepped.steps[0].worked == 90 && stepped.worked == 90)
+var twoPanes = stepped
+twoPanes.steps.append(TaskRunStep(name: "again", capability: "claude", pane: UUID(), conversation: "second-conversation"))
+expect("a conversation of any step finds its step", twoPanes.step(conversation: "second-conversation")?.name == "again"
+       && twoPanes.step(conversation: "moved-conversation")?.name == "claude" && twoPanes.step(conversation: "none") == nil)
+let skippedRun = notRun(sample.id, slot: at("2026-10-15 16:00"), .skipped, "x")
+expect("a slot that did not run has no step, pane or conversation", skippedRun.steps.isEmpty && skippedRun.pane == nil && skippedRun.conversationID == nil)
+
+// The anchor: a Run newer than the last slot (a crash between the two writes) is judged from, and a Run now is not a slot.
+var anchored = TaskRunList()
+var behind = sample
+behind.lastSlot = at("2026-10-15 09:00")
+anchored.record(claudeRun(behind.id, slot: at("2026-10-15 09:15"), state: .running))
+expect("the anchor is the newer of the last slot and the newest Run's slot", anchored.anchor(for: behind) == at("2026-10-15 09:15"), show(anchored.anchor(for: behind)))
+expect("so a slot a Run was written for is not due again", AutomationSlot.check(.minutes(15), zone: utc, after: anchored.anchor(for: behind), now: at("2026-10-15 09:15:30")).due == nil
+       && AutomationSlot.check(.minutes(15), zone: utc, after: behind.anchor, now: at("2026-10-15 09:15:30")).due == at("2026-10-15 09:15"))
+expect("nor recorded missed again", AutomationSlot.check(.minutes(15), zone: utc, after: anchored.anchor(for: behind), now: at("2026-10-15 09:40")).missed.isEmpty
+       && AutomationSlot.check(.minutes(15), zone: utc, after: behind.anchor, now: at("2026-10-15 09:40")).missed == [at("2026-10-15 09:15")])
+anchored.record(claudeRun(behind.id, slot: at("2026-10-15 09:20"), state: .running, manual: true))
+expect("a Run now is not a slot of the clock", anchored.anchor(for: behind) == at("2026-10-15 09:15"), show(anchored.anchor(for: behind)))
+expect("an older Run leaves the last slot as it is", TaskRunList().anchor(for: sample) == sample.anchor && anchored.anchor(for: sample) == sample.anchor)
+
+// The automations file is at version 2.
 do {
     try AutomationFile.write([sample], to: file)
     let back = AutomationFile.read(at: file)
     expect("an automation survives its file", back == .loaded([sample]), "\(back)")
     let mode = (try? FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int) ?? 0
     expect("the file is owner-only", mode == 0o600, String(mode, radix: 8))
+    let version = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any])?["version"] as? Int
+    expect("it is written as version 2", version == 2, "\(version ?? 0)")
+    let written = String(decoding: (try? Data(contentsOf: file)) ?? Data(), as: UTF8.self)
+    expect("an automation in it has no runs and names its Task", !written.contains("\"runs\"") && written.contains("\"task\" : \"Claude prompt\""))
 } catch {
     expect("the file can be written", false, "\(error)")
 }
-try? Data("{\"version\": 99, \"automations\": []}".utf8).write(to: file)
-expect("a newer version is never written over", AutomationFile.read(at: file) == .newer(99) && AutomationFile.read(at: file).problem != nil)
+try? Data("{\"version\": 3, \"automations\": []}".utf8).write(to: file)
+expect("a version 3 file is read as newer and never written over", AutomationFile.read(at: file) == .newer(3) && AutomationFile.read(at: file).problem != nil)
 try? Data("not json".utf8).write(to: file)
 if case .unreadable = AutomationFile.read(at: file) {} else { expect("garbage is unreadable", false) }
-try? Data("{\"version\": 1, \"automations\": [{\"name\": 3}]}".utf8).write(to: file)
+try? Data("{\"version\": 2, \"automations\": [{\"name\": 3}]}".utf8).write(to: file)
 if case .unreadable = AutomationFile.read(at: file) {} else { expect("a record that doesn't decode is unreadable", false) }
 expect("an unreadable file fires nothing", AutomationFile.read(at: file).automations.isEmpty)
+
+// Version 1: a prompt, a folder, an agent and the runs. Read as Claude prompt triggers, the runs not carried over, and read without a write.
+let versionOne = """
+{"version": 1, "automations": [{"id": "5E1A6C0E-4A0B-4F43-9A0B-6B8A0C2D9E01", "name": "Old", "prompt": "Say hello", "folder": "/work/x", "agent": "reviewer",
+ "cadence": {"kind": "daily", "hour": 9, "minute": 0}, "timeZone": "UTC", "permissions": "ask", "allowedTools": ["Edit"], "workingLimitMinutes": 30,
+ "enabled": true, "lastSlot": "2026-10-14T09:00:00Z", "createdAt": "2026-10-01T09:00:00Z",
+ "runs": [{"id": "6E1A6C0E-4A0B-4F43-9A0B-6B8A0C2D9E02", "slot": "2026-10-14T09:00:00Z", "late": false, "manual": false, "state": "done", "opened": false}],
+ "mark": {"what": "Made", "by": "Planning", "at": "2026-10-01T09:00:00Z"}}]}
+"""
+try? Data(versionOne.utf8).write(to: file)
+let readOne = AutomationFile.read(at: file).automations
+expect("a version 1 file reads as Claude prompt triggers", readOne.count == 1 && readOne[0].task == "Claude prompt"
+       && readOne[0].input == ["prompt": .text("Say hello"), "folder": .text("/work/x"), "agent": .text("reviewer")], "\(readOne)")
+expect("with the rest of the record as it was", readOne.first.map { $0.name == "Old" && $0.permissions == .ask && $0.allowedTools == ["Edit"] && $0.workingLimitMinutes == 30
+       && $0.lastSlot == at("2026-10-14 09:00") && $0.mark?.what == "Made" && $0.cadence == .daily(hour: 9, minute: 0) } == true, "\(readOne)")
+expect("a version 1 file is runnable as it reads", readOne.first?.isRunnable == true)
+let versionKept = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any])?["version"] as? Int
+expect("reading it writes nothing: the file is still version 1", versionKept == 1)
+let oneAndDefault = AutomationFile.giveFolder("/old/default", toThoseWithout: file)
+expect("a version 1 file with every folder given is left alone", oneAndDefault == .nothingToMove && ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any])?["version"] as? Int == 1)
+try? Data(versionOne.replacingOccurrences(of: "\"folder\": \"/work/x\", ", with: "").utf8).write(to: file)
+expect("the Default folder move reads version 1", AutomationFile.giveFolder("/old/default", toThoseWithout: file) == .moved(1))
+let movedOne = AutomationFile.read(at: file).automations
+expect("and writes version 2 with the folder in the input", movedOne.first?.folder == "/old/default"
+       && ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any])?["version"] as? Int == 2)
+
+// The input of the two built-in Tasks is checked in code.
+let claudeInput: [String: TaskValue] = ["prompt": .text("Say hello")]
+expect("Claude prompt takes a prompt alone", BuiltInTask.claudePrompt.problems(in: claudeInput).isEmpty)
+expect("it takes a folder and an agent", BuiltInTask.claudePrompt.problems(in: claudeInput.merging(["folder": .text("/x"), "agent": .text("a")]) { $1 }).isEmpty)
+expect("it needs a prompt", BuiltInTask.claudePrompt.problems(in: [:]) == ["prompt is missing"] && BuiltInTask.claudePrompt.problems(in: ["prompt": .text("  \n")]) == ["prompt is empty"])
+expect("a field must be text", BuiltInTask.claudePrompt.problems(in: ["prompt": .number(3)]) == ["prompt must be text"])
+expect("a field it doesn't have is a problem", BuiltInTask.claudePrompt.problems(in: claudeInput.merging(["site": .text("https://a.example")]) { $1 }) == ["site isn't a field of Claude prompt"])
+expect("On this site needs a site and a goal", BuiltInTask.onThisSite.problems(in: [:]) == ["site is missing", "goal is missing"])
+expect("a site is an http or https address", BuiltInTask.onThisSite.problems(in: ["site": .text("https://shop.example/x"), "goal": .text("Find the price")]).isEmpty
+       && BuiltInTask.onThisSite.problems(in: ["site": .text("ftp://shop.example"), "goal": .text("x")]) == ["site must be an http or https address"]
+       && BuiltInTask.onThisSite.problems(in: ["site": .text("not a site"), "goal": .text("x")]) == ["site must be an http or https address"])
+expect("both are listed, Claude prompt first", BuiltInTask.all.map(\.name) == ["Claude prompt", "On this site"])
+var emptyPrompt = sample
+emptyPrompt.prompt = "  "
+expect("an automation with a blank prompt, or a Task that isn't the Claude prompt, is not runnable", !emptyPrompt.isRunnable
+       && { var site = sample; site.task = "On this site"; return !site.isRunnable }())
+
+// A value round-trips as the JSON it is.
+let valueCase: TaskValue = .object(["a": .list([.number(1.5), .bool(true), .null, .text("x")]), "b": .bool(false)])
+let valueBack = (try? JSONEncoder().encode(valueCase)).flatMap { try? JSONDecoder().decode(TaskValue.self, from: $0) }
+expect("a value survives JSON", valueBack == valueCase, "\(String(describing: valueBack))")
+
+// The runs file is a file of its own at version 1, with the automations file's rules.
+let runsFile = TaskRunFile.url(in: folder)
+expect("the runs file is not the automations file", runsFile.lastPathComponent == "runs.json" && runsFile != AutomationFile.url(in: folder))
+expect("no runs file reads as missing, which is not a problem", TaskRunFile.read(at: runsFile) == .missing && TaskRunFile.read(at: runsFile).problem == nil)
+var stored = list.runs(of: sample.id)
+stored[0].state = .message
+stored[0].detail = "Found 3"
+stored[0].input = ["prompt": .text("Say hello")]
+do {
+    try TaskRunFile.write(stored, to: runsFile)
+    let back = TaskRunFile.read(at: runsFile)
+    expect("Runs survive their file", back == .loaded(stored), "\(back)")
+    let mode = (try? FileManager.default.attributesOfItem(atPath: runsFile.path)[.posixPermissions] as? Int) ?? 0
+    expect("the runs file is owner-only", mode == 0o600, String(mode, radix: 8))
+    let version = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: runsFile))) as? [String: Any])?["version"] as? Int
+    expect("it is written as version 1", version == 1)
+} catch {
+    expect("the runs file can be written", false, "\(error)")
+}
+try? Data("{\"version\": 2, \"runs\": []}".utf8).write(to: runsFile)
+expect("a version 2 runs file is read as newer and never written over", TaskRunFile.read(at: runsFile) == .newer(2) && TaskRunFile.read(at: runsFile).problem != nil)
+try? Data("not json".utf8).write(to: runsFile)
+if case .unreadable = TaskRunFile.read(at: runsFile) {} else { expect("garbage in the runs file is unreadable", false) }
+expect("an unreadable runs file has a problem and reads no runs", TaskRunFile.read(at: runsFile).problem != nil && TaskRunFile.read(at: runsFile).runs.isEmpty)
+try? Data("{\"version\": 1, \"runs\": [{\"task\": 3}]}".utf8).write(to: runsFile)
+if case .unreadable = TaskRunFile.read(at: runsFile) {} else { expect("a Run that doesn't decode is unreadable", false) }
+try? FileManager.default.removeItem(at: runsFile)
 // A run state a newer build wrote reads as done, not as an unreadable file.
 let strange = Data("\"somethingNew\"".utf8)
 expect("an unknown run state reads as done", (try? JSONDecoder().decode(RunState.self, from: strange)) == .done)
@@ -377,7 +513,6 @@ expect("a create without any says only Made", AutomationTools.markText(made: Aut
 
 // Edit: only the given fields change, onto the current copy.
 var current = AutomationTools.make(fields(plus(["permissions": "ask"]))!, in: toolsContext, now: at("2026-10-01 08:00"), zone: utc)
-current.runs = [AutomationRun(slot: at("2026-10-14 09:00"), state: .done)]
 current.lastSlot = at("2026-10-14 09:00")
 let editContext = AutomationTools.Context(sessionFolder: toolsFolder, homeFolder: otherFolder, current: current)
 func edited(_ arguments: [String: String], _ automation: Automation, zone: TimeZone = utc) -> (automation: Automation, changed: [String])? {
@@ -388,7 +523,8 @@ let promptOnly = edited(["prompt": "Say goodbye"], current)
 var promptReverted = promptOnly?.automation
 promptReverted?.prompt = current.prompt
 expect("a prompt edit changes the prompt alone", promptOnly?.automation.prompt == "Say goodbye" && promptOnly?.changed == ["prompt"] && promptReverted == current)
-expect("it keeps the runs and the last slot", promptOnly?.automation.runs == current.runs && promptOnly?.automation.lastSlot == current.lastSlot)
+expect("it keeps the Task, the rest of the input and the last slot", promptOnly?.automation.task == current.task && promptOnly?.automation.folder == current.folder
+       && promptOnly?.automation.lastSlot == current.lastSlot)
 let moved = edited(["cadence": "{\"kind\":\"hours\",\"every\":2}"], current)
 expect("a changed cadence starts the slots from now", moved?.automation.lastSlot == now && moved?.changed == ["cadence"])
 expect("the same cadence changes nothing", edited(["cadence": dailyNine], current) == nil)
@@ -425,9 +561,9 @@ expect("switching to the state it has changes nothing", AutomationTools.switchin
 let switchedOn = AutomationTools.switching(off, on: true, now: now)
 expect("turning it on starts the slots from now", switchedOn?.enabled == true && switchedOn?.lastSlot == now)
 let switchedOff = AutomationTools.switching(current, on: false, now: now)
-expect("turning it off keeps the slot and the runs", switchedOff?.enabled == false && switchedOff?.lastSlot == current.lastSlot && switchedOff?.runs == current.runs)
+expect("turning it off keeps the slot", switchedOff?.enabled == false && switchedOff?.lastSlot == current.lastSlot)
 
-// The mark rides on the automation, and the file stays at version 1 and reads without it.
+// The mark rides on the automation, and the file is at version 2 and reads without it.
 let markedFile = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-mark-\(getpid()).json")
 var marked = current
 marked.mark = AutomationMark(what: "Edited: prompt", by: "Planning", at: at("2026-10-15 09:07"))
@@ -435,7 +571,7 @@ try? AutomationFile.write([marked, current], to: markedFile)
 let readBack = AutomationFile.read(at: markedFile)
 expect("a mark survives the file and an automation without one stays without", readBack == .loaded([marked, current]), "\(readBack)")
 let markedVersion = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: markedFile))) as? [String: Any])?["version"] as? Int
-expect("the file is still version 1", markedVersion == 1)
+expect("the file is at version 2", markedVersion == 2)
 try? FileManager.default.removeItem(at: markedFile)
 try? FileManager.default.removeItem(at: toolsRoot)
 
