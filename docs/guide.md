@@ -420,7 +420,8 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   an automation you set to Skip (it can switch it), delete one or run one now, and a run's own session never has the tools.
   What a session did shows under the automation in Settings and in the Runs tab, as a mark, until you open its editor, switch it
   or press **Seen**.
-- **It runs only while Varnick does on this Mac.** A slot that passed while the Mac slept or Varnick was quit runs once, when
+- **It runs only while Varnick does on this Mac,** or, for an automation kept on a headless host, on that host's own timer, with every
+  Mac asleep. A slot that passed while the Mac slept or Varnick was quit runs once, when
   the Mac wakes or Varnick starts, if it is under 12 hours old; older ones are marked missed. At most one run of an automation goes
   at a time: a slot that falls due while the last run still works or waits on you is skipped. Keep sessions running must be on.
 - **Permissions follow Settings › Claude's Skip permissions,** as a prompt you type does, unless the automation says Ask (its allowed
@@ -429,6 +430,12 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   macOS permissions, so a shell command it may run can reach the screen: see [privacy and security](privacy-and-security.md#automations-act-while-you-are-away).
 - **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
   hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.
+- **A headless host keeps its own.** Settings › Automations has a section for each paired headless host: make an automation there
+  (its folders and agents are the host's, and "Varnick's setting" for permissions is the host's own Skip permissions), and the host fires it on a
+  timer that its installer adds once (`scripts/install-peer.sh <user@host> --automations`; the section says when the timer isn't running). The Mac
+  that last saved it holds each run and raises its notices; the Runs tab lists the host's runs beside this Mac's, and the phone lists runs nobody has
+  opened under **Runs**. A host runs the Claude prompt only ("On this site" needs a Mac), and a Claude session's tools manage this Mac's automations only.
+  Each Mac's Automations switch is its own: a host fires on whatever it says, and turning it off here only shows this Mac's views of those runs as ordinary tabs.
 - Turning the switch off stops every run from starting and shows the tabs of runs you haven't opened as ordinary tabs. The
   automations are kept in `automations.json` in Varnick's support folder (each is a cadence and the Task it runs, for now always the
   built-in Claude prompt), and what became of each run in `runs.json` beside it.

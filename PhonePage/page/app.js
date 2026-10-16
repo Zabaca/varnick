@@ -88,6 +88,17 @@ function show(home) {
     for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
     return tabRow(tab);
   });
+  // Runs nobody opened: their own section, there only while there are some (a host before protocol 29 sends none).
+  const runs = home.runs?.rows ?? [];
+  $("runs-section").hidden = runs.length === 0;
+  if (runs.length > 0) {
+    fill($("runs"), home.runs, "", (tab) => {
+      for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
+      return tabRow(tab);
+    });
+  } else {
+    $("runs").replaceChildren();
+  }
   showHosts(home.hosts);
   fill($("recent"), home.recent, "Nothing in Recent yet.", (recent) => {
     const first = recent.sessions[0];
