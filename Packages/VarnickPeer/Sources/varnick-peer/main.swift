@@ -13,9 +13,10 @@ import VarnickPeer
 //   varnick-peer device remove <id or name>
 //   varnick-peer sessions                  the sessions it started: id, whether it runs, origin and folder
 //   varnick-peer end <session>             kills one (its name or id), whoever controls it, and ends its record
+//   varnick-peer tick                      what the host's timer runs once a minute: fires the automations that are due (ADR 0009, 0040)
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | --mcp --pane <id> --notify | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session>\n".utf8))
+    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | --mcp --pane <id> --notify | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session> | tick\n".utf8))
     exit(2)
 }
 
@@ -46,6 +47,14 @@ case "--peer" where arguments.count == 2:
         exit(1)
     case .success(let config):
         exit(PeerRelay.run(arguments[1], host: HeadlessPeerHost(root: root, config: config, state: state)))
+    }
+case "tick" where arguments.count == 1:
+    switch HeadlessConfig.load(from: root.appendingPathComponent("config.json")) {
+    case .failure(let error):
+        FileHandle.standardError.write(Data("varnick-peer tick: \(error.message)\n".utf8))
+        exit(1)
+    case .success(let config):
+        exit(HeadlessPeerHost(root: root, config: config, state: state).tick())
     }
 case "init" where arguments.count == 1:
     do {

@@ -244,13 +244,16 @@ enum PeerOpenTabs {
         let keepOff = !PeerIdentity.defaults.bool(forKey: Settings.keepSessionsRunningKey)
         let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "that Mac")'s Settings."
         return hosted(in: state).map { tab in
+            // A run nobody opened is marked (protocol 29), as a headless host marks its own: the other Macs keep it out of their lists.
+            let unopened = tab.layout.records.filter { $0.runUnopened == true }
+            let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first.map { $0.uuidString.lowercased() })
             var listed = PeerTab(tab: tab.resolvedID.uuidString.lowercased(), name: tab.name,
                                  doneAge: tab.done.map { Int(max(0, now.timeIntervalSince($0))) }, layout: tab.layout.peerLayout,
                                  panes: tab.layout.records.map { record in
                                      var listed = pane(for: record, status: statuses[Zmx.sessionName(record.id)])
                                      if keepOff, listed.running == false { listed.note = why }
                                      return listed
-                                 }, showsFiles: tab.showsFiles == true ? true : nil)
+                                 }, showsFiles: tab.showsFiles == true ? true : nil, run: mark)
             listed.settleControl()
             return listed
         }

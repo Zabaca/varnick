@@ -64,6 +64,9 @@ enum HeadlessLifecycle {
         guard let record, record.ended == nil else { return .ended(mark: false) }
         if running { return .running }
         if record.starting == true { return .closing }
+        // A run nobody opened is never started again by a pane a Mac restored: one a reboot lost stays ended (option 01 of
+        // `prompts-cant-run-on-a-schedule`, protocol 29).
+        if record.runUnopened == true { return .ended(mark: true) }
         // With no boot id nothing can be called lost, and reconcile left the record: so does this.
         guard bootID != nil else { return .ended(mark: false) }
         guard isLost(record, bootID: bootID) else { return .ended(mark: true) }

@@ -24,6 +24,9 @@ public struct Automation: Codable, Identifiable, Equatable {
     public var createdAt: Date
     /// What a Claude session last did to it through the automation tools (slice 3), until the user has seen it. Optional, so the file reads without it.
     public var mark: AutomationMark?
+    /// On a headless host: the id of the Mac that last saved it, set by the host from the request's sender and never taken from the body. That
+    /// Mac labels the automation's runs and holds their unseen views. Nil on a Mac's own.
+    public var savedBy: String?
 
     public static let defaultWorkingLimitMinutes = 60
     /// A run that waits on the user this long is ended, its conversation kept.

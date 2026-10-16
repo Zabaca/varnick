@@ -119,6 +119,40 @@ describe("a pane", () => {
   });
 });
 
+describe("runs", () => {
+  const home = (list: Record<string, unknown>[]) =>
+    shapeHome({ host: { name: "linux box", headless: true }, loopback: false, device, tabs: ok({ tabs: list }), recent: ok({ recent: [] }), hosts: [] });
+  const runTab = { tab: tabB, name: "Morning summary", run: { automation: "11111111-0000-4000-8000-000000000001" }, controlName: "Mac mini", clients: 0, panes: [pane(paneB, { title: "Morning summary" })] };
+
+  test("a tab the host marks as a run is listed under Runs and not under Tabs", () => {
+    const shaped = home([{ tab: tabA, panes: [pane(paneA)] }, runTab]);
+    expect((shaped.tabs as { rows: any[] }).rows.map((tab) => tab.tab)).toEqual([tabA]);
+    expect((shaped.runs as { rows: any[] }).rows.map((tab) => [tab.tab, tab.name])).toEqual([[tabB, "Morning summary"]]);
+  });
+
+  test("a mark with no automation is a mark too, and an empty one is not", () => {
+    expect((home([{ ...runTab, run: {} }]).runs as { rows: any[] }).rows).toHaveLength(1);
+    expect((home([{ ...runTab, run: null }]).runs as { rows: any[] }).rows).toHaveLength(0);
+    expect((home([{ ...runTab, run: undefined }]).tabs as { rows: any[] }).rows).toHaveLength(1);
+  });
+
+  test("a host before protocol 29 sends no mark, so there are no runs", () => {
+    expect((home([{ tab: tabA, panes: [pane(paneA)] }]).runs as { rows: any[] }).rows).toEqual([]);
+  });
+
+  test("a run is shaped as any tab is, and its automation's id goes no further", () => {
+    const [row] = (home([runTab]).runs as { rows: any[] }).rows;
+    expect(row.panes[0]).toMatchObject({ id: paneB, session: `varnick-${paneB}`, title: "Morning summary" });
+    expect(JSON.stringify(home([runTab]))).not.toContain("11111111-0000-4000-8000-000000000001");
+  });
+
+  test("a host that can't be read has no runs to show either", () => {
+    const shaped = shapeHome({ host: { name: "linux box", headless: true }, loopback: false, device, tabs: { ok: false, error: "down" }, recent: ok({ recent: [] }), hosts: [] });
+    expect(shaped.runs).toEqual({ error: "down" });
+    expect(shaped.tabs).toEqual({ error: "down" });
+  });
+});
+
 describe("tabs", () => {
   const tabs = (list: Record<string, unknown>[]) => {
     const home = shapeHome({ host, loopback: false, device, tabs: ok({ tabs: list }), recent: ok({ recent: [] }), hosts: [] });

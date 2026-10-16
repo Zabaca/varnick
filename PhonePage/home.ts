@@ -94,7 +94,10 @@ export interface Home {
   /** Loopback mode: any program on the host can reach the page. */
   loopback: boolean;
   device: { name: string };
+  /** The host's open tabs, less the runs nobody opened. */
   tabs: Part<HomeTab>;
+  /** The runs of the host's automations that nobody has opened (the tabs the host marks with `run`, protocol 29): listed here and not under Tabs. */
+  runs: Part<HomeTab>;
   recent: Part<HomeRecent>;
   /** The other hosts' pages, by name: where each would be, since this host can't know that it serves one. */
   hosts: HostLink[];
@@ -173,6 +176,14 @@ export function shapeTab(tab: Record<string, unknown>, device: Device): HomeTab 
 
 export const shapeTabs = (tabs: Record<string, unknown>[], device: Device): HomeTab[] => tabs.flatMap((tab) => shapeTab(tab, device) ?? []);
 
+/** A tab the host marks as a run nobody opened (`PeerTab.run`, protocol 29). A host before protocol 29 marks none. */
+export const isRun = (tab: Record<string, unknown>): boolean => isObject(tab.run);
+
+/** The tabs split in two: the ordinary ones, and the runs. A run is opened from Runs like any tab, and the host takes its mark off when it is. */
+export function splitRuns(tabs: Record<string, unknown>[]): { tabs: Record<string, unknown>[]; runs: Record<string, unknown>[] } {
+  return { tabs: tabs.filter((tab) => !isRun(tab)), runs: tabs.filter(isRun) };
+}
+
 /** One closed tab of a `recent` reply; none when it has no id of a tab or no session to resume. */
 export function shapeRecent(row: Record<string, unknown>): HomeRecent[] {
   const sessions = objects(row.sessions).flatMap((session): HomeRecentSession[] =>
@@ -193,12 +204,15 @@ export function shapeHome(input: {
   hosts: HostLink[];
 }): Home {
   const { device } = input;
+  const { tabs, runs } = input.tabs.ok ? splitRuns(objects(input.tabs.reply.tabs)) : { tabs: [], runs: [] };
+  const part = (rows: Record<string, unknown>[]): Part<HomeTab> => (input.tabs.ok ? { rows: shapeTabs(rows, device) } : { error: input.tabs.error });
   return {
     host: input.host,
     loopback: input.loopback,
     device: { name: device.name },
     hosts: input.hosts,
-    tabs: input.tabs.ok ? { rows: shapeTabs(objects(input.tabs.reply.tabs), device) } : { error: input.tabs.error },
+    tabs: part(tabs),
+    runs: part(runs),
     recent: input.recent.ok ? { rows: objects(input.recent.reply.recent).flatMap(shapeRecent) } : { error: input.recent.error },
   };
 }

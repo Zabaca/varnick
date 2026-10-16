@@ -62,7 +62,8 @@ extension HeadlessPeerHost {
             shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
                 skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: startID,
                 prompt: prompt, problems: problemsBoard,
-                mcpConfig: NotifyTool.relayConfiguration(command: root.appendingPathComponent("varnick-peer").path, pane: uuid)))
+                mcpConfig: NotifyTool.relayConfiguration(command: root.appendingPathComponent("varnick-peer").path, pane: uuid),
+                dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? []))
         }
         guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
             failed()

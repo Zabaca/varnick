@@ -21,10 +21,12 @@ final class RunsBoard: ObservableObject {
         let count: Int
         /// A session was started for it, so it can be opened.
         let opens: Bool
-        /// Where it ran: this Mac, until runs can be on a headless host.
+        /// Where it ran: this Mac's name, or the headless host's.
         let place: String
         /// What a session last did to the automation through the automation tools, until the user has seen it: on its newest run only.
         let mark: String?
+        /// The paired headless host the run is on (its id); nil for this Mac's own.
+        var host: String?
 
         /// "Running", "Waiting on you: Needs permission", a message's title, "Missed: over 12 hours old".
         var text: String {
@@ -54,6 +56,7 @@ final class RunsBoard: ObservableObject {
                                 mark: index == 0 ? automation.mark?.line : nil))
             }
         }
+        next += model.hostRunRows()
         next.sort { $0.when > $1.when }
         next = Array(next.prefix(Self.shown))
         if next != rows { rows = next }
@@ -93,7 +96,7 @@ final class RunsBoard: ObservableObject {
             refusal = "That slot never ran, so there is nothing to open"
             return
         }
-        refusal = model?.openRun(id)
+        if let host = row.host { refusal = model?.openHostRun(id, on: host) } else { refusal = model?.openRun(id) }
     }
 }
 

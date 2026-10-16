@@ -198,7 +198,9 @@ tools, so what those send is not sent. Each run is at least one model turn and c
 caps how many a day's cadence adds up to beyond its 15-minute floor and one run of an automation at a time. The automations
 (names, prompts, folders) are in `automations.json` in Varnick's support folder, and what became of each run (its state, the prompt it
 started with and its conversation's id) in `runs.json` beside it; both are owner-only and are not sent to paired Macs or the
-phone; a run's tab is, as an ordinary tab with the automation's name, until a later version marks it.
+phone; a run's tab is listed to them marked as a run nobody opened, which other Macs keep out of their lists and the phone lists under Runs, with the automation's name as its title.
+
+An automation kept on a headless host (Settings › Automations, a section for each) is saved on that host over ssh, from any Mac it lists: its name, prompt, folder, cadence and permissions are in `automations.json` there, and what became of its runs in `runs.json`, both owner-only in the relay's state folder, and the prompt goes to Anthropic from that host with the session. The host fires it from a systemd timer that runs its relay once a minute (added with the installer's `--automations`); nothing else is resident.
 
 With Automations on, a Claude session you start can also list, make, edit and switch automations (below). A session that lists
 them sends every automation's name, prompt, folder and cadence to Anthropic with the rest of that session, as anything else it reads
@@ -466,7 +468,7 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
 - **A run reaches the screen the way every pane does.** It gets no Screen access or Panel access tool, but a shell command it
   runs inherits Varnick's Accessibility and Screen Recording (see Screen permissions reach every pane, above). With permission
   checks skipped that covers every command; with Ask or Allowed tools only it covers the commands you allowed. The editor says so.
-  A headless host has no screen, and will suit an automation that allows broad shell use once automations run there.
+  A headless host has no screen and no macOS grants, so an automation kept there reaches only what its account can; it suits one that allows broad shell use, and with permission checks skipped every command a run tries is allowed, as the host's own user, with nobody there to answer. A run there follows the host's own Skip permissions unless the automation says otherwise.
 - **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
   a session you leave unattended with the same permissions.
 - **A session can set up unattended runs, with no approval step of Varnick's.** With Automations on, every Claude session started or
