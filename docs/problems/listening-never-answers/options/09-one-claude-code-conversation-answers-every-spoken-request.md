@@ -2,7 +2,7 @@
 problem: listening-never-answers
 title: Every spoken request goes to one hidden Claude Code session in Home, a voice session that has everything a pane has, and its reply is spoken
 summary: Behind a switch in Settings › Experimental, off by default, every Hey Varnick request goes after the hold to the host's voice session. It is one Claude session in a Voice folder inside Home, started as any pane is, with the user's own settings, CLAUDE.md files, plugins, hooks, model and permission mode, Varnick's full MCP set as panes have it, and a new search tool over History, Bookmarks and Claude sessions. It runs in a tab hidden until opened, like an automation's run. The first request is its first prompt. Each later request is typed into it with zmx send while it waits, with a short voice hint in front. The answer is the last assistant message, which Claude Code puts in the Stop hook's input and Varnick's hook already saves. Varnick says "Let me check." when the request is taken and "Looking that up." when Claude goes to the web. If a tool asks for permission, Varnick says Claude needs the user's OK, and the session raises Needs you as any pane does. The answer goes through today's cleanup and is spoken, and the transcript keeps it as a [varnick] line. The session is reused until 10 minutes pass with no request. Its transcripts stay out of session search. Its logic sits in the shared package behind a text-in, text-out seam, so the phone's Voice mode (phone-page-is-only-a-browser-tab option 05) can drive the same session on any host. While the switch is on, the route, the judge, the Text generation writer and Answer from the web are not used for spoken requests. Off, today's pipeline answers.
-status: proposed
+status: accepted
 ---
 
 ## Solution

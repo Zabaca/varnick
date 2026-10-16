@@ -2,7 +2,7 @@
 problem: phone-page-is-only-a-browser-tab
 title: Voice mode on a host's Phone page talks back and forth with that host's voice session
 summary: A Voice mode button on a host's Phone page starts that host's voice session, or reuses it within its 10 minutes. This is the same session Hey Varnick reaches on a Mac (listening-never-answers option 09), in the host's Home. The user then talks back and forth by voice, with each exchange shown as text too. Requests reach the host and replies come back through the host's relay, with one new request to ask and one to poll, on a Mac or a headless host. Voice mode works only in the foreground. Research on Chrome for Android found that a hidden page keeps the mic for about a minute and a locked phone keeps nothing, so the mic is one getUserMedia stream with a wake lock and Media Session controls, and a spike on the user's phone comes first. Whether speech becomes text on the phone or on the host, and where the reply's audio is made, is left open. A prompt that needs the user's OK is answered in the page's own terminal view. A native Android shell, for a locked screen, is deferred.
-status: proposed
+status: accepted
 ---
 
 ## Solution
