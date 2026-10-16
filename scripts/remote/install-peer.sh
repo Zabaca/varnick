@@ -327,9 +327,8 @@ UNIT
 # The automations' timer: a user `.timer` that starts a `oneshot` `.service` running `varnick-peer tick` at the start of every minute, so nothing stays
 # running between ticks. Not persistent: the slot function catches up by itself. KillMode=process is the line that matters, as the page's unit has it: a
 # run's zmx daemon is created by the relay this service runs, so it lives in the service's cgroup, and any other mode would end every run when the
-# tick exits (measured on the user's machine: with linger on and nobody logged in the timer fired every minute, and a session a tick started survived
-# every tick under KillMode=process and ended at the next one without it). Prints AUTOMATIONS=on and the markers the near half judges, or
-# AUTOMATIONS=failed.
+# tick exits (what was measured, and what it does not show, is in docs/agents/where-it-breaks.md, Automations). Prints AUTOMATIONS=on and the markers
+# the near half judges, or AUTOMATIONS=failed.
 automations_install() {
   local unit_dir="$HOME/.config/systemd/user" changed=no state
   adopt_runtime_dir

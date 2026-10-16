@@ -385,6 +385,8 @@ extension StateFolder {
                 }
                 var record = before
                 (record.ended, record.starting, record.bootID, record.started, record.origin, record.done) = (nil, true, bootID, now, by, nil)
+                // Reopening a run's tab is opening it.
+                record.runUnopened = nil
                 if let conversation { record.conversation = conversation }
                 sessions[index] = record
                 claimed.append(Reopening(record: record, before: before, conversation: conversation, freshUnder: freshUnder))

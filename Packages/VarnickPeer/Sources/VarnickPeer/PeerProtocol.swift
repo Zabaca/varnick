@@ -790,6 +790,9 @@ public struct PeerRequest: Codable, Sendable {
     public var confirm: Bool?
     /// SaveAutomation (protocol 29): the whole automation. The host never takes its saver from it.
     public var automation: Automation?
+    /// SaveAutomation: the copy the editor (or the row's switch) started from, so the host refuses a save of a copy older than its own and applies a
+    /// switch alone. Nil for a new automation.
+    public var automationBase: Automation?
     /// DeleteAutomation and RunAutomation: the automation's id, a uuid.
     public var automationID: String?
 

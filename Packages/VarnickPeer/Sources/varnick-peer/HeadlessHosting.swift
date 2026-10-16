@@ -9,9 +9,15 @@ import VarnickPeer
 
 extension HeadlessPeerHost {
     func forward(_ op: PeerOp, line: String) -> PeerForwarded {
-        guard let request = PeerJSON.decode(PeerRequest.self, from: line), let by = request.by else {
+        guard let request = PeerJSON.decode(PeerRequest.self, from: line) else {
+            // The asker is known from the head, which stays readable whatever else a build changes: say what couldn't be read.
+            if PeerJSON.decode(PeerRequestHead.self, from: line)?.by != nil {
+                return .reply(.failure(PeerProtocol.isAutomationRequest(op) ? "\(name) can't read that automation's format: both Macs need the same build"
+                                       : "\(name) can't read that request"))
+            }
             return .reply(.failure("The request needs the Mac's id"))
         }
+        guard let by = request.by else { return .reply(.failure("The request needs the Mac's id")) }
         switch op {
         case .start: return .reply(start(request, by: by))
         case .resume: return .reply(resumeConversation(request, by: by))

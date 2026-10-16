@@ -1,7 +1,7 @@
 import Foundation
 import VarnickPeer
 
-// A headless host's automations (option 01 of `prompts-cant-run-on-a-schedule`, slice 2, protocol 29). `automations.json` and `runs.json` sit in the
+// A headless host's automations (option 01 of `prompts-cant-run-on-a-schedule`, protocol 29). `automations.json` and `runs.json` sit in the
 // state folder in the Macs' formats, are read under the shared state lock and written under the exclusive one, and only this relay writes them: the
 // timer's `tick` and the five requests below. A file that can't be read, or is from a newer build, stops every check and every change and is never
 // written over. The rules are in docs/agents/where-it-breaks.md (Automations, Peers); the pure parts (the save, the slots, the tend decision) are
@@ -129,7 +129,7 @@ extension StateFolder {
 extension HeadlessPeerHost {
     /// What only this host can see, for the save: its folders and agents, and Claude Code's trust of a folder.
     private var environment: HostAutomationSave.Environment {
-        HostAutomationSave.Environment(defaultFolder: config.defaultFolder, isFolder: Self.isFolder,
+        HostAutomationSave.Environment(homeFolder: VarnickHome.path, userHome: NSHomeDirectory(), isFolder: Self.isFolder,
                                        agents: { Agent.available(in: $0).map(\.name) }, trust: { ClaudeTrust.note(for: $0) })
     }
 
@@ -137,7 +137,7 @@ extension HeadlessPeerHost {
     func automationList(now: Date = Date()) throws -> HostAutomations {
         let files = try state.automationFiles()
         return HostAutomations(automations: files.automations, runs: files.runs, timerAge: HostTickFile.age(of: files.tick, now: now),
-                               skipPermissions: config.skipPermissions)
+                               skipPermissions: config.skipPermissions, userHome: NSHomeDirectory())
     }
 
     private func listReply(run: TaskRun? = nil) -> PeerReply {
@@ -166,7 +166,7 @@ extension HeadlessPeerHost {
         guard UUID(uuidString: by) != nil else { return .failure("The request needs the Mac's id") }
         do {
             let outcome = try state.withAutomationFiles { automations, _ -> HostAutomationSave.Outcome in
-                let outcome = HostAutomationSave.save(automation, into: automations, sender: by.lowercased(), now: Date(), in: environment)
+                let outcome = HostAutomationSave.save(automation, base: request.automationBase, into: automations, sender: by.lowercased(), now: Date(), in: environment)
                 if case .saved(let list) = outcome { automations = list }
                 return outcome
             }
@@ -203,6 +203,9 @@ extension HeadlessPeerHost {
         // The Mac's rule: a run that ended since the last tick is brought up to date first, so Run now isn't refused for a run that is over.
         let now = Date()
         tend(automations: [automation], now: now, elapsed: 0)
+        if let after = try? state.automationFiles(), after.runs.runs.contains(where: { $0.trigger.automation == id && $0.state.isGoing && $0.endedAt == nil }) {
+            return .failure("The last run is still going")
+        }
         switch startRun(of: automation, slot: now, late: false, manual: true, now: now) {
         case .started(let run): return listReply(run: run)
         case .going: return .failure("The last run is still going")
@@ -221,7 +224,7 @@ extension HeadlessPeerHost {
         case failed(String)
     }
 
-    /// What a run is started with: the host's own Skip permissions unless the automation says otherwise (resolved 3), which is then stored on the run's
+    /// What a run is started with: the host's own Skip permissions unless the automation says otherwise, which is then stored on the run's
     /// record like a typed prompt's.
     private func permissions(for automation: Automation) -> (skip: Bool, dontAsk: Bool) {
         switch automation.permissions {
@@ -253,6 +256,8 @@ extension HeadlessPeerHost {
         }
         let problems = HostAutomationSave.startProblems(automation, in: environment)
         guard problems.isEmpty else { return record(failedRun(problems.joined(separator: ". "))) }
+        // Home is made and marked trusted here, outside the lock, where a run starts in it.
+        if environment.usesHome(automation) { VarnickHome.madeAndTrusted() }
         let folder = environment.folder(of: automation)
         let permissions = permissions(for: automation)
         let claim: StateFolder.RunClaim
@@ -309,8 +314,11 @@ extension HeadlessPeerHost {
         guard let files = try? state.automationFiles(), files.runs.problem == nil, let records = try? state.sessions() else { return [] }
         let limits = Dictionary(automations.map { ($0.id, $0.workingLimitMinutes) }) { first, _ in first }
         let kept = files.runs.runs.filter { limits[$0.trigger.automation] != nil && $0.state.ran && $0.endedAt == nil }
-        let names = kept.compactMap { $0.pane.map(Zmx.sessionName) }
-        let statuses = names.isEmpty ? [:] : Zmx.statuses(of: names)
+        guard !kept.isEmpty else { return [] }
+        // Gone is what zmx's listing says, as `reconcile` reads it, never one failed `zmx get`: a live claude would get an ended record and nothing would
+        // ever end it. A listing that can't be had tends nothing.
+        guard let running = StateFolder.runningIDs() else { return [] }
+        let statuses = Zmx.statuses(of: kept.compactMap { $0.pane.map(Zmx.sessionName) })
         var changed: [TaskRun] = []
         for run in kept {
             guard let paneID = run.pane, let limit = limits[run.trigger.automation] else { continue }
@@ -319,13 +327,15 @@ extension HeadlessPeerHost {
             if record?.starting == true { continue }
             let status = statuses[Zmx.sessionName(paneID)]
             var session: RunTend.Session?
-            if let record, status?.running == true {
+            if let record, running.contains(record.id) {
                 let reading = PeerTurn.read(for: paneID, now: now)
                 let reported = PaneFolder.reportedConversation(for: paneID)
                 session = RunTend.Session(turn: reading?.turn, turnAge: reading.map { TimeInterval($0.age) }, failure: reading?.failure,
                                           message: PeerMessage.read(for: paneID)?.title,
                                           conversation: reported.flatMap { $0 == record.id ? nil : $0 },
-                                          unopened: record.runUnopened == true, takenOver: !Zmx.sameID(status?.control, record.origin))
+                                          unopened: record.runUnopened == true,
+                                          // The label is known only when `zmx get` answered: a failed read is not a take over.
+                                          takenOver: status?.running == true && !Zmx.sameID(status?.control, record.origin))
             }
             let decision = RunTend.decide(run, session: session, limitMinutes: limit, elapsed: elapsed, now: now)
             if decision.opened { _ = try? state.update(paneID.uuidString.lowercased()) { $0.runUnopened = nil } }

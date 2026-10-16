@@ -506,6 +506,7 @@ extension LauncherModel {
     /// ended cards or Completed. A limit or a tend that ended it has recorded its reason already; one that ended by itself within seconds, with a
     /// failure code, never started.
     func runClosed(_ session: ClaudeSession, code: Int32?) {
+        HostAutomationStore.shared.viewEnded(session)
         guard session.record.automation != nil, let found = taskRuns.run(pane: session.id) else { return }
         let now = Date()
         let quick = now.timeIntervalSince(session.launchedAt) < 10

@@ -209,6 +209,8 @@ PROBLEMS_STATE=$(printf '%s\n' "$OUT" | marker PROBLEMS)
 AUTOMATIONS_STATE=$(printf '%s\n' "$OUT" | marker AUTOMATIONS)
 [ -n "$AUTOMATIONS_STATE" ] || AUTOMATIONS_STATE=unknown
 [ "$AUTOMATIONS" = auto ] || [ "$AUTOMATIONS" = "$AUTOMATIONS_STATE" ] || die "the automations' timer on $TARGET is '$AUTOMATIONS_STATE', not '$AUTOMATIONS' (see above)"
+# An upgrade keeps a timer that is there, and one that is there but didn't start is not an upgrade that went well: nothing would fire.
+[ "$AUTOMATIONS_STATE" != failed ] || die "the automations' timer on $TARGET was there but didn't start (see above): journalctl --user -u varnick-automations.timer. The relay is installed; nothing fires on the host until the timer runs"
 if [ "$AUTOMATIONS_STATE" = on ]; then
   [ "$(printf '%s\n' "$OUT" | marker TICKTIMER)" = active ] || die "the automations' timer on $TARGET isn't active (see above): journalctl --user -u varnick-automations.timer"
   [ "$(printf '%s\n' "$OUT" | marker TICKTYPE)" = oneshot ] || die "the automations' service on $TARGET isn't a oneshot: a tick would stay running"

@@ -431,7 +431,7 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 - **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
   hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.
 - **A headless host keeps its own.** Settings › Automations has a section for each paired headless host: make an automation there
-  (its folders and agents are the host's, and "Varnick's setting" for permissions is the host's own Skip permissions), and the host fires it on a
+  (its projects and agents are the host's, an automation with no project runs in Home, a folder Varnick keeps on the host, and never in the account's own home folder, and "Varnick's setting" for permissions is the host's own Skip permissions), and the host fires it on a
   timer that its installer adds once (`scripts/install-peer.sh <user@host> --automations`; the section says when the timer isn't running). The Mac
   that last saved it holds each run and raises its notices; the Runs tab lists the host's runs beside this Mac's, and the phone lists runs nobody has
   opened under **Runs**. A host runs the Claude prompt only ("On this site" needs a Mac), and a Claude session's tools manage this Mac's automations only.

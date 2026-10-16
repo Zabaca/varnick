@@ -1,6 +1,6 @@
 import Foundation
 
-// The headless host's automations (option 01 of `prompts-cant-run-on-a-schedule`, slice 2, protocol 29): what the `automations` request answers, how a
+// The headless host's automations (option 01 of `prompts-cant-run-on-a-schedule`, protocol 29): what the `automations` request answers, how a
 // save is checked, what a tick does with the slots and with the Runs that are going. All of it pure, so `make check-slots` covers it with no host, no
 // clock and no files; the relay (`varnick-peer`) and the Macs call it. The rules are in docs/agents/where-it-breaks.md (Automations, Peers).
 
@@ -34,9 +34,12 @@ public struct HostAutomations: Codable, Equatable, Sendable {
     public var timerAge: Int?
     /// The host's own Skip permissions (its config, off unless set): what "Varnick's setting" means for a run there.
     public var skipPermissions: Bool
+    /// The host account's home folder, so a Mac can write the host's paths with `~` as it writes its own.
+    public var userHome: String?
 
     public init(automationsVersion: Int = AutomationFile.currentVersion, runsVersion: Int = TaskRunFile.currentVersion, automations: [Automation] = [],
-                runs: [TaskRun] = [], automationsProblem: String? = nil, runsProblem: String? = nil, timerAge: Int? = nil, skipPermissions: Bool = false) {
+                runs: [TaskRun] = [], automationsProblem: String? = nil, runsProblem: String? = nil, timerAge: Int? = nil, skipPermissions: Bool = false,
+                userHome: String? = nil) {
         self.automationsVersion = automationsVersion
         self.runsVersion = runsVersion
         self.automations = automations
@@ -45,19 +48,20 @@ public struct HostAutomations: Codable, Equatable, Sendable {
         self.runsProblem = runsProblem
         self.timerAge = timerAge
         self.skipPermissions = skipPermissions
+        self.userHome = userHome
     }
 
     /// The reply's value from what the two files read as.
-    public init(automations: AutomationFile.ReadResult, runs: TaskRunFile.ReadResult, timerAge: Int?, skipPermissions: Bool) {
+    public init(automations: AutomationFile.ReadResult, runs: TaskRunFile.ReadResult, timerAge: Int?, skipPermissions: Bool, userHome: String? = nil) {
         var automationsVersion = AutomationFile.currentVersion, runsVersion = TaskRunFile.currentVersion
         if case .newer(let version) = automations { automationsVersion = version }
         if case .newer(let version) = runs { runsVersion = version }
         self.init(automationsVersion: automationsVersion, runsVersion: runsVersion, automations: automations.automations, runs: runs.runs,
-                  automationsProblem: automations.problem, runsProblem: runs.problem, timerAge: timerAge, skipPermissions: skipPermissions)
+                  automationsProblem: automations.problem, runsProblem: runs.problem, timerAge: timerAge, skipPermissions: skipPermissions, userHome: userHome)
     }
 
     private enum Keys: String, CodingKey {
-        case automationsVersion, runsVersion, automations, runs, automationsProblem, runsProblem, timerAge, skipPermissions
+        case automationsVersion, runsVersion, automations, runs, automationsProblem, runsProblem, timerAge, skipPermissions, userHome
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,6 +72,7 @@ public struct HostAutomations: Codable, Equatable, Sendable {
         runsProblem = try c.decodeIfPresent(String.self, forKey: .runsProblem)
         timerAge = try c.decodeIfPresent(Int.self, forKey: .timerAge)
         skipPermissions = try c.decodeIfPresent(Bool.self, forKey: .skipPermissions) ?? false
+        userHome = try c.decodeIfPresent(String.self, forKey: .userHome)
         // A list of a newer version is not read at all: its fields are not this build's to decode.
         if automationsVersion > AutomationFile.currentVersion {
             automations = []
@@ -109,26 +114,41 @@ public struct HostAutomations: Codable, Equatable, Sendable {
 public enum HostAutomationSave {
     /// What only the host can see: its folders and agents.
     public struct Environment {
-        public var defaultFolder: String
+        /// Varnick's own Home folder on the host (`VarnickHome`), where an automation with no folder runs. It is made and marked trusted when a run
+        /// starts, so a save does not look for it.
+        public var homeFolder: String
+        /// The host account's home folder, which no run may start in: Claude Code never saves trust for it.
+        public var userHome: String
         public var isFolder: (String) -> Bool
         public var agents: (String) -> [String]
         /// Claude Code's trust note for a folder, nil when it is trusted or can't be told.
         public var trust: (String) -> String?
 
-        public init(defaultFolder: String, isFolder: @escaping (String) -> Bool, agents: @escaping (String) -> [String],
+        public init(homeFolder: String, userHome: String, isFolder: @escaping (String) -> Bool, agents: @escaping (String) -> [String],
                     trust: @escaping (String) -> String?) {
-            self.defaultFolder = defaultFolder
+            self.homeFolder = homeFolder
+            self.userHome = userHome
             self.isFolder = isFolder
             self.agents = agents
             self.trust = trust
         }
 
-        /// The folder a run starts in: the automation's, or the host's default.
+        /// Whether the automation names no folder, so runs in Varnick's Home there.
+        public func usesHome(_ automation: Automation) -> Bool {
+            (automation.folder?.trimmingCharacters(in: .whitespaces) ?? "").isEmpty
+        }
+
+        /// The folder a run starts in: the automation's (with `~` the host account's home), or Varnick's Home there.
         public func folder(of automation: Automation) -> String {
             let given = automation.folder?.trimmingCharacters(in: .whitespaces) ?? ""
-            return given.isEmpty ? defaultFolder : (given as NSString).expandingTildeInPath
+            if given.isEmpty { return homeFolder }
+            if given == "~" { return userHome }
+            return given.hasPrefix("~/") ? userHome + given.dropFirst() : given
         }
     }
+
+    /// Why a run can't start in the host account's own home folder.
+    public static let homeRefusal = "Claude Code never saves trust for the home folder itself (it is session-only), so a run there would stop at its \"trust this folder?\" question with nobody to answer. Choose a project folder, or Home"
 
     /// The On this site Task's refusal: its browser is the Website pane, which only a Mac's Varnick has.
     public static let siteRefusal = "On this site needs a Mac: its browser runs only in Varnick on a Mac"
@@ -136,12 +156,19 @@ public enum HostAutomationSave {
     /// Why a folder, an agent or the trust can't start a run there, one line each: what the host refuses before it starts, on a save and again at a start.
     public static func startProblems(_ automation: Automation, in environment: Environment) -> [String] {
         let folder = environment.folder(of: automation)
-        guard environment.isFolder(folder) else { return ["\(folder) isn't a folder on the host"] }
+        let home = environment.usesHome(automation)
+        if !home {
+            if URL(fileURLWithPath: folder).standardizedFileURL.path == URL(fileURLWithPath: environment.userHome).standardizedFileURL.path {
+                return [homeRefusal]
+            }
+            guard environment.isFolder(folder) else { return ["\(folder) isn't a folder on the host"] }
+        }
         var found: [String] = []
         if let agent = automation.agent, !environment.agents(folder).contains(agent) {
-            found.append("The agent @\(agent) isn't available in \(ClaudeTrust.abbreviated(folder))")
+            found.append("The agent @\(agent) isn't available in \(home ? "Home" : folder)")
         }
-        if let note = environment.trust(folder) { found.append(note) }
+        // Home is made and marked trusted when the run starts.
+        if !home, let note = environment.trust(folder) { found.append(note) }
         return found
     }
 
@@ -159,7 +186,8 @@ public enum HostAutomationSave {
         if !automation.cadence.isValid { found.append("The cadence isn't one the presets have") }
         if TimeZone(identifier: automation.timeZone) == nil { found.append("The time zone \(automation.timeZone) isn't known on the host") }
         if !(5...1440).contains(automation.workingLimitMinutes) { found.append("The working limit must be 5 to 1440 minutes") }
-        if automation.task == BuiltInTask.claudePrompt.name { found += startProblems(automation, in: environment) }
+        // What a run would stop at matters only while the automation fires: a switch-off never waits on a folder that has gone.
+        if automation.enabled, automation.task == BuiltInTask.claudePrompt.name { found += startProblems(automation, in: environment) }
         return found
     }
 
@@ -168,12 +196,41 @@ public enum HostAutomationSave {
         case refused([String])
     }
 
+    public static let staleRefusal = "It was changed on the host since you opened it: close the editor and open it again"
+
+    /// Whether two copies agree on everything the editor sets, the switch aside.
+    private static func sameFields(_ a: Automation, _ b: Automation) -> Bool {
+        a.name == b.name && a.task == b.task && a.input == b.input && a.cadence == b.cadence && a.timeZone == b.timeZone
+            && a.permissions == b.permissions && a.allowedTools == b.allowedTools && a.workingLimitMinutes == b.workingLimitMinutes
+    }
+
     /// The list after a save. `sender` is the Mac that asked, which becomes the saver whatever the body says. A new automation's slots start from
     /// `now`. An edit puts the editor's fields onto the host's copy and keeps its last slot, its creation date and its mark, unless the cadence or the
     /// zone changed or it was switched on, which start the slots from `now`.
-    public static func save(_ incoming: Automation, into list: [Automation], sender: String, now: Date, in environment: Environment) -> Outcome {
+    public static func save(_ incoming: Automation, base: Automation? = nil, into list: [Automation], sender: String, now: Date, in environment: Environment) -> Outcome {
         var automation = incoming
         automation.name = incoming.name.trimmingCharacters(in: .whitespaces)
+        if let base, let index = list.firstIndex(where: { $0.id == incoming.id }) {
+            var current = list[index]
+            if sameFields(incoming, base) {
+                // Only the switch changed: it is applied alone, whatever else another Mac has edited since, and switching off never waits on a check.
+                guard incoming.enabled != current.enabled else { return .saved(list) }
+                if incoming.enabled {
+                    var enabled = current
+                    enabled.enabled = true
+                    let found = problems(enabled, in: environment)
+                    guard found.isEmpty else { return .refused(found) }
+                    current.lastSlot = now
+                }
+                current.enabled = incoming.enabled
+                current.savedBy = sender
+                var next = list
+                next[index] = current
+                return .saved(next)
+            }
+            // The editor's copy is older than the host's: saving it would put back what another Mac changed.
+            guard sameFields(current, base) else { return .refused([staleRefusal]) }
+        }
         let found = problems(automation, in: environment)
         guard found.isEmpty else { return .refused(found) }
         var next = list
@@ -380,5 +437,22 @@ public enum HostTickFile {
     /// Seconds since the last run by the host's clock, nil when it never ran.
     public static func age(of last: Date?, now: Date) -> Int? {
         last.map { Int(max(0, now.timeIntervalSince($0))) }
+    }
+}
+
+/// Varnick's own Home folder on a headless host, `SupportFolder.url/Home` (the relay's state folder there): where an automation with no folder runs. Claude
+/// Code never saves trust for the account's home folder, so a run needs a folder of its own that is marked trusted. Made and marked on first use, as a
+/// Mac's `HomeFolder.madeAndTrusted()` does.
+public enum VarnickHome {
+    public static var url: URL { SupportFolder.url.appendingPathComponent("Home", isDirectory: true) }
+
+    public static var path: String { url.path }
+
+    /// The path, with the folder made and marked trusted first. A trust that can't be written is not a reason to refuse the run.
+    @discardableResult
+    public static func madeAndTrusted() -> String {
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        _ = ClaudeTrust.writeTrust(for: path)
+        return path
     }
 }

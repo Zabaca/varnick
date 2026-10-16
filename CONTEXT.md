@@ -109,7 +109,7 @@ The **Session**s a **Tab** has held, newest first (the newest 50), saved with it
 _Avoid_: History (the Chrome archive, see **History**), Recent
 
 **Home**:
-Varnick's own folder for sessions that belong to no project: `Home` in its support folder. A new session with no project starts there, and so does an automation with no project. It is not the user's home folder, and it is not a setting. Varnick marks it trusted in Claude Code.
+Varnick's own folder for sessions that belong to no project: `Home` in its support folder. A new session with no project starts there, and so does an automation with no project. It is not the user's home folder, and it is not a setting. Varnick marks it trusted in Claude Code. A headless **Host** has one too, in its relay's state folder, where an **Automation** with no project runs; Claude Code never saves trust for an account's own home folder, so nothing runs there.
 _Avoid_: Default folder, Working folder, Claude folder, home folder
 
 **Recent**:

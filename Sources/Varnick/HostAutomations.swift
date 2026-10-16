@@ -1,7 +1,7 @@
 import SwiftUI
 import VarnickPeer
 
-// Automations kept on a headless host (option 01 of `prompts-cant-run-on-a-schedule`, slice 2, protocol 29). The host keeps the files and fires them from
+// Automations kept on a headless host (option 01 of `prompts-cant-run-on-a-schedule`, protocol 29). The host keeps the files and fires them from
 // its own timer (`varnick-peer tick`); this Mac edits the host's list from Settings › Automations, lists the host's Runs on the board's Runs tab, and
 // holds each run it saved as an unseen view until it is opened. The rules are in docs/agents/where-it-breaks.md (Automations, Peers).
 
@@ -13,10 +13,13 @@ extension PeerManager {
         automationsResult(await send(PeerRequest(.automations), to: host, timeout: 20), host: host)
     }
 
-    /// Saves a whole automation on the host, which checks it against its own folders and agents and names every problem. The reply is the list after it.
-    func saveAutomation(_ automation: Automation, on host: String) async -> Result<HostAutomations, Refusal> {
+    /// Saves a whole automation on the host, which checks it against its own folders and agents and names every problem. `base` is the copy the
+    /// change started from (nil for a new automation): the host refuses a save of a copy older than its own, and applies a switch alone. The reply is
+    /// the list after it.
+    func saveAutomation(_ automation: Automation, base: Automation?, on host: String) async -> Result<HostAutomations, Refusal> {
         var request = PeerRequest(.saveAutomation)
         request.automation = automation
+        request.automationBase = base
         return automationsResult(await send(request, to: host, timeout: 30), host: host)
     }
 
@@ -72,6 +75,8 @@ final class HostAutomationStore: ObservableObject {
         var isNew: Bool
         /// The host's projects, read when the editor opens.
         var folders: [String] = []
+        /// The copy the editor opened (nil for a new automation), which the host compares with its own at the save.
+        var base: Automation?
         var skipPermissions: Bool
         /// The host's refusal of the last Save, every problem on its own line.
         var problem: String?
@@ -85,6 +90,12 @@ final class HostAutomationStore: ObservableObject {
     /// The hosts' listings' tabs that are runs nobody opened, by host: kept out of the lists while Automations is on, and held here for their views and for
     /// opening a going run on another Mac.
     private(set) var runTabs: [String: [PeerTab]] = [:]
+    /// How many unseen views of a host's runs this Mac holds at once. Each is an ssh channel on the connection the panes share, and sshd allows ten
+    /// sessions to a connection, so the rest is left for the user's own panes and cards. A run left unadopted still runs and is tended on the host.
+    static let viewsPerHost = 4
+    /// The run tabs, by host, whose view here ended while the host still lists the run: not adopted again, or each minute would try the ssh channel
+    /// that failed. Dropped when the host stops listing the tab.
+    private var abandoned: [String: Set<UUID>] = [:]
     private var askedAt: [String: Date] = [:]
     private var asking: Set<String> = []
     weak var model: LauncherModel?
@@ -134,7 +145,8 @@ final class HostAutomationStore: ObservableObject {
 
     /// Opens the editor on a host's automation (or a new one); the host's projects are read for its folder picker.
     func beginEditing(_ automation: Automation, isNew: Bool, on host: String) {
-        editing = Editing(host: host, draft: automation, isNew: isNew, skipPermissions: snapshots[host]?.value?.skipPermissions ?? false)
+        editing = Editing(host: host, draft: automation, isNew: isNew, base: isNew ? nil : automation,
+                          skipPermissions: snapshots[host]?.value?.skipPermissions ?? false)
         Task {
             guard case .success(let reply) = await PeerManager.shared.send(PeerRequest(.projects), to: host),
                   var current = editing, current.host == host else { return }
@@ -158,7 +170,7 @@ final class HostAutomationStore: ObservableObject {
         current.saving = true
         editing = current
         let host = current.host
-        let result = await PeerManager.shared.saveAutomation(automation, on: host)
+        let result = await PeerManager.shared.saveAutomation(automation, base: current.base, on: host)
         guard var after = editing, after.host == host else { return }
         switch result {
         case .success(let value):
@@ -171,12 +183,13 @@ final class HostAutomationStore: ObservableObject {
         }
     }
 
-    /// A change from a row: the switch.
+    /// A change from a row: the switch. The copy it was read from goes as the base, so the host applies the switch alone and never puts back what
+    /// another Mac has edited since.
     func setEnabled(_ automation: Automation, _ on: Bool, on host: String) {
         var next = automation
         next.enabled = on
         Task {
-            let result = await PeerManager.shared.saveAutomation(next, on: host)
+            let result = await PeerManager.shared.saveAutomation(next, base: automation, on: host)
             if case .failure(let refusal) = result { notes[automation.id] = refusal.message } else { notes[automation.id] = nil }
             take(result, from: host)
         }
@@ -211,6 +224,15 @@ final class HostAutomationStore: ObservableObject {
     /// Takes in what a host's listing says of its run tabs.
     func take(runTabs found: [PeerTab], from host: String) {
         runTabs[host] = found
+        abandoned[host]?.formIntersection(found.compactMap { UUID(uuidString: $0.tab) })
+    }
+
+    func isAbandoned(_ tab: UUID, on host: String) -> Bool { abandoned[host]?.contains(tab) == true }
+
+    /// The view of a host's run ended here (`LauncherModel.runClosed`, before the tab goes): the run may well go on, so it is not adopted again.
+    func viewEnded(_ session: ClaudeSession) {
+        guard let host = session.record.host, session.record.automation != nil else { return }
+        abandoned[host, default: []].insert(session.id)
     }
 }
 
@@ -262,8 +284,10 @@ extension LauncherModel {
                 }
                 continue
             }
-            guard let mark = listing.run, closing[id] == nil, !listing.runningPanes.isEmpty,
-                  Zmx.sameID(listing.control, PeerIdentity.id), let tab = openHostTab(listing, on: peer) else { continue }
+            let held = tabs.filter { $0.host == host && $0.isHiddenRun }.count
+            guard let mark = listing.run, closing[id] == nil, !listing.runningPanes.isEmpty, held < HostAutomationStore.viewsPerHost,
+                  !HostAutomationStore.shared.isAbandoned(id, on: host), Zmx.sameID(listing.control, PeerIdentity.id),
+                  let tab = openHostTab(listing, on: peer) else { continue }
             // A mark with no automation (a run started by hand, or by a session) is held under the tab's own id.
             let automation = mark.automation.flatMap(UUID.init(uuidString:)) ?? id
             for pane in tab.sessions where pane.isClaude {
@@ -398,7 +422,7 @@ struct HostAutomationSections: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(automation.name.isEmpty ? "Untitled" : automation.name).font(.system(size: 13, weight: .medium))
-                    Text(summary(automation)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    Text(summary(automation, home: value.userHome)).font(.system(size: 11.5)).foregroundStyle(.secondary)
                     Text(status(automation, value: value)).font(.system(size: 11.5)).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 12)
@@ -427,9 +451,13 @@ struct HostAutomationSections: View {
         .padding(.horizontal, 14).padding(.vertical, 8)
     }
 
-    private func summary(_ automation: Automation) -> String {
+    private func summary(_ automation: Automation, home: String?) -> String {
         var parts = [automation.cadence.label]
-        parts.append(automation.folder ?? "Default folder")
+        parts.append(automation.folder.map { path in
+            // The host's own `~`: the Mac's abbreviation would be for this Mac's home.
+            guard let home, !home.isEmpty else { return path }
+            return path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+        } ?? "Home")
         if let agent = automation.agent { parts.append("@" + agent) }
         if let permissions = automation.permissions { parts.append(permissions.title) }
         return parts.joined(separator: " · ")

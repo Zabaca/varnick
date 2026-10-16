@@ -709,8 +709,9 @@ let hostMac = "11111111-2222-3333-4444-555555555555"
 let otherMac = "66666666-7777-8888-9999-000000000000"
 let hostNow = at("2026-10-15 12:00")
 let hostFolders: Set<String> = ["/home/u/Projects/a", "/home/u"]
+let hostHome = "/home/u/state/Home"
 let hostEnvironment = HostAutomationSave.Environment(
-    defaultFolder: "/home/u", isFolder: { hostFolders.contains($0) },
+    homeFolder: hostHome, userHome: "/home/u", isFolder: { hostFolders.contains($0) },
     agents: { $0 == "/home/u/Projects/a" ? ["reviewer"] : [] },
     trust: { _ in nil })
 let hostBase = Automation(name: "Morning summary", prompt: "Say hello", folder: "/home/u/Projects/a", cadence: .daily(hour: 9, minute: 0), timeZone: "UTC")
@@ -779,13 +780,20 @@ expect("no prompt is a problem", problems { $0.prompt = " " }.contains { $0.cont
 expect("a folder that isn't one is a problem", problems { $0.folder = "/nowhere" }.contains { $0.contains("/nowhere isn't a folder") })
 expect("an agent the folder lacks is a problem", problems { $0.agent = "ghost" }.contains { $0.contains("@ghost") })
 expect("an agent the folder has is not", problems { $0.agent = "reviewer" }.isEmpty)
-let untrustedEnvironment = HostAutomationSave.Environment(defaultFolder: "/home/u", isFolder: { _ in true }, agents: { _ in [] }, trust: { _ in "not trusted" })
+let untrustedEnvironment = HostAutomationSave.Environment(homeFolder: hostHome, userHome: "/home/u", isFolder: { _ in true }, agents: { _ in [] }, trust: { _ in "not trusted" })
 expect("an untrusted folder is refused with Claude Code's note",
        refused(HostAutomationSave.save(hostBase, into: [], sender: hostMac, now: hostNow, in: untrustedEnvironment)) == ["not trusted"])
 expect("a cadence the presets lack is a problem", problems { $0.cadence = .minutes(7) }.contains("The cadence isn't one the presets have"))
 expect("a zone the host doesn't know is a problem", problems { $0.timeZone = "Nowhere/Land" }.contains { $0.contains("Nowhere/Land") })
 expect("a working limit out of range is a problem", problems { $0.workingLimitMinutes = 1 }.contains("The working limit must be 5 to 1440 minutes"))
-expect("no folder means the host's default folder", problems { $0.folder = nil }.isEmpty)
+expect("no folder means Varnick's Home there, which is made at the start and so is not looked for or checked for trust",
+       problems { $0.folder = nil }.isEmpty && hostEnvironment.folder(of: { var a = hostBase; a.folder = nil; return a }()) == hostHome
+       && refused(HostAutomationSave.save({ var a = hostBase; a.folder = nil; return a }(), into: [], sender: hostMac, now: hostNow, in: untrustedEnvironment)).isEmpty)
+expect("an agent is judged against Home for an automation with no folder", problems { $0.folder = nil; $0.agent = "ghost" }.contains { $0.contains("@ghost") && $0.contains("Home") })
+expect("the account's home folder is refused, however it is written, with the reason",
+       ["~", "/home/u", "/home/u/", "  ~ "].allSatisfy { written in problems { $0.folder = written } == [HostAutomationSave.homeRefusal] })
+expect("a folder under the home folder is not the home folder", hostEnvironment.folder(of: { var a = hostBase; a.folder = "~/Projects/a"; return a }()) == "/home/u/Projects/a"
+       && problems { $0.folder = "~/Projects/a" }.isEmpty)
 expect("several problems are all named", problems { $0.name = ""; $0.cadence = .minutes(7); $0.workingLimitMinutes = 0 }.count == 3)
 var nameless = hostBase
 nameless.name = ""
@@ -794,6 +802,35 @@ expect("nothing is saved while there is a problem", saved(untouched).isEmpty && 
 var gone = hostBase
 gone.folder = "/gone"
 expect("a run can't start in a folder the host lacks", !HostAutomationSave.startProblems(gone, in: hostEnvironment).isEmpty)
+
+// A save of a copy older than the host's is refused; the row's switch is applied alone; and nothing blocks switching off.
+let editorsCopy = host
+var movedOn = host
+movedOn.name = "Renamed on another Mac"
+var staleEdit = editorsCopy
+staleEdit.cadence = .daily(hour: 10, minute: 0)
+expect("an edit started from a copy older than the host's is refused", refused(HostAutomationSave.save(staleEdit, base: editorsCopy, into: [movedOn], sender: hostMac, now: hostNow, in: hostEnvironment))
+    == [HostAutomationSave.staleRefusal])
+expect("an edit of the host's current copy is taken", !saved(HostAutomationSave.save(staleEdit, base: editorsCopy, into: [editorsCopy], sender: hostMac, now: hostNow, in: hostEnvironment)).isEmpty)
+var switchedOffCopy = editorsCopy
+switchedOffCopy.enabled = false
+let switchOnly = saved(HostAutomationSave.save(switchedOffCopy, base: editorsCopy, into: [movedOn], sender: otherMac, now: hostNow, in: hostEnvironment)).first
+expect("a switch from an older copy changes the switch alone", switchOnly?.enabled == false && switchOnly?.name == "Renamed on another Mac" && switchOnly?.savedBy == otherMac)
+let goneFolder = HostAutomationSave.Environment(homeFolder: hostHome, userHome: "/home/u", isFolder: { _ in false }, agents: { _ in [] }, trust: { _ in "not trusted" })
+expect("switching off is saved though the folder has gone and the trust with it",
+       saved(HostAutomationSave.save(switchedOffCopy, base: editorsCopy, into: [editorsCopy], sender: hostMac, now: hostNow, in: goneFolder)).first?.enabled == false)
+var offCopy = editorsCopy
+offCopy.enabled = false
+var hostTurnedOn = offCopy
+hostTurnedOn.enabled = true
+expect("switching on is refused with the problem when the folder has gone", !refused(HostAutomationSave.save(hostTurnedOn, base: offCopy, into: [offCopy], sender: hostMac, now: hostNow, in: goneFolder)).isEmpty)
+expect("switching on from the host's list starts the slots from now", saved(HostAutomationSave.save(hostTurnedOn, base: offCopy, into: [offCopy], sender: hostMac, now: hostNow, in: hostEnvironment)).first?.lastSlot == hostNow)
+expect("a switch to the state it has changes nothing", saved(HostAutomationSave.save(editorsCopy, base: editorsCopy, into: [editorsCopy], sender: otherMac, now: hostNow, in: hostEnvironment)) == [editorsCopy])
+var disabledNew = hostBase
+disabledNew.id = UUID()
+disabledNew.enabled = false
+disabledNew.folder = "/nowhere"
+expect("a disabled automation is saved without its start being checked", !saved(HostAutomationSave.save(disabledNew, into: [], sender: hostMac, now: hostNow, in: hostEnvironment)).isEmpty)
 
 // The `automations` value: same versions, and a newer automations or runs version is read as newer, with empty lists, never as a failure to decode.
 let listing = HostAutomations(automations: [host], runs: [TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .done)], timerAge: 30, skipPermissions: true)
