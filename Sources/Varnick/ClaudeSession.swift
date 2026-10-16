@@ -619,7 +619,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // (which come with the Automations switch alone), whatever they say: its MCP config lists `notify` alone (option 01 of
         // `prompts-cant-run-on-a-schedule`). A step of a Task's Run is a run too: its config lists `notify` and, while its folder holds the step's
         // result schema, `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a); never the task tools.
-        let isRun = record.automation != nil || record.taskRun != nil
+        let isRun = record.isRun
         let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
@@ -1232,7 +1232,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         left.agent = record.agent
         // A run that changed conversation (plan mode's clear context, /resume) leaves one that is still a run's: resumed from Recent it keeps
         // what a run has, as `openRun` and `applyRunFields` do.
-        if record.automation != nil || record.taskRun != nil {
+        if record.isRun {
             left.automation = record.automation
             left.taskRun = record.taskRun
             left.skipPermissions = record.skipPermissions

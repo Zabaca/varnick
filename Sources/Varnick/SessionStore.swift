@@ -80,6 +80,9 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// load, and an older build ignores it.
     var taskRun: UUID?
 
+    /// A run of an automation or a step of a Task's Run: its MCP server lists `notify` (and a step's `task_result`) alone, whatever the switches say.
+    var isRun: Bool { automation != nil || taskRun != nil }
+
     /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude
     /// pane here that another Mac marked. `SessionStore.State` turns it into a tab's mark and never writes it again. Optional so older files load.
     var completedAt: Date?

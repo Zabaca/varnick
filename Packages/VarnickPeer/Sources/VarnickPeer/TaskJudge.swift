@@ -27,8 +27,9 @@ public struct JudgeUnavailable: Error {
 public enum JudgeResult: Equatable {
     /// The label (or yes or no), who picked it, its probability and the line the Run shows.
     case verdict(outcome: String, actor: String, probability: Double, line: String)
-    /// Jev was unsure and the Task names an `unsure` edge, so Claude was not asked.
-    case unsure(line: String)
+    /// Jev was unsure (or there was no Jev) and the Task names an `unsure` edge, so Claude was not asked. `actor` is Jev, or the harness when there
+    /// was no Jev to be unsure.
+    case unsure(actor: String, line: String)
     /// Neither voice answered.
     case failed(String)
 }
@@ -96,7 +97,7 @@ public enum TaskJudge {
                 why = "\(jev.name) didn't answer"
             }
         }
-        guard claudeDecides else { return .unsure(line: "Unsure: \(why)") }
+        guard claudeDecides else { return .unsure(actor: jev?.name ?? "Harness", line: "Unsure: \(why)") }
         guard let claude else { return .failed("Nobody could judge: \(why)") }
         do {
             let answer = try await claude.answer(question)

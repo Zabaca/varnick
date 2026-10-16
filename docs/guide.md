@@ -474,7 +474,7 @@ check it"), and Varnick checks the file as it is read, so a mistake is named bef
   [privacy and security](privacy-and-security.md#anthropic-through-task-runs).
 - **Settings › Tasks** (shown while Tasks is on) lists each Task file with its problems and the permissions of its Claude steps:
   Varnick's setting, Ask, Allowed tools only or Skip, and the allowed tools. These are yours alone and never in the file. A file that is new
-  or changed since you pressed **Seen** is marked, and runs with Varnick's setting in place of Skip until you have seen it.
+  or changed since you pressed **Seen** is marked.
 - **A session can list, check and start Tasks** through four Varnick tools while Tasks is on (`tasks_list`, `task_check`, `task_run`,
   `task_run_status`), with no approval step of Varnick's; a Run's own sessions never have them. It polls `task_run_status` for the result.
 - Not in this build: a Task step on a website, and a saved Task as an automation's work.

@@ -69,7 +69,7 @@ A Claude step answers through a `task_result` tool whose arguments are the `resu
 
 A Run takes at most 50 steps (loops count) and works at most 60 minutes of awake time; a sub-task has its parent's limit and Runs nest 3 deep. A Task may not reach itself through sub-tasks. Passing a bound fails the Run with that reason; a Task step then takes `failed`.
 
-Permissions for a Task's Claude steps are Varnick's setting, or what the user chose in Settings › Tasks (Ask, Allowed tools only, Skip). A Task new or changed since the user pressed Seen runs with Varnick's setting in place of Skip. A Claude step's session lists `notify` and `task_result` alone, so it starts nothing else; a Run starts other Tasks only through a `task` step.
+Permissions for a Task's Claude steps are the user's, set in Settings › Tasks and never in the file, so a Task you write has none of its own. A Claude step's session lists `notify` and `task_result` alone, so it starts nothing else; a Run starts other Tasks only through a `task` step.
 
 ## Test
 

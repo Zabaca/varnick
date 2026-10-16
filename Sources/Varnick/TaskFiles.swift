@@ -40,9 +40,13 @@ struct TaskGrant: Codable, Equatable {
 }
 
 enum TaskFiles {
+    /// The problem a second file of one name in a folder is listed with.
+    private static let duplicate = "Another file of this folder has this Task's name"
+
     /// The project's Tasks, then the user's, each sorted by name; a project's Task hides the user's of the same name. Outside any repo there are no
-    /// project Tasks, and a repo at the home folder would read the user's folder twice, so its Tasks stay the user's. Reads the disk: not for the
-    /// main actor to do while a view draws (`TaskCatalog`).
+    /// project Tasks, and a repo at the home folder would read the user's folder twice, so its Tasks stay the user's. Every file is checked against
+    /// this list, so a sub-task is found the same way in a list, in `task_check` and when a Run starts one. Reads the disk: not for the main actor to
+    /// do while a view draws (`TaskCatalog`).
     static func available(from directory: String) -> [TaskFile] {
         let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
         var project: [TaskFile] = []
@@ -51,7 +55,18 @@ enum TaskFiles {
         }
         let user = load(URL(fileURLWithPath: NSHomeDirectory()), projectPath: nil)
         let names = Set(project.map { $0.name.lowercased() })
-        return project + user.filter { !names.contains($0.name.lowercased()) }
+        return checked(project + user.filter { !names.contains($0.name.lowercased()) })
+    }
+
+    /// Every project's Tasks, then the user's, each checked as it is found from its own folder: for Settings › Tasks, which lists all of them.
+    static func everything(projects: [String]) -> [TaskFile] {
+        var found: [TaskFile] = []
+        var seen = Set<String>()
+        for path in projects {
+            guard let root = Project.repoRoot(of: path), seen.insert(root).inserted else { continue }
+            found += available(from: root).filter { $0.projectPath != nil }
+        }
+        return found + available(from: NSHomeDirectory()).filter { $0.projectPath == nil }
     }
 
     /// The Task of that name found from the folder, valid or not.
@@ -64,32 +79,33 @@ enum TaskFiles {
         TaskLibrary { name in find(name, in: files)?.raw }
     }
 
-    static func load(_ home: URL, projectPath: String?) -> [TaskFile] {
+    /// The files of one folder, read and not yet checked: a second file of one name is marked.
+    private static func load(_ home: URL, projectPath: String?) -> [TaskFile] {
         let root = home.appendingPathComponent(".varnick/tasks", isDirectory: true)
         let urls = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         var files = urls.filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix(".") }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             .map { read($0, projectPath: projectPath) }
-        // Two files of one name in a folder: the second is listed with the problem, and the first runs.
         var seen = Set<String>()
-        for index in files.indices {
-            let key = files[index].name.lowercased()
-            if !seen.insert(key).inserted {
-                files[index] = TaskFile(path: files[index].path, stem: files[index].stem, projectPath: projectPath, raw: files[index].raw,
-                                        check: TaskCheck(definition: nil, problems: ["Another file of this folder has this Task's name"] + files[index].problems),
-                                        digest: files[index].digest)
-            }
+        for index in files.indices where !seen.insert(files[index].name.lowercased()).inserted {
+            let file = files[index]
+            files[index] = TaskFile(path: file.path, stem: file.stem, projectPath: projectPath, raw: file.raw,
+                                    check: TaskCheck(definition: nil, problems: [duplicate] + file.problems), digest: file.digest)
         }
-        // The Tasks of the folder are the library for each other's sub-tasks.
-        let library = TaskLibrary { name in files.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.raw }
+        return files
+    }
+
+    /// Each file checked against the list it belongs to.
+    private static func checked(_ files: [TaskFile]) -> [TaskFile] {
+        let library = TaskLibrary { name in files.first { $0.name.caseInsensitiveCompare(name) == .orderedSame && $0.problems.first != duplicate }?.raw }
         return files.map { file in
-            guard let raw = file.raw, file.problems.first != "Another file of this folder has this Task's name" else { return file }
-            return TaskFile(path: file.path, stem: file.stem, projectPath: projectPath, raw: raw, check: TaskDefinition.check(raw, library: library),
-                            digest: file.digest)
+            guard let raw = file.raw, file.problems.first != duplicate else { return file }
+            return TaskFile(path: file.path, stem: file.stem, projectPath: file.projectPath, raw: raw,
+                            check: TaskDefinition.check(raw, library: library, foundAs: file.name), digest: file.digest)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// One file, checked alone (its sub-tasks are found by `load`).
+    /// One file, read and not checked.
     static func read(_ url: URL, projectPath: String?) -> TaskFile {
         let stem = url.deletingPathExtension().lastPathComponent
         guard let data = try? Data(contentsOf: url) else {
@@ -104,15 +120,15 @@ enum TaskFiles {
         return TaskFile(path: url.path, stem: stem, projectPath: projectPath, raw: raw, check: TaskCheck(definition: nil, problems: []), digest: digest)
     }
 
-    /// A file a session names (`task_check`): checked as if it sat in the tasks folder of the project it is in, so its sub-tasks are that project's
-    /// and the user's.
+    /// A file a session names (`task_check`): checked as if it sat in the tasks folder of the project it is in, against the same list a Run of it
+    /// would be started from, so its sub-tasks are that project's and the user's.
     static func check(path: String) -> TaskFile {
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         let siblings = available(from: url.deletingLastPathComponent().path).filter { $0.path != url.path }
-        var file = read(url, projectPath: nil)
+        let file = read(url, projectPath: nil)
         guard let raw = file.raw else { return file }
-        file = TaskFile(path: file.path, stem: file.stem, projectPath: nil, raw: raw, check: TaskDefinition.check(raw, library: library(siblings)), digest: file.digest)
-        return file
+        return TaskFile(path: file.path, stem: file.stem, projectPath: nil, raw: raw,
+                        check: TaskDefinition.check(raw, library: library(siblings), foundAs: file.name), digest: file.digest)
     }
 }
 
@@ -158,20 +174,24 @@ final class TaskGrants: ObservableObject {
         return digest == file.digest ? nil : .changed
     }
 
-    /// How a Claude step of this file's Task is started: the grant, with Skip only for contents the user has seen. `note` says when Skip was left out.
-    func permissions(for file: TaskFile?) -> (skip: Bool, dontAsk: Bool, tools: [String], note: String?) {
-        guard let file else { return (Settings.shared.skipPermissions, false, [], nil) }
-        let grant = grant(for: file.path)
+    /// How a Claude step of a Run is started. The grant is the user's for the file the Run's copy was read from (`TaskRun.file`), never found again by
+    /// name; Skip covers the copy only if the contents the user saw are the ones the Run started with (`TaskRun.digest`). A file that is gone never
+    /// falls back to Varnick's Skip: its steps ask. `note` says when Skip was left out.
+    func permissions(file: String?, digest: String?) -> (skip: Bool, dontAsk: Bool, tools: [String], note: String?) {
+        guard let file, FileManager.default.fileExists(atPath: file) else {
+            let kept = file.map { self.grant(for: $0) }
+            if kept?.permissions == .allowedOnly { return (false, true, kept?.allowedTools ?? [], "The Task's file is gone, so its grant is kept to its allowed tools") }
+            return (false, false, kept?.allowedTools ?? [], "The Task's file is gone, so its steps ask before they act")
+        }
+        let grant = grant(for: file)
         switch grant.permissions {
         case nil: return (Settings.shared.skipPermissions, false, grant.allowedTools, nil)
         case .ask?: return (false, false, grant.allowedTools, nil)
         case .allowedOnly?: return (false, true, grant.allowedTools, nil)
         case .skip?:
-            if let mark = mark(of: file) {
-                return (Settings.shared.skipPermissions, false, grant.allowedTools,
-                        "Skip permissions isn't granted to a \(mark.text.lowercased()) Task: it follows Varnick's setting until you press Seen")
-            }
-            return (true, false, grant.allowedTools, nil)
+            if let digest, seen[file] == digest { return (true, false, grant.allowedTools, nil) }
+            return (Settings.shared.skipPermissions, false, grant.allowedTools,
+                    "Skip permissions isn't granted to contents you haven't seen: it follows Varnick's setting until you press Seen")
         }
     }
 }
@@ -194,6 +214,20 @@ final class TaskCatalog: ObservableObject {
             guard let self, mine == self.generation else { return }
             self.files = found
             self.folder = directory
+            self.reading = false
+        }
+    }
+
+    /// Every project's Tasks and the user's, for Settings › Tasks.
+    func refreshAll(projects: [String]) {
+        generation += 1
+        let mine = generation
+        reading = true
+        Task { [weak self] in
+            let found = await Task.detached(priority: .userInitiated) { TaskFiles.everything(projects: projects) }.value
+            guard let self, mine == self.generation else { return }
+            self.files = found
+            self.folder = nil
             self.reading = false
         }
     }

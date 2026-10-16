@@ -849,6 +849,25 @@ expect("a list in this build's version that doesn't decode says so and stops sav
 let fromFiles = HostAutomations(automations: .newer(7), runs: .loaded([]), timerAge: nil, skipPermissions: false)
 expect("a newer file reads as its version with no list and a problem", fromFiles.automationsVersion == 7 && fromFiles.automations.isEmpty && fromFiles.automationsProblem != nil)
 expect("a timer that ran a minute ago runs", HostAutomations(timerAge: 60).timerRuns && !HostAutomations(timerAge: 400).timerRuns && !HostAutomations().timerRuns)
+// The host's runs file at version 2 (slice 2a of work-cant-be-saved-or-chained): a version 1 file from the host's earlier build reads, is written as
+// version 2 only when the host changes it, and a Task's own Run (no automation) survives the wire and is left out of what a tick looks an automation up by.
+let hostRunsFile = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-host-runs-\(getpid())", isDirectory: true)
+try? FileManager.default.createDirectory(at: hostRunsFile, withIntermediateDirectories: true)
+let hostRunsURL = TaskRunFile.url(in: hostRunsFile)
+let hostOwnRun = TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .done)
+try? Data(#"{"version": 1, "runs": []}"#.utf8).write(to: hostRunsURL)
+expect("the host reads a version 1 runs file and replies at this build's version", TaskRunFile.read(at: hostRunsURL) == .loaded([])
+       && HostAutomations(automations: .loaded([host]), runs: TaskRunFile.read(at: hostRunsURL), timerAge: nil, skipPermissions: false).runsVersion == 2)
+try? TaskRunFile.write([hostOwnRun], to: hostRunsURL)
+let hostRunsVersion = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: hostRunsURL))) as? [String: Any])?["version"] as? Int
+expect("a runs file the host writes is version 2 and reads back whole", hostRunsVersion == 2 && TaskRunFile.read(at: hostRunsURL) == .loaded([hostOwnRun]))
+var tasksOwnRun = TaskRun(trigger: .byHand(at: hostNow), state: .running)
+tasksOwnRun.definition = .object(["name": .text("x")])
+let mixed = HostAutomations(automations: [host], runs: [hostOwnRun, tasksOwnRun], timerAge: 5, skipPermissions: false)
+let mixedBack = PeerJSON.decode(HostAutomations.self, from: PeerJSON.line(mixed))
+expect("a Task's own Run in the host's list survives the wire", mixedBack == mixed)
+expect("and belongs to no automation", mixedBack?.runs(of: host.id) == [hostOwnRun])
+try? FileManager.default.removeItem(at: hostRunsFile)
 var wholeReply = PeerReply.success()
 wholeReply.automations = listing
 expect("it travels in a reply", PeerJSON.decode(PeerReply.self, from: PeerJSON.line(wholeReply))?.automations == listing)

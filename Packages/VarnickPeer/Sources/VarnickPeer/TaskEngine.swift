@@ -25,8 +25,8 @@ public enum TaskEngine {
     public enum Event: Equatable {
         /// The step in flight ended with an outcome. `actor`, `probability` and `reason` are for the Run's lines.
         case outcome(String, result: TaskValue? = nil, reason: String? = nil, actor: String? = nil, probability: Double? = nil)
-        /// The Run a Task step started ended.
-        case childEnded(state: RunState, result: TaskValue?, reason: String?)
+        /// The Run a Task step started ended. Ignored unless the step in flight is that Task step.
+        case childEnded(child: UUID, state: RunState, result: TaskValue?, reason: String?)
         /// The step in flight has its pane or its child Run; recorded before the pane starts.
         case attached(pane: UUID?, child: UUID?, launch: RunLaunch?)
         /// The step in flight waits on the person (with what for), or no longer does (nil).
@@ -139,8 +139,11 @@ public enum TaskEngine {
             let commands = finish(index, step: step, outcome: outcome, result: result, reason: reason, actor: actor, probability: probability,
                                   run: &next, definition: definition, now: now)
             return Advance(run: next, commands: commands)
-        case .childEnded(let state, let result, let reason):
+        case .childEnded(let child, let state, let result, let reason):
             guard let step else { return ended(&next, as: .failed, "The Task doesn't read", now: now) }
+            // A child's end belongs to the Task step that started it, and to no other step: a stale one (a step since stopped, a loop's earlier
+            // visit) changes nothing.
+            guard step.capability == .task, next.steps[index].child == child else { return Advance(run: run, commands: []) }
             let done = state == .done
             let why = reason ?? (state == .stopped ? "The sub-task was stopped" : "The sub-task failed")
             let commands = finish(index, step: step, outcome: done ? "ok" : "failed", result: done ? result : nil, reason: done ? nil : why,
@@ -462,13 +465,16 @@ extension TaskRun {
 
     /// The Run's lines, one for each visit to a step, in order.
     public var lines: [TaskRunLine] {
-        steps.map { entry in
+        steps.enumerated().map { index, entry in
             let state = entry.state ?? .done
             let capability = TaskCapability(rawValue: entry.capability)?.title ?? entry.capability
             func line(_ actor: String, _ text: String) -> TaskRunLine { TaskRunLine(actor: actor, text: text, step: entry.name, child: entry.child, pane: entry.pane) }
             switch (entry.capability, state) {
             case ("claude", .started): return line("Claude", "\(entry.name): working" + (entry.reason.map { " (\($0))" } ?? ""))
-            case ("claude", .waiting): return line("Claude", "\(entry.name): waits on you")
+            case ("claude", .waiting):
+                // The Run's detail says what for (a permission, a turn that ended without its result), while this step is the one in flight.
+                let why = inFlightIndex == index ? detail : nil
+                return line("Claude", "\(entry.name): waits on you" + (why.map { ": " + $0.replacingOccurrences(of: "Waiting on you: ", with: "") } ?? ""))
             case ("claude", .done):
                 return line("Claude", "\(entry.name): finished" + (entry.result.map { " with " + Self.fields($0) } ?? "") + (entry.reason.map { " (\($0))" } ?? ""))
             case ("judge", .started): return line(entry.actor ?? "Jev", "\(entry.name): judging")

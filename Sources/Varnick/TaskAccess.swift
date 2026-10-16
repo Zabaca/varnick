@@ -91,7 +91,7 @@ final class TaskAccess {
         guard Settings.shared.tasksOn else { throw TaskCallRefusal.off }
         guard let model = PeerManager.shared.model else { throw TaskCallRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
-        guard caller.record.automation == nil, caller.record.taskRun == nil else { throw TaskCallRefusal.fromRun }
+        guard !caller.record.isRun else { throw TaskCallRefusal.fromRun }
         if let problem = model.taskRuns.problem { throw TaskCallRefusal.fileProblem(problem) }
         switch request.tool {
         case TaskMCP.list: return await list(model, caller: caller)

@@ -12,22 +12,22 @@ struct TasksSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("A Task is a saved, named series of steps (Claude, Judge, Notify, another Task) with a typed input and result, written as a JSON file in a project's .varnick/tasks or in your own ~/.varnick/tasks and checked when it is read. !task lists them, asks for the input of one and starts a Run, and a Claude session can list, check and start them through Varnick's tools. The grants below are yours alone, kept here and never in the file: they govern the Claude steps of that Task. A Task that is new or changed since you pressed Seen runs with Varnick's Skip permissions setting in place of Skip, so a session that edits a Task you gave Skip can't give the new contents Skip.")
+            Text("A Task is a saved, named series of steps (Claude, Judge, Notify, another Task) with a typed input and result, written as a JSON file in a project's .varnick/tasks or in your own ~/.varnick/tasks and checked when it is read. !task lists them, asks for the input of one and starts a Run, and a Claude session can list, check and start them through Varnick's tools. The grants below are yours alone, kept here and never in the file: they govern the Claude steps of that Task, and Skip applies only to contents you have seen.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
             if let problem = model.taskRuns.problem {
                 Text(problem).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
-            SectionLabel(text: catalog.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Tasks")
+            SectionLabel(text: "Every project's Tasks, and your own")
             if catalog.files.isEmpty {
-                Text(catalog.reading ? "Looking for Tasks…" : "No Tasks found from here.")
+                Text(catalog.reading ? "Looking for Tasks…" : "No Tasks found in any project or in ~/.varnick/tasks.")
                     .font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 8)
             }
             ForEach(catalog.files) { file in
                 TaskGrantRow(file: file, grants: grants)
             }
         }
-        .onAppear { catalog.refresh(from: model.tasksPanel.folder) }
+        .onAppear { catalog.refreshAll(projects: model.projects.map(\.path)) }
     }
 }
 

@@ -116,7 +116,7 @@ struct RunsBoardView: View {
         if let detail = board.detail, let model = board.model {
             TaskRunView(board: board, store: model.taskRuns, id: detail)
         } else if board.rows.isEmpty {
-            Text("No runs yet. Settings › Automations makes an automation, and Run now tries one.")
+            Text("No runs yet. Settings › Automations makes an automation, and Run now tries one; !task starts a Task.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

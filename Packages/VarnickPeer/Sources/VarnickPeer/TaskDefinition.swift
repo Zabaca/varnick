@@ -317,16 +317,17 @@ public enum TaskTemplate {
 
 extension TaskDefinition {
     /// Turns a Task file's value into a valid Task, or lists every problem in it, each starting with where it is. Sub-tasks are found through
-    /// `library` and checked too; `chain` is the Tasks above this one, which a sub-task may not name.
-    public static func check(_ root: TaskValue, library: TaskLibrary = .empty, chain: [String] = []) -> TaskCheck {
-        var checker = Checker(library: library, chain: chain)
+    /// `library` and checked too. `foundAs` is the name the file was found by, which a nameless file has no other way to be named by: a sub-task that
+    /// names the Task itself, or one above it, is a cycle, and one more than `maxDepth` levels down is refused before it is read.
+    public static func check(_ root: TaskValue, library: TaskLibrary = .empty, foundAs: String? = nil) -> TaskCheck {
+        var checker = Checker(library: library, chain: [], foundAs: foundAs, cache: CheckCache())
         return checker.run(root)
     }
 
     /// A Task as a Run kept it: read without the check, since it passed when the Run started and its sub-tasks aren't kept with it. Nil when the
     /// copy doesn't read (a Run from a build whose format this one doesn't know).
     public static func trusted(_ root: TaskValue) -> TaskDefinition? {
-        var checker = Checker(library: .empty, chain: [])
+        var checker = Checker(library: .empty, chain: [], foundAs: nil, cache: CheckCache())
         return checker.read(root)
     }
 
@@ -335,9 +336,17 @@ extension TaskDefinition {
         var possible: [String: TaskSchema]
     }
 
+    /// What each sub-task's check found, by lowercased name, for one whole check: a Task reached by several paths is read once.
+    fileprivate final class CheckCache {
+        var results: [String: TaskCheck] = [:]
+    }
+
     fileprivate struct Checker {
         let library: TaskLibrary
+        /// The names of the Tasks above this one.
         let chain: [String]
+        let foundAs: String?
+        let cache: CheckCache
         var problems: [String] = []
         var children: [String: TaskDefinition] = [:]
         var name = ""
@@ -346,10 +355,15 @@ extension TaskDefinition {
         var steps: [String: TaskStepDefinition] = [:]
         var flow: [String: [String: Available]] = [:]
 
-        init(library: TaskLibrary, chain: [String]) {
+        init(library: TaskLibrary, chain: [String], foundAs: String?, cache: CheckCache) {
             self.library = library
             self.chain = chain
+            self.foundAs = foundAs
+            self.cache = cache
         }
+
+        /// The names this Task answers to: its own, and the one it was found by.
+        var names: [String] { [name, foundAs ?? ""].filter { !$0.isEmpty } }
 
         mutating func run(_ root: TaskValue) -> TaskCheck {
             guard let file = root.object else { return TaskCheck(definition: nil, problems: ["The file must hold one JSON object, not \(root.kindWord)"]) }
@@ -394,7 +408,7 @@ extension TaskDefinition {
                 return finish(summary: summary, start: start, end: [:])
             }
             for stepName in stepObject.keys.sorted() { readStep(stepName, stepObject[stepName]!) }
-            if steps[start] == nil { problems.append("start names \"\(start)\", which isn't a step") }
+            if steps[start] == nil { problems.append("start names \"\(taskShort(start))\", which isn't a step") }
             let end = readEnd(file["end"])
             check(start: start)
             if steps[start] != nil { checkEnd(end) }
@@ -435,7 +449,7 @@ extension TaskDefinition {
                 problems.append("\(path).\(key) isn't a key of a step: the keys are use, with, result and next")
             }
             guard let use = object["use"]?.text, let capability = TaskCapability(rawValue: use) else {
-                let given = object["use"]?.text.map { "\"\($0)\"" } ?? "nothing"
+                let given = object["use"]?.text.map { "\"\(taskShort($0))\"" } ?? "nothing"
                 return problems.append("\(path).use is \(given): use one of \(TaskCapability.allCases.map(\.rawValue).joined(separator: ", "))")
             }
             var with: [String: TaskValue] = [:]
@@ -499,15 +513,15 @@ extension TaskDefinition {
             for key in step.next.keys.sorted() {
                 let target = step.next[key]!
                 if key != "else", !outcomes.contains(key) {
-                    problems.append("\(path).\(key): \(step.name) has no outcome \"\(key)\"; its outcomes are \(outcomes.joined(separator: ", "))")
+                    problems.append("\(path).\(key): \(step.name) has no outcome \"\(taskShort(key))\"; its outcomes are \(outcomes.joined(separator: ", "))")
                 }
                 if key == "unsure", step.capability != .judge { problems.append("\(path).unsure only goes with a Judge step") }
                 if target != TaskDefinition.endTarget, target != TaskDefinition.failTarget, steps[target] == nil {
-                    problems.append("\(path).\(key) leads to \"\(target)\", which isn't a step, end or fail")
+                    problems.append("\(path).\(key) leads to \"\(taskShort(target))\", which isn't a step, end or fail")
                 }
             }
             for outcome in outcomes where outcome != "failed" && outcome != "unsure" && step.target(for: outcome) == nil {
-                problems.append("\(path): no edge for the outcome \"\(outcome)\" (add it, or an else)")
+                problems.append("\(path): no edge for the outcome \"\(taskShort(outcome))\" (add it, or an else)")
             }
         }
 
@@ -562,12 +576,24 @@ extension TaskDefinition {
                     : "is started by an automation in this build; use a Claude step"
                 return problems.append("\(path): \(builtIn.name) is a built-in Task and \(why)")
             }
-            if task.caseInsensitiveCompare(name) == .orderedSame || chain.contains(where: { $0.caseInsensitiveCompare(task) == .orderedSame }) {
-                return problems.append("\(path): \(task) reaches itself through its sub-tasks (\((chain + [name, task]).joined(separator: " → ")))")
+            if (names + chain).contains(where: { $0.caseInsensitiveCompare(task) == .orderedSame }) {
+                return problems.append("\(path): \(task) reaches itself through its sub-tasks (\((chain + names + [task]).joined(separator: " → ")))")
             }
             guard children[task] == nil else { return }
-            guard let raw = library.lookup(task) else { return problems.append("\(path): no Task is called \"\(task)\"") }
-            let checked = TaskDefinition.check(raw, library: library, chain: chain + [name])
+            // The Tasks above this one are `chain`; one more level than the limit is refused before it is read, so a deep or wide tree isn't walked.
+            let level = chain.count + 1
+            if level > TaskDefinition.maxDepth {
+                return problems.append("\(path): sub-tasks nest \(level) deep: the limit is \(TaskDefinition.maxDepth)")
+            }
+            guard let raw = library.lookup(task) else { return problems.append("\(path): no Task is called \"\(taskShort(task))\"") }
+            let checked: TaskCheck
+            if let seen = cache.results[task.lowercased()] {
+                checked = seen
+            } else {
+                var below = Checker(library: library, chain: chain + [names.first ?? task], foundAs: task, cache: cache)
+                checked = below.run(raw)
+                cache.results[task.lowercased()] = checked
+            }
             if let definition = checked.definition {
                 children[task] = definition
             } else {
@@ -603,7 +629,7 @@ extension TaskDefinition {
                     continue
                 }
                 if label.isEmpty || ["else", "failed", "unsure"].contains(label) || !seen.insert(label).inserted {
-                    problems.append("\(path).options[\(index)].label \"\(label)\" is empty, used twice or reserved (else, failed, unsure)")
+                    problems.append("\(path).options[\(index)].label \"\(taskShort(label))\" is empty, used twice or reserved (else, failed, unsure)")
                 }
                 if criterion.isEmpty { problems.append("\(path).options[\(index)].criterion is empty") }
             }

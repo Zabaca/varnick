@@ -214,6 +214,11 @@ final class SessionNotifier: ObservableObject {
         postRun(run, kind: .message(title), line: "\(run.task) · \(title)")
     }
 
+    /// An opened Claude step's turn ended with no result and it keeps waiting for one: the stall is a notice of the Run's own.
+    func raiseRunWaiting(_ run: TaskRun, step: String) {
+        postRun(run, kind: .needsYou(.question), line: "\(run.task) · \(step) ended its turn without a result and waits for one")
+    }
+
     /// How a Run ended: Done with its result, or Stopped on an error with the step and the outcome that led there ("Failed at check: no").
     func raiseRunEnd(_ run: TaskRun) {
         switch run.state {

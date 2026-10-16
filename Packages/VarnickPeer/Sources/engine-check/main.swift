@@ -243,6 +243,42 @@ expect("sub-tasks 3 deep are valid", checked(chain["L1"]!, library: deepLibrary)
 problems("sub-tasks 4 deep are refused", chain["L0"]!, mention: ["4 deep: the limit is 3"], library: deepLibrary)
 problems("an invalid sub-task shows its problem", parent(), mention: ["sub-task Child"], library: TaskLibrary { $0 == "Child" ? edit(child, "start", .text("zzz")) : nil })
 
+// A nameless file found under a name, naming itself or a Task above it as a sub-task, is a cycle and not a stack overflow.
+let nameless = J(#"""
+{"description": "x", "input": {"type": "object"}, "result": {"type": "object"}, "start": "again",
+ "steps": {"again": {"use": "task", "with": {"task": "loop"}, "next": {"ok": "end", "failed": "fail"}}}, "end": {}}
+"""#)
+let namelessCheck = TaskDefinition.check(nameless, library: TaskLibrary { $0 == "loop" ? nameless : nil }, foundAs: "loop")
+expect("a nameless file that names itself is a cycle", namelessCheck.problems.contains { $0.contains("reaches itself") } && namelessCheck.problems.contains { $0.contains("name is required") },
+       namelessCheck.problems.joined(separator: "; "))
+let namelessDeeper = TaskDefinition.check(edit(nameless, "steps.again.with.task", .text("other")),
+                                          library: TaskLibrary { $0 == "loop" ? edit(nameless, "steps.again.with.task", .text("other")) : $0 == "other" ? edit(nameless, "steps.again.with.task", .text("loop")) : nil },
+                                          foundAs: "loop")
+expect("and so is two nameless files that name each other", namelessDeeper.problems.contains { $0.contains("reaches itself") }, namelessDeeper.problems.joined(separator: "; "))
+// A wide tree of sub-tasks that all name the same ones is read once for each, not once for each path to it.
+var layers: [String: TaskValue] = [:]
+for level in 0..<12 {
+    let calls = level == 11 ? nil : "T\(level + 1)"
+    var steps: [String: TaskValue] = [:]
+    for step in 0..<3 {
+        steps["s\(step)"] = calls.map { J(#"{"use": "task", "with": {"task": ""# + $0 + #""}, "next": {"ok": "s\#(step + 1)", "failed": "fail"}}"#) }
+            ?? J(#"{"use": "notify", "with": {"title": "x"}, "next": {"ok": "end"}}"#)
+    }
+    steps["s3"] = J(#"{"use": "notify", "with": {"title": "x"}, "next": {"ok": "end"}}"#)
+    layers["T\(level)"] = .object(["name": .text("T\(level)"), "description": .text("x"), "input": J(#"{"type": "object"}"#), "result": J(#"{"type": "object"}"#),
+                                  "start": .text("s0"), "steps": .object(steps), "end": .object([:])])
+}
+let started = Date()
+let wide = TaskDefinition.check(layers["T0"]!, library: TaskLibrary { layers[$0] }, foundAs: "T0")
+expect("a tree of sub-tasks 12 deep is refused quickly, not walked", wide.definition == nil && wide.problems.contains { $0.contains("deep: the limit is 3") }
+       && Date().timeIntervalSince(started) < 2, "\(wide.problems.first ?? "") \(Date().timeIntervalSince(started)) s")
+expect("an object doesn't fit a child's input that lacks one of its fields",
+       !TaskSchema.object(["a": .text]).accepts(.object(["a": .text, "b": .text])) && TaskSchema.object(["a": .text, "b": .text]).accepts(.object(["a": .text])))
+expect("a problem doesn't quote a long value of the file", {
+    let long = String(repeating: "x", count: 200)
+    return checked(edit(haiku, "steps.write.use", .text(long))).problems.joined().count < 400 && !checked(edit(haiku, "steps.write.use", .text(long))).problems.joined().contains(long)
+}())
+
 // MARK: Bindings
 
 let context = TaskTemplate.Context(input: ["n": .number(3), "list": .list([.number(1)]), "word": .text("hi")], steps: ["a": ["x": .object(["k": .bool(true)])]])
@@ -434,12 +470,15 @@ if var sim = Sim(parent(), input: [:], library: library) {
     let childID = UUID()
     sim.send(.attached(pane: nil, child: childID, launch: nil))
     expect("the child's id goes on the step", sim.step?.child == childID)
-    sim.send(.childEnded(state: .done, result: J(#"{"twice": 4}"#), reason: nil))
+    sim.send(.childEnded(child: UUID(), state: .done, result: J(#"{"twice": 4}"#), reason: nil))
+    expect("a child's end that is not this step's child changes nothing", sim.run.state == .running && sim.commands.isEmpty && sim.step?.state == .started)
+    sim.send(.childEnded(child: childID, state: .done, result: J(#"{"twice": 4}"#), reason: nil))
     expect("a child that ended with a result is the step's ok, and its fields are readable", sim.run.state == .done && sim.run.result == J(#"{"total": 4}"#) && sim.run.steps[0].result == J(#"{"twice": 4}"#), "\(sim.run.state) \(sim.run.detail ?? "")")
 }
 if var sim = Sim(parent(), input: [:], library: library) {
-    sim.send(.attached(pane: nil, child: UUID(), launch: nil))
-    sim.send(.childEnded(state: .failed, result: nil, reason: "Failed at go: boom"))
+    let childID = UUID()
+    sim.send(.attached(pane: nil, child: childID, launch: nil))
+    sim.send(.childEnded(child: childID, state: .failed, result: nil, reason: "Failed at go: boom"))
     expect("a failed child fails the parent's step with the child's reason", sim.run.state == .failed && sim.run.detail == "Failed at sub: Failed at go: boom", "\(sim.run.detail ?? "")")
 }
 let forgiving = edit(parent(), "steps.sub.next", J(#"{"ok": "end", "failed": "recover"}"#))
@@ -447,8 +486,9 @@ let recovering = edit(edit(forgiving, "steps.recover", J(#"{"use": "notify", "wi
 expect("a parent may name where a failed child goes", checked(edit(recovering, "steps.recover.with.title", .text("child failed")), library: library).isValid,
        checked(edit(recovering, "steps.recover.with.title", .text("child failed")), library: library).problems.joined(separator: "; "))
 if var sim = Sim(edit(recovering, "steps.recover.with.title", .text("child failed")), input: [:], library: library) {
-    sim.send(.attached(pane: nil, child: UUID(), launch: nil))
-    sim.send(.childEnded(state: .stopped, result: nil, reason: nil))
+    let childID = UUID()
+    sim.send(.attached(pane: nil, child: childID, launch: nil))
+    sim.send(.childEnded(child: childID, state: .stopped, result: nil, reason: nil))
     expect("a stopped child is failed to its parent, which takes its failed edge", sim.run.state == .running && sim.step?.name == "recover", "\(sim.run.state) \(sim.step?.name ?? "")")
 }
 
@@ -612,8 +652,9 @@ if case .verdict(_, _, _, let line) = judged(noulQuestion, jev: Stub(name: "Jev"
     expect("an unavailable Jev says why", false)
 }
 expect("a Task that names an unsure edge keeps Claude from deciding", judged(noulQuestion, jev: Stub(name: "Jev", reply: .success(.noul(0.5))), claude: claudeNo, claudeDecides: false)
-       == .unsure(line: "Unsure: Jev was unsure (no at 0.50)") || { if case .unsure = judged(noulQuestion, jev: Stub(name: "Jev", reply: .success(.noul(0.5))), claude: claudeNo, claudeDecides: false) { return true } else { return false } }())
-expect("and so does a missing Jev", { if case .unsure = judged(noulQuestion, jev: nil, claude: claudeNo, claudeDecides: false) { true } else { false } }())
+       == .unsure(actor: "Jev", line: "Unsure: Jev was unsure (yes at 0.50)"))
+expect("and so does a missing Jev, which is the harness's doing and not Jev's", judged(noulQuestion, jev: nil, claude: claudeNo, claudeDecides: false)
+       == .unsure(actor: "Harness", line: "Unsure: there is no Jev"))
 expect("neither voice answering fails the step", { if case .failed = judged(noulQuestion, jev: Stub(name: "Jev", reply: .failure(Boom())), claude: Stub(name: "Claude", reply: .failure(Boom()))) { true } else { false } }())
 expect("Claude's answer that names no option fails the step", { if case .failed = judged(choice, jev: nil, claude: Stub(name: "Claude", reply: .success(.choice(["z": 1])))) { true } else { false } }())
 expect("an answer of the wrong kind is no pick", { if case .failed = judged(choice, jev: nil, claude: Stub(name: "Claude", reply: .success(.noul(1)))) { true } else { false } }())

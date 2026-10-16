@@ -131,21 +131,25 @@ final class TaskRunStore: ObservableObject {
     /// What a check judges the automation's slots from: the newer of its last slot and its newest Run's slot.
     func anchor(for automation: Automation) -> Date { list.anchor(for: automation) }
 
-    /// Adds Runs in order (`TaskRunList.record`) and writes the file once. Nothing happens while the file is unreadable.
-    func record(_ runs: [TaskRun]) {
-        guard problem == nil, !runs.isEmpty else { return }
+    /// Adds Runs in order (`TaskRunList.record`) and writes the file once. Nothing happens while the file is unreadable. Answers whether the file now
+    /// holds them: a Task's host carries out nothing it could not write first.
+    @discardableResult
+    func record(_ runs: [TaskRun]) -> Bool {
+        guard problem == nil, !runs.isEmpty else { return false }
         for run in runs { list.record(run) }
-        write()
+        return write()
     }
 
-    /// Changes one Run in place and writes it when it differs.
-    func update(_ id: UUID, _ change: (inout TaskRun) -> Void) {
-        guard problem == nil, let index = list.runs.firstIndex(where: { $0.id == id }) else { return }
+    /// Changes one Run in place and writes it when it differs. Answers whether the file holds the Run as it is now (false when the Run is gone, the
+    /// file is unreadable, or the write failed, here or earlier and not since).
+    @discardableResult
+    func update(_ id: UUID, _ change: (inout TaskRun) -> Void) -> Bool {
+        guard problem == nil, let index = list.runs.firstIndex(where: { $0.id == id }) else { return false }
         var next = list.runs[index]
         change(&next)
-        guard next != list.runs[index] else { return }
+        guard next != list.runs[index] else { return !unsaved }
         list.runs[index] = next
-        write()
+        return write()
     }
 
     /// The user opened the Run whose step has the pane.
@@ -160,13 +164,21 @@ final class TaskRunStore: ObservableObject {
         write()
     }
 
-    private func write() {
+    /// The last write failed, so the file is behind the list.
+    private var unsaved = false
+
+    @discardableResult
+    private func write() -> Bool {
         do {
             try TaskRunFile.write(list.runs, to: url)
             if writeError != nil { writeError = nil }
+            unsaved = false
+            return true
         } catch {
             writeError = "The runs couldn't be saved: \(error)"
             NSLog("Varnick: \(writeError ?? "")")
+            unsaved = true
+            return false
         }
     }
 }

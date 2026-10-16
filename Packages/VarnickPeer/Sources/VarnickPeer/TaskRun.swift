@@ -308,6 +308,9 @@ public struct TaskRunStep: Codable, Equatable {
 
     /// The conversation to resume, nil for a step with no pane.
     public var conversationID: String? { conversation ?? pane.map { $0.uuidString.lowercased() } }
+
+    /// Its capability, nil for one this build doesn't know.
+    public var kind: TaskCapability? { TaskCapability(rawValue: capability) }
 }
 
 /// One execution of a Task and what became of it. Its `input` is a copy of the Task's, so it holds the prompt and the folder; `detail` is a message's
@@ -343,6 +346,10 @@ public struct TaskRun: Codable, Identifiable, Equatable {
     public var awake: TimeInterval?
     /// How many Runs deep it is: nil is a Run of its own, a child is one more than its parent.
     public var depth: Int?
+    /// The Task file the copy was read from and a digest of its contents then: the grants of its Claude steps are the user's for that path, and Skip
+    /// covers the copy only if the user had seen those contents.
+    public var file: String?
+    public var digest: String?
 
     public init(id: UUID = UUID(), task: String = BuiltInTask.claudePrompt.name, input: [String: TaskValue] = [:], trigger: TaskRunTrigger,
                 state: RunState, detail: String? = nil, startedAt: Date? = nil, endedAt: Date? = nil, opened: Bool = false,

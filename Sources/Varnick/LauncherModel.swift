@@ -328,6 +328,8 @@ final class LauncherModel: ObservableObject {
     static let boardHeight: CGFloat = 600
     static let outlineHeight: CGFloat = 600
     static let resourcesHeight: CGFloat = 600
+    /// The Tasks view (`!task`): a list of rows or a form.
+    static let tasksHeight: CGFloat = 600
     static let sessionRowHeight: CGFloat = 44
     static let sessionHeaderHeight: CGFloat = 30
     /// A tab's row above its matching sessions, in the prompt's list and in a search's results; a session's is `sessionRowHeight` in the prompt's.
@@ -384,7 +386,7 @@ final class LauncherModel: ObservableObject {
         if showingBoard { return Self.boardHeight }
         if showingOutline { return Self.outlineHeight }
         if showingResources { return Self.resourcesHeight }
-        if showingTasks { return Self.resourcesHeight }
+        if showingTasks { return Self.tasksHeight }
         if activeTab != nil { return Self.claudeHeaderHeight + 1 + Self.claudeTerminalHeight }
         // The card needs more than a bare search field or a short list has.
         guard askingRestart else { return searchPanelHeight }

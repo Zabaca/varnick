@@ -177,7 +177,7 @@ public struct TaskSchema: Equatable {
             return (nil, problems)
         }
         guard types.contains(type) else {
-            problems.append("\(path).type \"\(type)\" isn't in the subset: use \(types.joined(separator: ", "))")
+            problems.append("\(path).type \"\(taskShort(type))\" isn't in the subset: use \(types.joined(separator: ", "))")
             return (nil, problems)
         }
         func only(_ keys: [String], for type: String) {
@@ -394,7 +394,7 @@ public struct TaskSchema: Equatable {
     // MARK: Fitting
 
     /// Whether a value of `source` always fits where this schema is wanted: the same kind (an integer in a number, an enum in text), and for an
-    /// object every field both have. The formats of text aren't compared: a child's own check of its input catches an address that isn't one.
+    /// object every field both have, and no field the target doesn't list (a child's own check would refuse it). The formats of text aren't compared: a child's own check of its input catches an address that isn't one.
     public func accepts(_ source: TaskSchema) -> Bool {
         switch (kind, source.kind) {
         case (.text, .text), (.text, .choice): return true
@@ -402,9 +402,12 @@ public struct TaskSchema: Equatable {
         case (.choice(let wanted), .choice(let given)): return Set(given).isSubset(of: Set(wanted))
         case (.list(let wanted), .list(let given)): return wanted.accepts(given)
         case (.object(let wanted, let required), .object(let given, let givenRequired)):
-            guard required.allSatisfy({ givenRequired.contains($0) }) else { return false }
+            guard required.allSatisfy({ givenRequired.contains($0) }), given.keys.allSatisfy({ wanted[$0] != nil }) else { return false }
             return wanted.allSatisfy { name, schema in given[name].map { schema.accepts($0) } ?? true }
         default: return false
         }
     }
 }
+
+/// A value of a Task file quoted in a problem, cut short: a problem is shown to a session, and a file's text is not the problem's to repeat.
+func taskShort(_ text: String) -> String { text.count > 40 ? String(text.prefix(39)) + "…" : text }
