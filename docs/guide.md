@@ -447,7 +447,7 @@ on your screen, so it needs no permission and works while you use the Mac.
 - **Jev** chooses each step when the relevance filter is on TypeSafe with a key saved. Without it, or after it fails three times, Claude
   chooses (the pane says "Without Jev"), more slowly. Your own Claude Code, logged in, is needed either way: it writes the values and
   steers. Nothing starts without it.
-- One task runs at a time. A second task in the same pane keeps the first one's cookies and cart.
+- One Website pane works at a time. A second piece of work in the same pane keeps the first one's cookies and cart.
 - What goes where is in [privacy and security](privacy-and-security.md#anthropic-through-tasks). To try it on a made-up shop,
   run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Website pane.
 

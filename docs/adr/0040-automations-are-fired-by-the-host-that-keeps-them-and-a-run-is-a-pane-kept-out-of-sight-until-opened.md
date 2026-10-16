@@ -39,3 +39,5 @@ A Claude session on this Mac can list, make, edit and switch automations through
 - **Claude Code's own dialog is the only approval:** the tools are not in a session's allow list, so a pane with Skip permissions off asks before each call.
 
 Considered and not chosen: a `propose` tool the user approves (the user decided against an approval step); tying the tools to Panel access (it would make the user grant reading screens and pressing keys to get this); a switch of their own (the Automations switch is already that decision); a notice besides the mark (it is mostly raised for the pane the user is looking at, needs a message only the hook writes or a new kind in both languages, and the first run tells them anyway).
+
+- Amended by ADR 0041: an Automation is a trigger (a cadence, a Task and its input), and its Runs are kept in a runs file of their own.

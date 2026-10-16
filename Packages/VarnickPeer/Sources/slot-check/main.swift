@@ -272,6 +272,10 @@ stepped.conversation = "moved-conversation"
 stepped.worked = 90
 expect("a moved conversation and the time worked live on the step", stepped.steps[0].conversation == "moved-conversation" && stepped.conversationID == "moved-conversation"
        && stepped.steps[0].worked == 90 && stepped.worked == 90)
+var twoPanes = stepped
+twoPanes.steps.append(TaskRunStep(name: "again", capability: "claude", pane: UUID(), conversation: "second-conversation"))
+expect("a conversation of any step finds its step", twoPanes.step(conversation: "second-conversation")?.name == "again"
+       && twoPanes.step(conversation: "moved-conversation")?.name == "claude" && twoPanes.step(conversation: "none") == nil)
 let skippedRun = notRun(sample.id, slot: at("2026-10-15 16:00"), .skipped, "x")
 expect("a slot that did not run has no step, pane or conversation", skippedRun.steps.isEmpty && skippedRun.pane == nil && skippedRun.conversationID == nil)
 

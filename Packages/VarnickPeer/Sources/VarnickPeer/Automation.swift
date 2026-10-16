@@ -1,9 +1,7 @@
 import Foundation
 
-/// A trigger: a cadence, a Task and the input values it runs with (option 01 of `work-cant-be-saved-or-chained`; CONTEXT.md, Automation). It was a
-/// saved prompt (option 01 of `prompts-cant-run-on-a-schedule`), and in this build its Task is always the built-in Claude prompt, whose input is a
-/// prompt, a folder and an agent. It is kept on the host that runs it and fired by that host; the prompt goes to Claude as written, as the first
-/// message of a new session. Its Runs are in the runs file (`TaskRunFile`), not here.
+/// A trigger: a cadence, a Task and its input values (CONTEXT.md, Automation), kept on the host that fires it. Its Task is always the Claude prompt
+/// for now. Its Runs are in the runs file (`TaskRunFile`), not here.
 public struct Automation: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String

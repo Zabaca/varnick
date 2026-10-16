@@ -235,7 +235,7 @@ final class Settings: ObservableObject {
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
     static let outlineOnKey = "outlineOn"
-    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Website tile and the Website pane, which the code still calls the Task pane). Off by default, for every install;
+    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Website tile and the Website pane). Off by default, for every install;
     /// off means no command, no tile, and a running task stops at its next step.
     @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
     static let tasksOnKey = "tasksOn"

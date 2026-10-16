@@ -216,7 +216,8 @@ public struct TaskRunStep: Codable, Equatable {
     public var conversationID: String? { conversation ?? pane.map { $0.uuidString.lowercased() } }
 }
 
-/// One execution of a Task and what became of it. It names no folder content or words beyond a message's title, which the pane folder already holds.
+/// One execution of a Task and what became of it. Its `input` is a copy of the Task's, so it holds the prompt and the folder; `detail` is a message's
+/// title or a reason.
 public struct TaskRun: Codable, Identifiable, Equatable {
     /// A Claude prompt Run's is its pane's id, so notices and the Runs tab keep their ids; a fresh one for a slot that did not run.
     public var id: UUID
@@ -256,25 +257,32 @@ public struct TaskRun: Codable, Identifiable, Equatable {
     /// A Run with a session that may still be here (it started and nothing has ended it): never dropped from the list.
     public var isKept: Bool { state.ran && endedAt == nil }
 
-    /// The pane of the step that has one. Everything that looks a Run's pane up goes through here, never through `id`.
-    public var pane: UUID? { steps.first { $0.pane != nil }?.pane }
+    private var paneIndex: Int? { steps.firstIndex { $0.pane != nil } }
 
-    public var launch: RunLaunch? { steps.first { $0.pane != nil }?.launch }
+    /// The pane of the Run's first step that has one; the properties below read that step. A Run of one pane (every Run in this build) is whole
+    /// through them. A Run of several walks `steps`, and so do the readers that use these (`isRunGoing`, `tendRuns`, `displayed`).
+    /// Look a pane up here, never through `id`.
+    public var pane: UUID? { paneIndex.flatMap { steps[$0].pane } }
+
+    public var launch: RunLaunch? { paneIndex.flatMap { steps[$0].launch } }
 
     /// The conversation to resume, nil for a Run that never had a pane.
-    public var conversationID: String? { steps.first { $0.pane != nil }?.conversationID }
+    public var conversationID: String? { paneIndex.flatMap { steps[$0].conversationID } }
 
     /// The conversation once the pane has moved off its first one.
     public var conversation: String? {
-        get { steps.first { $0.pane != nil }?.conversation }
-        set { if let index = steps.firstIndex(where: { $0.pane != nil }) { steps[index].conversation = newValue } }
+        get { paneIndex.flatMap { steps[$0].conversation } }
+        set { if let index = paneIndex { steps[index].conversation = newValue } }
     }
 
     /// Awake seconds its pane's turn has worked, which the working limit counts.
     public var worked: TimeInterval? {
-        get { steps.first { $0.pane != nil }?.worked }
-        set { if let index = steps.firstIndex(where: { $0.pane != nil }) { steps[index].worked = newValue } }
+        get { paneIndex.flatMap { steps[$0].worked } }
+        set { if let index = paneIndex { steps[index].worked = newValue } }
     }
+
+    /// The step whose conversation is this one, whichever step it is: how a conversation resumed from anywhere finds its Run.
+    public func step(conversation: String) -> TaskRunStep? { steps.first { $0.conversationID == conversation } }
 }
 
 /// The Runs of every automation, newest first, with the rules of the list: each automation keeps its last `limit`, and consecutive slots that did not
@@ -295,9 +303,8 @@ public struct TaskRunList: Equatable {
         runs.filter { $0.trigger.automation == automation && !$0.trigger.manual }.map(\.trigger.slot).max()
     }
 
-    /// What a check judges the automation's slots from: the newer of its last slot and its newest clock Run's slot. A check writes the Runs first and
-    /// the last slot after, so a crash between the two leaves a Run the last slot doesn't name; this keeps that slot from being started or recorded
-    /// missed a second time.
+    /// What a check judges the automation's slots from: the newer of its last slot and its newest clock Run's slot, so a crash between the two
+    /// writes doesn't start or miss a slot twice.
     public func anchor(for automation: Automation) -> Date {
         max(automation.anchor, newestSlot(of: automation.id) ?? .distantPast)
     }

@@ -31,3 +31,4 @@ The user wants to hand Varnick a task that takes many steps on a website ("find 
 - **Every task starts logged out.** That suits "create an account" and public facts, not "check my order on a site I use". Keeping data per site is later.
 - **Without Jev it is slower and dearer,** close to Claude alone. The pane says "Without Jev: each step asks Claude".
 - **Sites written for people may resist it:** script-built pages that a fetch previews empty, bot checks, and forms that ignore script events.
+- Amended by ADR 0041: the loop becomes the Website capability of a Task, and the Task pane is called the Website pane.

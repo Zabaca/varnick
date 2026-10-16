@@ -93,8 +93,7 @@ final class AutomationAccess {
         guard let model = PeerManager.shared.model else { throw AutomationRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
         guard caller.record.automation == nil else { throw AutomationRefusal.fromRun }
-        let store = model.automations
-        if let problem = store.problem ?? model.taskRuns.problem { throw AutomationRefusal.fileProblem(problem) }
+        if let problem = model.automationFilesProblem { throw AutomationRefusal.fileProblem(problem) }
         switch request.tool {
         case AutomationMCP.list: return list(model)
         case AutomationMCP.create: return try create(request.args, model, caller: caller)

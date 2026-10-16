@@ -94,9 +94,8 @@ final class AutomationStore: ObservableObject {
     }
 }
 
-/// This Mac's Runs: `runs.json` in the support folder, a file of its own beside `automations.json` (never `sessions.json`), read once at launch and
-/// written only by this Varnick. As the automations file is, a file that can't be read, or is from a newer build, stops every check and every save and
-/// is never written over (`TaskRunFile`); the Settings section says so. A check writes the Runs here first and the automation's last slot after.
+/// This Mac's Runs: `runs.json`, read once at launch and written only by this Varnick, under the same rules as `AutomationStore`
+/// (docs/agents/where-it-breaks.md, Automations).
 @MainActor
 final class TaskRunStore: ObservableObject {
     @Published private(set) var list = TaskRunList()
@@ -132,10 +131,10 @@ final class TaskRunStore: ObservableObject {
     /// What a check judges the automation's slots from: the newer of its last slot and its newest Run's slot.
     func anchor(for automation: Automation) -> Date { list.anchor(for: automation) }
 
-    /// Adds a Run (`TaskRunList.record`). Nothing happens while the file is unreadable.
-    func record(_ run: TaskRun) {
-        guard problem == nil else { return }
-        list.record(run)
+    /// Adds Runs in order (`TaskRunList.record`) and writes the file once. Nothing happens while the file is unreadable.
+    func record(_ runs: [TaskRun]) {
+        guard problem == nil, !runs.isEmpty else { return }
+        for run in runs { list.record(run) }
         write()
     }
 
@@ -206,7 +205,7 @@ final class AutomationRunner {
     func check(now: Date = Date()) {
         guard let model, Settings.shared.automationsOn else { return }
         let store = model.automations, runs = model.taskRuns
-        guard store.problem == nil, runs.problem == nil else { return }
+        guard model.automationFilesProblem == nil else { return }
         let elapsed = lastCheck.map { now.timeIntervalSince($0) }.flatMap { $0 > 0 && $0 <= Self.awakeGap ? $0 : nil } ?? 0
         lastCheck = now
         for id in store.automations.map(\.id) {
@@ -233,7 +232,7 @@ final class AutomationRunner {
             }
             // After the start answers: a start that failed is recorded as such and not tried again for the same slot. The Runs are written first and
             // the last slot after.
-            for run in recorded { runs.record(run) }
+            runs.record(recorded)
             store.update(id) { $0.lastSlot = newest }
         }
     }
@@ -242,11 +241,15 @@ final class AutomationRunner {
 // MARK: - The model's side
 
 extension LauncherModel {
+    /// Why nothing is checked, saved or deleted: either the automations file or the runs file can't be read. Everything that checks, saves or
+    /// deletes asks this, so Settings and the tools agree.
+    var automationFilesProblem: String? { automations.problem ?? taskRuns.problem }
+
     /// Hands the model to the runner once the saved tabs are restored (`applicationDidFinishLaunching`, after `cleanUpAfterLastRun`): runs left
     /// unopened by a build with Automations off are released, and so is a hidden run tab that no Run names, then the first check, which catches a
     /// missed slot up once.
     func startAutomations() {
-        if !Settings.shared.automationsOn { releaseRuns() }
+        if !Settings.shared.automationsOn, taskRuns.problem == nil { releaseRuns() }
         releaseUnnamedRuns()
         automationSwitch = Settings.shared.$automationsOn.removeDuplicates().dropFirst().sink { [weak self] on in
             // The publisher sends before the value is stored, so the check reads it from the next turn of the run loop.
@@ -299,9 +302,10 @@ extension LauncherModel {
 
     /// Deletes an automation. Its runs that are going stay as ordinary tabs, opened, since nothing would tend them any more; its Runs are gone with it.
     func deleteAutomation(_ id: UUID) {
+        guard automationFilesProblem == nil else { return }
         releaseRuns(of: id)
         automations.remove(id)
-        if automations.automation(id) == nil { taskRuns.removeRuns(of: id) }
+        taskRuns.removeRuns(of: id)
     }
 
     /// The run tab is shown: it is an ordinary tab from now on (`activate`), and the run list says it was opened. An opened run is never ended by a check.
@@ -320,7 +324,7 @@ extension LauncherModel {
     /// Why a run can't be started by hand now, nil when it can.
     func runNowRefusal(of id: UUID) -> String? {
         guard Settings.shared.automationsOn else { return "Automations is off" }
-        if let problem = automations.problem ?? taskRuns.problem { return problem }
+        if let problem = automationFilesProblem { return problem }
         guard let automation = automations.automation(id) else { return "That automation is gone" }
         tendRuns(of: id)
         if isRunGoing(of: automation) { return "The last run is still going" }
@@ -333,7 +337,7 @@ extension LauncherModel {
         guard let automation = automations.automation(id) else { return nil }
         let now = Date()
         let run = startRun(of: automation, slot: now, late: false, manual: true, now: now)
-        taskRuns.record(run)
+        taskRuns.record([run])
         return run.state == .couldntStart ? run.detail : nil
     }
 
@@ -556,11 +560,11 @@ extension LauncherModel {
     /// permissions it started with. Nothing changes for a conversation that was not a run's.
     func applyRunFields(to record: inout SessionRecord) {
         let conversation = record.conversationID
-        // Found through the steps' conversations, which a Run of several panes has one of each: a miss here gives a resumed run Screen, Panel and
-        // automation tools.
-        guard let run = taskRuns.runs.first(where: { $0.state.ran && $0.conversationID == conversation }) else { return }
+        // Found through any step's conversation: a miss here gives a resumed run Screen, Panel and automation tools.
+        guard let run = taskRuns.runs.first(where: { $0.state.ran && $0.step(conversation: conversation) != nil }),
+              let step = run.step(conversation: conversation) else { return }
         record.automation = run.trigger.automation
-        if let launch = run.launch {
+        if let launch = step.launch {
             record.skipPermissions = launch.skipPermissions
             record.dontAsk = launch.dontAsk ? true : nil
             record.allowedTools = launch.allowedTools.isEmpty ? nil : launch.allowedTools

@@ -16,6 +16,9 @@ struct AutomationsSettingsView: View {
     /// The automation whose Delete was pressed once: the row asks, and a second press does it.
     @State private var confirmingDelete: UUID?
 
+    /// Either file can't be read: nothing is run, saved or deleted (read through the stores this view observes, so it redraws when one changes).
+    private var blocked: Bool { model.automationFilesProblem != nil }
+
     var body: some View {
         if let draft = editing {
             AutomationEditor(draft: draft, isNew: editingIsNew, projects: model.projects, onSave: { saved, resetsAnchor in
@@ -56,7 +59,7 @@ struct AutomationsSettingsView: View {
             if let problem = runStore.problem {
                 Text(problem).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
-            if let error = store.writeError ?? runStore.writeError {
+            ForEach([store.writeError, runStore.writeError].compactMap { $0 }, id: \.self) { error in
                 Text(error).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
             if !Zmx.isEnabled {
@@ -75,7 +78,7 @@ struct AutomationsSettingsView: View {
                     editingIsNew = true
                     editing = Automation(name: "", prompt: "", cadence: .daily(hour: 9, minute: 0))
                 }
-                .disabled(store.problem != nil)
+                .disabled(blocked)
                 Spacer()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -94,22 +97,22 @@ struct AutomationsSettingsView: View {
                         HStack(spacing: 8) {
                             Text(mark.line).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
                             Button("Seen") { store.update(automation.id) { $0.mark = nil } }
-                                .controlSize(.small).disabled(store.problem != nil)
+                                .controlSize(.small).disabled(blocked)
                         }
                     }
                 }
                 Spacer(minLength: 12)
                 Button("Run now") { notes[automation.id] = model.runNow(automation.id) }
-                    .disabled(store.problem != nil || runStore.problem != nil || !settings.automationsOn)
+                    .disabled(blocked || !settings.automationsOn)
                 Button("Edit") {
                     editingIsNew = false
                     // Opening the editor is seeing the mark.
                     store.update(automation.id) { $0.mark = nil }
                     editing = automation
                 }
-                .disabled(store.problem != nil)
+                .disabled(blocked)
                 Button("Delete") { confirmingDelete = automation.id }
-                    .disabled(store.problem != nil)
+                    .disabled(blocked)
                 Toggle("", isOn: Binding(get: { automation.enabled }, set: { on in
                     store.update(automation.id) { next in
                         next.enabled = on
@@ -117,7 +120,7 @@ struct AutomationsSettingsView: View {
                         // Switched on: nothing before now is caught up.
                         if on { next.lastSlot = Date() }
                     }
-                })).labelsHidden().toggleStyle(.switch).controlSize(.small).disabled(store.problem != nil)
+                })).labelsHidden().toggleStyle(.switch).controlSize(.small).disabled(blocked)
             }
             if let note = notes[automation.id] {
                 Text(note).font(.system(size: 11.5)).foregroundStyle(.orange)
