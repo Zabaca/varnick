@@ -78,6 +78,9 @@ struct TaskRunView: View {
                 if let refusal = board.refusal {
                     Text(refusal).font(.system(size: 11.5)).foregroundStyle(.orange)
                 }
+                if let error = store.writeError {
+                    Text(error + " This Run's latest state may not be on disk.").font(.system(size: 11.5)).foregroundStyle(.orange)
+                }
                 SectionLabel(text: "Steps")
                 if run.lines.isEmpty {
                     Text("No step has started.").font(.system(size: 11.5)).foregroundStyle(.tertiary).padding(.horizontal, 8)

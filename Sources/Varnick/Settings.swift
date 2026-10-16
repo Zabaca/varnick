@@ -764,7 +764,7 @@ struct SettingsView: View {
                             case .automations:
                             AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
                             case .tasks:
-                            TasksSettingsView(catalog: launcher.taskCatalog, model: launcher)
+                            TasksSettingsView(catalog: launcher.taskCatalog, model: launcher, runStore: launcher.taskRuns)
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)
                             case .search:

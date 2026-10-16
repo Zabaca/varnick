@@ -15,8 +15,8 @@ public enum TaskEngine {
         case startChild(entry: Int, task: String, input: [String: TaskValue])
         /// Stop the pane or the question of the step in `entry`.
         case stopStep(entry: Int)
-        /// Stop a child Run (and so its tree).
-        case stopChild(UUID)
+        /// Stop a child Run (and so its tree), with the reason the Run above it ended: what the child's own record says.
+        case stopChild(UUID, reason: String)
         /// The Run is over, in this state.
         case end(RunState)
     }
@@ -31,13 +31,17 @@ public enum TaskEngine {
         case attached(pane: UUID?, child: UUID?, launch: RunLaunch?)
         /// The step in flight waits on the person (with what for), or no longer does (nil).
         case waiting(String?)
-        /// The Mac was awake and the Run worked this long.
+        /// The Mac was awake and the Run (or one below it) worked this long. It only counts: the host decides when a limit is passed.
         case worked(TimeInterval)
+        /// The working budget of the tree this Run is in has run out while it works: it fails with that reason, which reaches a parent as its Task
+        /// step's `failed`.
+        case limitPassed(minutes: Int)
         /// Varnick started again; this is what the host found of the step in flight.
         case restarted(Finding)
         /// The person chose Retry on a Run that waits after a restart.
         case retry
-        case stop
+        /// Stop the Run. The reason is what its record says: the person's, or the Run above's when it ended.
+        case stop(reason: String = "Stopped by you")
     }
 
     /// What a restart found of the step in flight.
@@ -104,7 +108,7 @@ public enum TaskEngine {
         guard let index = inFlight(next) else {
             // Between steps there is nothing to answer; a stop or a bound still ends the Run.
             switch event {
-            case .stop: return ended(&next, as: .stopped, "Stopped by you", now: now)
+            case .stop(let reason): return ended(&next, as: .stopped, reason, now: now)
             default: return Advance(run: run, commands: [])
             }
         }
@@ -128,12 +132,11 @@ public enum TaskEngine {
             return Advance(run: next, commands: [])
         case .worked(let seconds):
             next.awake = (next.awake ?? 0) + max(0, seconds)
-            if let limit = next.limitMinutes, (next.awake ?? 0) > TimeInterval(limit * 60) {
-                return ended(&next, as: .failed, "Worked past \(limit) minutes", now: now)
-            }
             return Advance(run: next, commands: [])
-        case .stop:
-            return ended(&next, as: .stopped, "Stopped by you", now: now)
+        case .limitPassed(let minutes):
+            return ended(&next, as: .failed, "Worked past \(minutes) minutes", now: now)
+        case .stop(let reason):
+            return ended(&next, as: .stopped, reason, now: now)
         case .outcome(let outcome, let result, let reason, let actor, let probability):
             guard let step else { return ended(&next, as: .failed, "The Task doesn't read", now: now) }
             let commands = finish(index, step: step, outcome: outcome, result: result, reason: reason, actor: actor, probability: probability,
@@ -372,7 +375,7 @@ public enum TaskEngine {
         var commands: [Command] = []
         if let index = inFlight(run) {
             commands.append(.stopStep(entry: index))
-            if let child = run.steps[index].child { commands.append(.stopChild(child)) }
+            if let child = run.steps[index].child { commands.append(.stopChild(child, reason: detail)) }
             run.steps[index].state = .failed
             run.steps[index].outcome = state == .stopped ? "stopped" : "failed"
             run.steps[index].reason = detail
@@ -473,8 +476,7 @@ extension TaskRun {
             case ("claude", .started): return line("Claude", "\(entry.name): working" + (entry.reason.map { " (\($0))" } ?? ""))
             case ("claude", .waiting):
                 // The Run's detail says what for (a permission, a turn that ended without its result), while this step is the one in flight.
-                let why = inFlightIndex == index ? detail : nil
-                return line("Claude", "\(entry.name): waits on you" + (why.map { ": " + $0.replacingOccurrences(of: "Waiting on you: ", with: "") } ?? ""))
+                return line("Claude", "\(entry.name): waits on you" + (inFlightIndex == index ? detail.map { ": " + $0 } ?? "" : ""))
             case ("claude", .done):
                 return line("Claude", "\(entry.name): finished" + (entry.result.map { " with " + Self.fields($0) } ?? "") + (entry.reason.map { " (\($0))" } ?? ""))
             case ("judge", .started): return line(entry.actor ?? "Jev", "\(entry.name): judging")

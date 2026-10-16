@@ -399,6 +399,15 @@ public struct TaskRun: Codable, Identifiable, Equatable {
         set { if let index = paneIndex { steps[index].worked = newValue } }
     }
 
+    /// Whether the Run is written as version 1 wrote it: an automation's, with none of the fields slice 2a added.
+    public var isVersionOneShape: Bool {
+        trigger.automation != nil && trigger.origin == nil && trigger.session == nil && trigger.parent == nil && trigger.parentStep == nil
+            && result == nil && definition == nil && folder == nil && limitMinutes == nil && awake == nil && depth == nil && file == nil && digest == nil
+            && state != .failed && state != .stopped
+            && steps.allSatisfy { $0.state == nil && $0.outcome == nil && $0.result == nil && $0.reason == nil && $0.child == nil && $0.actor == nil
+                && $0.probability == nil && $0.startedAt == nil && $0.endedAt == nil }
+    }
+
     /// The step whose conversation is this one, whichever step it is: how a conversation resumed from anywhere finds its Run.
     public func step(conversation: String) -> TaskRunStep? { steps.first { $0.conversationID == conversation } }
 }

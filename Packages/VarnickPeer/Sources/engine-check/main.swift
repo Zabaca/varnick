@@ -454,14 +454,16 @@ if var sim = Sim(spinTask, input: [:], trusting: true) {
 if var sim = Sim(haiku, input: ["topic": .text("x")], limit: 5) {
     sim.send(.attached(pane: UUID(), child: nil, launch: nil))
     sim.send(.worked(200))
-    expect("work under the limit goes on", sim.run.state == .running && sim.run.awake == 200)
     sim.send(.worked(101))
-    expect("the working limit fails the Run and stops its step", sim.run.state == .failed && sim.run.detail == "Worked past 5 minutes" && sim.commands.contains(.stopStep(entry: 0)) && sim.ended == .failed,
-           "\(sim.run.detail ?? "") \(sim.commands)")
+    expect("working time only counts: the host says when the budget is out", sim.run.state == .running && sim.run.awake == 301 && sim.commands.isEmpty)
+    sim.send(.limitPassed(minutes: 5))
+    expect("a Run that works past the budget fails with that reason and stops its step", sim.run.state == .failed && sim.run.detail == "Worked past 5 minutes"
+           && sim.commands.contains(.stopStep(entry: 0)) && sim.ended == .failed, "\(sim.run.detail ?? "") \(sim.commands)")
 }
 if var sim = Sim(haiku, input: ["topic": .text("x")]) {
-    sim.send(.stop)
-    expect("Stop stops the step and ends the Run stopped", sim.run.state == .stopped && sim.commands == [.stopStep(entry: 0), .end(.stopped)] && sim.run.steps[0].outcome == "stopped", "\(sim.commands)")
+    sim.send(.stop())
+    expect("Stop stops the step and ends the Run stopped, saying the person did", sim.run.state == .stopped && sim.run.detail == "Stopped by you"
+           && sim.commands == [.stopStep(entry: 0), .end(.stopped)] && sim.run.steps[0].outcome == "stopped", "\(sim.commands)")
 }
 
 // Sub-tasks: a child Run is the step's outcome.
@@ -496,8 +498,20 @@ if var sim = Sim(edit(recovering, "steps.recover.with.title", .text("child faile
 if var parentSim = Sim(parent(), input: [:], library: library) {
     let childID = UUID()
     parentSim.send(.attached(pane: nil, child: childID, launch: nil))
-    parentSim.send(.stop)
-    expect("Stop on a parent stops its step and its child", parentSim.run.state == .stopped && parentSim.commands == [.stopStep(entry: 0), .stopChild(childID), .end(.stopped)], "\(parentSim.commands)")
+    parentSim.send(.stop())
+    expect("Stop on a parent stops its step and its child, with the person's reason", parentSim.run.state == .stopped
+           && parentSim.commands == [.stopStep(entry: 0), .stopChild(childID, reason: "Stopped by you"), .end(.stopped)], "\(parentSim.commands)")
+    var failing = Sim(parent(), input: [:], library: library)!
+    failing.send(.attached(pane: nil, child: childID, launch: nil))
+    failing.send(.limitPassed(minutes: 60))
+    expect("a parent that fails stops its child with its own reason, not the person's", failing.commands.contains(.stopChild(childID, reason: "Worked past 60 minutes")), "\(failing.commands)")
+    var budget = Sim(parent(), input: [:], library: library)!
+    budget.send(.attached(pane: nil, child: childID, launch: nil))
+    budget.send(.worked(4000))
+    expect("a parent whose child works only counts the time and does not fail over it", budget.run.state == .running && budget.run.awake == 4000 && budget.commands.isEmpty)
+    budget.send(.childEnded(child: childID, state: .failed, result: nil, reason: "Worked past 60 minutes"))
+    expect("the child's limit reaches the parent as its step's failed, which the parent's Task may take",
+           budget.run.state == .failed && budget.run.detail == "Failed at sub: Worked past 60 minutes", "\(budget.run.detail ?? "")")
 }
 
 // Depth: a child can be 3 deep, and no deeper.
@@ -586,7 +600,7 @@ if let definition = TaskDefinition.trusted(siteRaw), case .success(var started) 
            && (waiting.run.detail ?? "").contains("Retry or Stop"), "\(waiting.run.detail ?? "")")
     let retried = TaskEngine.advance(waiting.run, .retry, now: clock)
     expect("Retry starts the step again", retried.run.state == .running && retried.run.steps[0].state == .started && !retried.commands.isEmpty)
-    let stopped = TaskEngine.advance(waiting.run, .stop, now: clock)
+    let stopped = TaskEngine.advance(waiting.run, .stop(), now: clock)
     expect("and Stop ends the Run", stopped.run.state == .stopped && stopped.commands.last == .end(.stopped))
     let found = TaskEngine.advance(before.run, .outcome("found", result: J(#"{"text": "$5", "page": "https://shop.example/p"}"#), actor: "Claude"), now: clock)
     expect("Website's found outcome gives its text", found.run.state == .done && found.run.result == J(#"{"text": "$5"}"#), "\(found.run.detail ?? "")")

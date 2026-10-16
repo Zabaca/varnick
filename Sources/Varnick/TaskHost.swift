@@ -3,10 +3,8 @@ import Combine
 import VarnickPeer
 
 // The host of Tasks on this Mac (option 01 of `work-cant-be-saved-or-chained`, slice 2a): the running Varnick, on the main actor, carries out what the
-// engine (`TaskEngine`, a pure function in the shared package) asks for and feeds back what the capabilities find, as `AutomationRunner` hosts the slot
-// function. There is one adapter for each capability: a hidden Claude pane for Claude, `TaskJudging` for Judge, the Run's own notice for Notify, and a
-// child Run for Task. Every Run the engine returns is written to the runs file before any of its commands is carried out, and a pane's id is on its step
-// before the pane starts, so a restart finds what was going. The rules are in docs/agents/where-it-breaks.md (Tasks: the engine).
+// engine asks for and feeds back what the capabilities find, as `AutomationRunner` hosts the slot function. One adapter for each capability: a hidden
+// Claude pane, `TaskJudging`, the Run's own notice, a child Run. The rules are in docs/agents/where-it-breaks.md (Tasks: the engine).
 
 @MainActor
 final class TaskHost {
@@ -16,14 +14,16 @@ final class TaskHost {
     /// The Judge call of each Run that has one in flight.
     private var judging: [UUID: Task<Void, Never>] = [:]
     private var lastTick: Date?
-    /// Working time counted since it was last written to the runs file, by Run: the file is written when a Run changes state, once a minute while one
-    /// works, and at once when a limit is passed - never every tick.
+    /// Working time counted since it was last written, by Run. It goes into the write of the Run's next change, and is written on its own once a minute
+    /// while a Run works: never every tick.
     private var pendingWork: [UUID: TimeInterval] = [:]
     private var lastFlush: [UUID: Date] = [:]
     private static let flushEvery: TimeInterval = 60
+    /// Events the runs file did not take, by Run, tried again each tick in order; each is for the step in flight (`entry`) when it was sent.
+    private var unwritten: [UUID: [(entry: Int?, event: TaskEngine.Event)]] = [:]
 
     /// What a Run says while an opened Claude step's turn has ended with no result: it keeps waiting for `task_result`, up to 24 hours.
-    static let waitsForResult = "Waiting on you: this step's turn ended without a result, and it keeps waiting for task_result (up to 24 hours)"
+    static let waitsForResult = "this step's turn ended without a result, and it keeps waiting for task_result (up to 24 hours)"
 
     /// How often a going Run is looked at: its panes' turns and result files.
     static let tickEvery: TimeInterval = 2
@@ -79,16 +79,16 @@ final class TaskHost {
         stopRun(root.id)
     }
 
-    fileprivate func stopRun(_ id: UUID) {
+    fileprivate func stopRun(_ id: UUID, reason: String = "Stopped by you") {
         guard let run = model?.taskRuns.run(id), run.state.isGoing else { return }
-        advance(id, .stop)
+        advance(id, .stop(reason: reason))
     }
 
     /// Tasks is turned off: every Run that goes is stopped, and with `releasing` the hidden tabs of Runs nobody opened become ordinary tabs, as
     /// Automations off does for runs.
     func stopAll(releasing: Bool) {
         guard let model else { return }
-        for run in model.taskRuns.runs where run.trigger.automation == nil && run.trigger.parent == nil && run.state.isGoing { stopRun(run.id) }
+        for run in model.taskRuns.runs where run.trigger.automation == nil && run.trigger.parent == nil && run.state.isGoing { stopRun(run.id, reason: "Stopped: Tasks was turned off") }
         guard releasing else { return }
         var changed = false
         for tab in model.tabs {
@@ -106,16 +106,52 @@ final class TaskHost {
 
     // MARK: Advancing
 
-    /// The engine's step: the Run after the event is written first, then its commands are carried out. Nothing happens while the runs file can't be
-    /// read. If the write fails, only the commands that stop something are carried out: nothing starts that a restart could not find.
+    /// The engine's step: the Run after the event, with the working time counted so far, is written first, then its commands are carried out. Answers
+    /// the Run, or nil when it could not be written (or the file can't be read). A write that fails puts the Run back as the file has it, carries out
+    /// only the commands that stop something, and keeps the event to send again, so nothing starts that a restart could not find and no step is left
+    /// waiting for an outcome that was lost.
     @discardableResult
-    func advance(_ id: UUID, _ event: TaskEngine.Event) -> TaskRun? {
+    func advance(_ id: UUID, _ event: TaskEngine.Event, retrying: Bool = true) -> TaskRun? {
         guard let model, model.taskRuns.problem == nil, let run = model.taskRuns.run(id) else { return nil }
-        let next = TaskEngine.advance(run, event, now: Date())
-        let written = model.taskRuns.update(id) { $0 = next.run }
+        let pending = pendingWork[id] ?? 0
+        let counted = pending > 0 && run.state.isGoing ? TaskEngine.advance(run, .worked(pending), now: Date()).run : run
+        let next = TaskEngine.advance(counted, event, now: Date())
+        guard model.taskRuns.update(id, rollingBack: true, { $0 = next.run }) else {
+            carryOut(next.commands.filter(\.stops), of: next.run)
+            if retrying { keep(event, for: run) }
+            return nil
+        }
+        if pending > 0 {
+            pendingWork[id] = nil
+            lastFlush[id] = Date()
+        }
         clearFinishedStep(from: run, to: next.run)
-        carryOut(written ? next.commands : next.commands.filter(\.stops), of: next.run)
+        carryOut(next.commands, of: next.run)
         return next.run
+    }
+
+    /// An event the file did not take. What only describes (time, a pane that waits, a pane's id) is found again by the tick or fails the step.
+    private func keep(_ event: TaskEngine.Event, for run: TaskRun) {
+        switch event {
+        case .worked, .waiting, .attached: return
+        default: break
+        }
+        let entry = run.inFlightIndex
+        if unwritten[run.id]?.contains(where: { $0.entry == entry && $0.event == event }) == true { return }
+        unwritten[run.id, default: []].append((entry, event))
+    }
+
+    /// Sends again, in order, what the file did not take, while it is still for the step in flight; a Run that has moved on drops it.
+    private func sendUnwritten() {
+        guard let model else { return }
+        for id in Array(unwritten.keys) {
+            var left: [(entry: Int?, event: TaskEngine.Event)] = []
+            for held in unwritten[id] ?? [] {
+                guard let run = model.taskRuns.run(id), run.inFlightIndex == held.entry else { continue }
+                if !left.isEmpty || advance(id, held.event, retrying: false) == nil { left.append(held) }
+            }
+            unwritten[id] = left.isEmpty ? nil : left
+        }
     }
 
     /// A step that has just failed or finished leaves nothing in its pane's folder: both `task_result` files go.
@@ -139,8 +175,8 @@ final class TaskHost {
                 startChild(of: run.id, entry: entry, task: task, input: input)
             case .stopStep(let entry):
                 stopStep(run, entry: entry)
-            case .stopChild(let child):
-                stopRun(child)
+            case .stopChild(let child, let reason):
+                stopRun(child, reason: reason)
             case .end(let state):
                 ended(run, as: state)
             }
@@ -160,11 +196,12 @@ final class TaskHost {
         guard let model else { return }
         func failed(_ reason: String) { advance(run.id, .outcome("failed", reason: reason, actor: "Harness")) }
         guard Zmx.isEnabled else { return failed("Keep sessions running is off, so a step has no session to keep out of sight") }
-        // A relative folder is the Task file's folder's, not whatever the process's is.
+        // A relative folder is the project's: the folder that holds the `.varnick` the Task file is in (Home for the user's own).
         let asked = with["folder"]?.text.map { text -> String in
             let expanded = (text as NSString).expandingTildeInPath
             guard !expanded.hasPrefix("/"), let file = run.file else { return expanded }
-            return URL(fileURLWithPath: expanded, relativeTo: URL(fileURLWithPath: file).deletingLastPathComponent()).standardizedFileURL.path
+            let project = URL(fileURLWithPath: file).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            return URL(fileURLWithPath: expanded, relativeTo: project).standardizedFileURL.path
         }
         let folder = asked ?? HomeFolder.madeAndTrusted()
         var isFolder: ObjCBool = false
@@ -177,8 +214,8 @@ final class TaskHost {
         let grants = TaskGrants.shared.permissions(file: run.file, digest: run.digest)
         let pane = UUID()
         let launch = RunLaunch(folder: folder, agent: agent, skipPermissions: grants.skip, dontAsk: grants.dontAsk, allowedTools: grants.tools)
-        // Recorded before the pane starts, so a restart finds the pane this step went to.
-        advance(run.id, .attached(pane: pane, child: nil, launch: launch))
+        // Recorded before the pane starts, so a restart finds the pane this step went to; no pane starts that the file does not name.
+        guard advance(run.id, .attached(pane: pane, child: nil, launch: launch)) != nil else { return failed("the step couldn't be saved") }
         if let note = grants.note { model.taskRuns.update(run.id) { $0.steps[entry].reason = note } }
         if let schema {
             do {
@@ -290,7 +327,11 @@ final class TaskHost {
                     return
                 }
                 // The parent's step names its child before the child's first command runs.
-                self.advance(parentID, .attached(pane: nil, child: id, launch: nil))
+                guard self.advance(parentID, .attached(pane: nil, child: id, launch: nil)) != nil else {
+                    self.stopRun(id, reason: "The parent Run couldn't be saved")
+                    self.advance(parentID, .outcome("failed", reason: "the sub-task couldn't be recorded", actor: "Harness"))
+                    return
+                }
                 self.carryOut(started.commands, of: child)
             }
         }
@@ -321,7 +362,8 @@ final class TaskHost {
         guard let model, Settings.shared.tasksOn, model.taskRuns.problem == nil else { return }
         let elapsed = lastTick.map { now.timeIntervalSince($0) }.flatMap { $0 > 0 && $0 <= Self.awakeGap ? $0 : nil } ?? 0
         lastTick = now
-        for id in model.taskRuns.runs.filter({ $0.trigger.automation == nil && $0.state.isGoing }).map(\.id) {
+        sendUnwritten()
+        for id in model.taskRuns.runs.filter({ $0.trigger.automation == nil && $0.state.isGoing && unwritten[$0.id] == nil }).map(\.id) {
             guard let run = model.taskRuns.run(id), let index = run.inFlightIndex, run.steps[index].kind == .claude else { continue }
             tickClaude(run, entry: index, elapsed: elapsed, now: now)
         }
@@ -329,8 +371,8 @@ final class TaskHost {
         tidyPanes(now: now)
     }
 
-    /// Working time is a shared budget: a Run's step working counts for the Run and for every Run above it, so a child's time is against the top Run's
-    /// limit (a child has its parent's limit, and the parent is not working meanwhile). It is kept in memory here.
+    /// Working time is a shared budget: a step working counts for its Run and every Run above it, so a whole tree is held to the top Run's limit. It is
+    /// kept in memory here, and goes into the next write of each Run.
     private func addWork(_ seconds: TimeInterval, to runID: UUID) {
         guard let model else { return }
         var id: UUID? = runID
@@ -342,25 +384,26 @@ final class TaskHost {
         }
     }
 
-    /// Writes the counted time to the Runs that have some: at once for a Run that has passed its limit, else once a minute. The top Run first, so one
-    /// that fails stops its children before they are looked at.
+    /// The minutes of the budget when the tree `runID` is in has used it up, else nil. The budget is the top Run's limit; the Run that is working is the
+    /// one that fails over it, and a parent sees that as its Task step's `failed`.
+    private func budgetPassed(for runID: UUID) -> Int? {
+        guard let root = model?.taskRuns.list.root(of: runID), let limit = root.limitMinutes else { return nil }
+        return (root.awake ?? 0) + (pendingWork[root.id] ?? 0) > TimeInterval(limit * 60) ? limit : nil
+    }
+
+    /// Writes the counted time of a Run that works once a minute, on its own.
     private func flushWork(now: Date) {
         guard let model else { return }
-        let owed = pendingWork.filter { $0.value > 0 }.keys.compactMap { id in model.taskRuns.run(id) }.sorted { ($0.depth ?? 0) < ($1.depth ?? 0) }
-        for run in owed {
-            let pending = pendingWork[run.id] ?? 0
-            let over = run.limitMinutes.map { (run.awake ?? 0) + pending > TimeInterval($0 * 60) } ?? false
-            guard over || now.timeIntervalSince(lastFlush[run.id] ?? .distantPast) >= Self.flushEvery else { continue }
-            pendingWork[run.id] = nil
-            lastFlush[run.id] = now
-            if run.state.isGoing { advance(run.id, .worked(pending)) }
+        for id in pendingWork.filter({ $0.value > 0 }).keys {
+            guard let run = model.taskRuns.run(id), run.state.isGoing, now.timeIntervalSince(lastFlush[id] ?? .distantPast) >= Self.flushEvery else { continue }
+            advance(id, .worked(0))
         }
     }
 
     /// A step's pane changed turn (`SessionNotifier.turnChanged`): the Run advances at once, not at the next tick.
     func paneTurnChanged(_ pane: ClaudeSession) {
         guard let model, Settings.shared.tasksOn, model.taskRuns.problem == nil, let run = model.taskRuns.run(pane: pane.id), run.trigger.automation == nil,
-              run.state.isGoing, let index = run.inFlightIndex, run.steps[index].pane == pane.id else { return }
+              run.state.isGoing, unwritten[run.id] == nil, let index = run.inFlightIndex, run.steps[index].pane == pane.id else { return }
         tickClaude(run, entry: index, elapsed: 0, now: Date())
     }
 
@@ -368,7 +411,6 @@ final class TaskHost {
         guard let model, let paneID = run.steps[entry].pane else { return }   // no pane yet: the step is being started
         let folder = PaneFolder.url(for: paneID)
         if let result = TaskResultTool.accepted(in: folder) {
-            TaskResultTool.clear(in: folder)
             advance(run.id, .outcome("ok", result: result, actor: "Claude"))
             return
         }
@@ -394,7 +436,13 @@ final class TaskHost {
         let turn = pane.turn
         let working = turn?.turn.isRunning ?? true
         // A turn that isn't known yet counts as working. Working time counts the seconds the Mac was awake, and only for a run nobody has opened.
-        if unopened, working, elapsed > 0 { addWork(elapsed, to: run.id) }
+        if unopened, working, elapsed > 0 {
+            addWork(elapsed, to: run.id)
+            if let minutes = budgetPassed(for: run.id) {
+                advance(run.id, .limitPassed(minutes: minutes))
+                return
+            }
+        }
         guard let turn else { return }
         let hasSchema = TaskResultTool.isPrepared(in: folder)
         switch turn.turn {
@@ -403,7 +451,7 @@ final class TaskHost {
                 advance(run.id, .outcome("failed", reason: "Waited on you for 24 hours", actor: "Harness"))
                 endPane(pane)
             } else if run.steps[entry].state != .waiting {
-                advance(run.id, .waiting("Waiting on you: " + (turn.turn.mark ?? "Needs you")))
+                advance(run.id, .waiting(turn.turn.mark ?? "Needs you"))
             }
         case .working, .background:
             if run.steps[entry].state == .waiting { advance(run.id, .waiting(nil)) }

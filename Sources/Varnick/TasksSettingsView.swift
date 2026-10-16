@@ -8,6 +8,8 @@ import VarnickPeer
 struct TasksSettingsView: View {
     @ObservedObject var catalog: TaskCatalog
     let model: LauncherModel
+    /// The runs file's store, so its problem and its last failed write show here as they happen.
+    @ObservedObject var runStore: TaskRunStore
     @ObservedObject private var grants = TaskGrants.shared
 
     var body: some View {
@@ -15,8 +17,8 @@ struct TasksSettingsView: View {
             Text("A Task is a saved, named series of steps (Claude, Judge, Notify, another Task) with a typed input and result, written as a JSON file in a project's .varnick/tasks or in your own ~/.varnick/tasks and checked when it is read. !task lists them, asks for the input of one and starts a Run, and a Claude session can list, check and start them through Varnick's tools. The grants below are yours alone, kept here and never in the file: they govern the Claude steps of that Task, and Skip applies only to contents you have seen.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
-            if let problem = model.taskRuns.problem {
-                Text(problem).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
+            ForEach([runStore.problem, runStore.writeError].compactMap { $0 }, id: \.self) { text in
+                Text(text).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
             SectionLabel(text: "Every project's Tasks, and your own")
             if catalog.files.isEmpty {

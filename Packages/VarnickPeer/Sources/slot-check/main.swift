@@ -856,8 +856,16 @@ try? FileManager.default.createDirectory(at: hostRunsFile, withIntermediateDirec
 let hostRunsURL = TaskRunFile.url(in: hostRunsFile)
 let hostOwnRun = TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .done)
 try? Data(#"{"version": 1, "runs": []}"#.utf8).write(to: hostRunsURL)
-expect("the host reads a version 1 runs file and replies at this build's version", TaskRunFile.read(at: hostRunsURL) == .loaded([])
-       && HostAutomations(automations: .loaded([host]), runs: TaskRunFile.read(at: hostRunsURL), timerAge: nil, skipPermissions: false).runsVersion == 2)
+expect("the host reads a version 1 runs file", TaskRunFile.read(at: hostRunsURL) == .loaded([]))
+func replyVersion(_ runs: [TaskRun]) -> Int {
+    HostAutomations(automations: .loaded([host]), runs: .loaded(runs), timerAge: nil, skipPermissions: false).runsVersion
+}
+expect("its reply says version 1 while it holds only Runs version 1 wrote, so a Mac from before slice 2a still reads it",
+       replyVersion([]) == 1 && replyVersion([hostOwnRun]) == 1 && replyVersion([hostOwnRun, TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow, late: true), state: .running,
+                                                                                                      steps: [TaskRunStep(name: "claude", capability: "claude", pane: UUID())])]) == 1)
+expect("and version 2 once it holds a Run slice 2a shaped", replyVersion([TaskRun(trigger: .byHand(at: hostNow), state: .running)]) == 2
+       && replyVersion([TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .failed)]) == 2
+       && replyVersion([TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .running, steps: [TaskRunStep(name: "a", capability: "claude", state: .started)])]) == 2)
 try? TaskRunFile.write([hostOwnRun], to: hostRunsURL)
 let hostRunsVersion = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: hostRunsURL))) as? [String: Any])?["version"] as? Int
 expect("a runs file the host writes is version 2 and reads back whole", hostRunsVersion == 2 && TaskRunFile.read(at: hostRunsURL) == .loaded([hostOwnRun]))

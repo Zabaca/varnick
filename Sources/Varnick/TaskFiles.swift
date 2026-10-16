@@ -178,10 +178,11 @@ final class TaskGrants: ObservableObject {
     /// name; Skip covers the copy only if the contents the user saw are the ones the Run started with (`TaskRun.digest`). A file that is gone never
     /// falls back to Varnick's Skip: its steps ask. `note` says when Skip was left out.
     func permissions(file: String?, digest: String?) -> (skip: Bool, dontAsk: Bool, tools: [String], note: String?) {
-        guard let file, FileManager.default.fileExists(atPath: file) else {
-            let kept = file.map { self.grant(for: $0) }
-            if kept?.permissions == .allowedOnly { return (false, true, kept?.allowedTools ?? [], "The Task's file is gone, so its grant is kept to its allowed tools") }
-            return (false, false, kept?.allowedTools ?? [], "The Task's file is gone, so its steps ask before they act")
+        guard let file else { return (false, false, [], "No Task file is recorded for this Run, so its steps ask before they act") }
+        guard FileManager.default.fileExists(atPath: file) else {
+            let kept = grant(for: file)
+            if kept.permissions == .allowedOnly { return (false, true, kept.allowedTools, "The Task's file is gone, so its grant is kept to its allowed tools") }
+            return (false, false, kept.allowedTools, "The Task's file is gone, so its steps ask before they act")
         }
         let grant = grant(for: file)
         switch grant.permissions {
@@ -204,30 +205,26 @@ final class TaskCatalog: ObservableObject {
     @Published private(set) var reading = false
     private var generation = 0
 
-    /// Reads the Tasks found from `directory`. A newer read supersedes an older one that is still going.
+    /// Reads the Tasks found from `directory`.
     func refresh(from directory: String) {
-        generation += 1
-        let mine = generation
-        reading = true
-        Task { [weak self] in
-            let found = await Task.detached(priority: .userInitiated) { TaskFiles.available(from: directory) }.value
-            guard let self, mine == self.generation else { return }
-            self.files = found
-            self.folder = directory
-            self.reading = false
-        }
+        load(folder: directory) { TaskFiles.available(from: directory) }
     }
 
-    /// Every project's Tasks and the user's, for Settings › Tasks.
+    /// Reads every project's Tasks and the user's, for Settings › Tasks.
     func refreshAll(projects: [String]) {
+        load(folder: nil) { TaskFiles.everything(projects: projects) }
+    }
+
+    /// A newer read supersedes an older one that is still going; the last list stays on screen meanwhile.
+    private func load(folder: String?, _ read: @escaping @Sendable () -> [TaskFile]) {
         generation += 1
         let mine = generation
         reading = true
         Task { [weak self] in
-            let found = await Task.detached(priority: .userInitiated) { TaskFiles.everything(projects: projects) }.value
-            guard let self, mine == self.generation else { return }
+            let found = await Task.detached(priority: .userInitiated, operation: read).value
+            guard !Task.isCancelled, let self, mine == self.generation else { return }
             self.files = found
-            self.folder = nil
+            self.folder = folder
             self.reading = false
         }
     }

@@ -136,20 +136,36 @@ final class TaskRunStore: ObservableObject {
     @discardableResult
     func record(_ runs: [TaskRun]) -> Bool {
         guard problem == nil, !runs.isEmpty else { return false }
+        // A Run that could not be written is not kept: it would show as going for ever, be saved by the next write and start after a relaunch.
+        let before = list, wasUnsaved = unsaved
         for run in runs { list.record(run) }
-        return write()
+        guard write() else {
+            list = before
+            unsaved = wasUnsaved
+            return false
+        }
+        return true
     }
 
     /// Changes one Run in place and writes it when it differs. Answers whether the file holds the Run as it is now (false when the Run is gone, the
-    /// file is unreadable, or the write failed, here or earlier and not since).
+    /// file is unreadable, or the write failed, here or earlier and not since). With `rollingBack` a failed write puts the Run back as the file has it,
+    /// so what is in memory is never ahead of what a restart would find.
     @discardableResult
-    func update(_ id: UUID, _ change: (inout TaskRun) -> Void) -> Bool {
+    func update(_ id: UUID, rollingBack: Bool = false, _ change: (inout TaskRun) -> Void) -> Bool {
         guard problem == nil, let index = list.runs.firstIndex(where: { $0.id == id }) else { return false }
         var next = list.runs[index]
         change(&next)
         guard next != list.runs[index] else { return !unsaved }
+        let before = list.runs[index], wasUnsaved = unsaved
         list.runs[index] = next
-        return write()
+        guard write() else {
+            if rollingBack {
+                list.runs[index] = before
+                unsaved = wasUnsaved
+            }
+            return false
+        }
+        return true
     }
 
     /// The user opened the Run whose step has the pane.

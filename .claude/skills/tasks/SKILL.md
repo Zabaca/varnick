@@ -45,7 +45,7 @@ Keys: `name`, `description`, `input`, `result`, `start`, `steps`, `end`. All are
 
 | `use` | `with` | Outcomes | Gives |
 |---|---|---|---|
-| `claude` | `prompt` (required), `folder` (Home when absent), `agent` | `ok`, `failed` | the fields of its `result` schema; none without one |
+| `claude` | `prompt` (required), `folder` (Home when absent; a relative one is the project's, the folder that holds `.varnick`), `agent` | `ok`, `failed` | the fields of its `result` schema; none without one |
 | `judge` | one question (below), optional `state` | a Choice's labels, or `yes`/`no`; `unsure`; `failed` | `probability`, and `label` for a Choice |
 | `notify` | `title` (required), `body` | `ok` | nothing |
 | `task` | `task` (another Task's name, literal), `input` | `ok`, `failed` | the child's result fields |
