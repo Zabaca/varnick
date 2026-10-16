@@ -20,7 +20,9 @@ struct TextGeneration {
 
     /// One reply for work the user waits on, by `ModelServerState.place`'s interactive rule: the chosen writer unless it failed, else
     /// this Mac's model (`because` says why Claude Code didn't answer). Throws `TextGenerator.Failure.notReady` when nothing can.
-    func generateNow(_ prompt: String, maxTokens: Int) async throws -> (text: String, place: ModelPlace, because: String?) {
+    /// `deadline` is for a call that may run long: Claude Code gets it in place of `TextHelper.deadline`, and a miss throws without
+    /// resting Claude Code or handing the call to this Mac's model.
+    func generateNow(_ prompt: String, maxTokens: Int, deadline: TimeInterval? = nil) async throws -> (text: String, place: ModelPlace, because: String?) {
         let active = Settings.shared.activeTextGeneration
         func pick() -> (writer: any TextGenerating, place: ModelPlace)? {
             guard let place = server.place(active.runOn, hasAddress: !active.address.isEmpty, claudeUsable: claude.isUsable,
@@ -45,6 +47,9 @@ struct TextGeneration {
         // Claude Code resting from an earlier request: this Mac's model answers without a try.
         var because = chosen.place == .fallback && active.runOn == .claude ? claude.failureKind ?? "not ready" : nil
         do {
+            if let deadline, let claude = chosen.writer as? ClaudeCodeState {
+                return (try await claude.generate(prompt, maxTokens: maxTokens, deadline: deadline), chosen.place, because)
+            }
             return (try await chosen.writer.generate(prompt, maxTokens: maxTokens), chosen.place, because)
         } catch {
             guard !(error is CancellationError), !Task.isCancelled else { throw error }
@@ -53,6 +58,7 @@ struct TextGeneration {
                 server.failed(error, for: failed.target)
             } else if chosen.writer is ClaudeCodeState {
                 let failure = (error as? ClaudeCodeState.Failure) ?? ClaudeCodeState.Failure(kind: "error")
+                if deadline != nil, failure.kind == TextHelper.deadlineKind { throw error }
                 NSLog("Varnick: Claude Code failed a request: \(failure.kind)")
                 claude.failed(failure)
                 because = failure.kind

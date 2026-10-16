@@ -86,9 +86,8 @@ struct ScreenPicker {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = Self.body(model: model, request: request, windowTitle: windowTitle, descriptions: descriptions)
         let (data, response) = try await Self.session.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200, let pick = Self.pick(fromResponse: data, descriptions: descriptions) else {
-            throw URLError(.badServerResponse)
-        }
+        try JevStatus.check(response)
+        guard let pick = Self.pick(fromResponse: data, descriptions: descriptions) else { throw URLError(.cannotParseResponse) }
         return pick
     }
 }

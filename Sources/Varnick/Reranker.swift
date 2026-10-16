@@ -97,9 +97,7 @@ struct Reranker: RelevanceJudge {
         ])
 
         let (data, response) = try await Self.session.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
+        try JevStatus.check(response)
         struct Answer: Decodable { let noul: Double }
         struct Response: Decodable { let answers: [String: Answer] }
         let answers = try JSONDecoder().decode(Response.self, from: data).answers

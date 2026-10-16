@@ -101,7 +101,7 @@ struct SpokenRouter {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = questions.jevBody(model: model)
         let (data, response) = try await Self.session.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        try JevStatus.check(response)
         return try questions.read(jev: data)
     }
 }

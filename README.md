@@ -68,7 +68,7 @@ Anything else leaves only when you turn it on:
   the text of the window you ask about.
 - **Hey Varnick, once on,** has your own Claude Code write its answers (Settings › Models › Text generation, the
   default for a new install), which sends what you say and the results it reads to Anthropic under your Claude
-  account. Choose On this Mac to keep the text local.
+  account, and, with the filter on TypeSafe but no key or no answer (or off), the results it judges. Choose On this Mac to keep the text local.
 - **Answer from the web,** when you turn it on, has your own Claude Code look up what your pages, bookmarks and sessions
   can't answer. Only the words you said, with the date and time, go to Anthropic, and Claude's search words go to its
   search provider.

@@ -12,7 +12,8 @@ struct SpokenJudge {
     var model = SpokenRouter.pinnedModel
     var endpoint = SpokenRouter.pinnedEndpoint
 
-    /// A judge slower than this is given up on and the rows go unjudged: no retry, a second round trip rarely fits in the hold.
+    /// A judge slower than this is given up on and the Text generation model judges instead: no retry, a second round trip rarely
+    /// fits in the hold.
     static let timeout = SpokenRouter.timeout
 
     private static let rowTrue = "It holds what the person asks about, or it is the page or session they mean."
@@ -54,7 +55,7 @@ struct SpokenJudge {
             "questions": Self.questions(for: rows),
         ])
         let (data, response) = try await Self.session.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        try JevStatus.check(response)
         struct Answer: Decodable { let noul: Double }
         struct Response: Decodable { let answers: [String: Answer] }
         let answers = try JSONDecoder().decode(Response.self, from: data).answers

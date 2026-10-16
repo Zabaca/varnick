@@ -76,8 +76,14 @@ final class TaskJev: System1, @unchecked Sendable {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body(state: state, questions: questions)
-        let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return try read(data, questions: questions)
+        do {
+            let (data, response) = try await session.data(for: request)
+            try JevStatus.check(response)
+            return try read(data, questions: questions)
+        } catch {
+            // The switch keeps only a count of these; the kind (HTTP 402, a timeout) is logged here.
+            if !(error is CancellationError) { NSLog("Varnick: Task Jev call failed: \(error.logKind)") }
+            throw error
+        }
     }
 }
