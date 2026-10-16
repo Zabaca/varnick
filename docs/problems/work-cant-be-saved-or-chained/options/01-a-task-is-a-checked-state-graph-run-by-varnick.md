@@ -1,7 +1,7 @@
 ---
 problem: work-cant-be-saved-or-chained
 title: A Task is a state graph in a JSON file that Varnick checks, run by an engine in Varnick's shared Swift package, with JSON Schema values and Jev choosing the branches
-summary: A Task is a JSON file found on disk, as custom apps and agents are. It holds its input and result as JSON Schema (a small subset), and its steps as a graph. Each step uses one capability (Claude, Website, Judge, Notify, or another Task), takes its values from the input and from earlier steps, and names the next step for each outcome. Claude writes Tasks, and Varnick checks each one as a compiler would before it can run. The engine is a pure transition function in the shared package, so the headless relay can run it later. The running Varnick hosts it as it hosts automations, and keeps each Run in a file of its own, written before every wait. A Judge step's Choice labels are its branches: Jev picks at 0.7, and Claude picks below that or without TypeSafe, as in the website loop. Grants live in Varnick, not in the file. An Automation becomes a cadence, a Task and input values, and today's prompt becomes the built-in Claude prompt Task. Accepted 2026-10-15. Slice 1 is the record shape on this Mac, with no protocol bump: automations as triggers at file version 2, the Run in a runs file of its own, the two built-in Tasks, and the Task pane renamed the Website pane. The headless host's slice 2 is built on that shape, and the engine comes after it.
+summary: A Task is a JSON file found on disk, as custom apps and agents are. It holds its input and result as JSON Schema (a small subset), and its steps as a graph. Each step uses one capability (Claude, Website, Judge, Notify, or another Task), takes its values from the input and from earlier steps, and names the next step for each outcome. Claude writes Tasks, and Varnick checks each one as a compiler would before it can run. The engine is a pure transition function in the shared package, so the headless relay can run it later. The running Varnick hosts it as it hosts automations, and keeps each Run in a file of its own, written before every wait. A Judge step's Choice labels are its branches: Jev picks at 0.7, and Claude picks below that or without TypeSafe, as in the website loop. Grants live in Varnick, not in the file. An Automation becomes a cadence, a Task and input values, and today's prompt becomes the built-in Claude prompt Task. Accepted 2026-10-15. Slice 1 is the record shape on this Mac, with no protocol bump: automations as triggers at file version 2, the Run in a runs file of its own, the two built-in Tasks, and the Task pane renamed the Website pane. The headless host's slice 2 is built on that shape. Slice 2, the engine on this Mac, comes in two parts: 2a, Task files, the check and the engine with Claude, Judge, Notify and sub-task steps, started by hand, by a session and by a parent, built beside the headless host's slice 2; 2b, Website steps and automations of any Task, built after it.
 status: accepted
 ---
 
@@ -354,16 +354,7 @@ The user accepted this option. Their decisions, relayed by the coordinator:
 ### Slices
 
 1. **The record shape, this Mac, no protocol bump** (below).
-2. **Task files and the engine, this Mac.**
-   - the check, the schema subset, its skill and `task_check`;
-   - the five capabilities;
-   - bindings, branches and sub-tasks;
-   - the restart rules;
-   - the Run's notice;
-   - Runs started by hand, by a session and by a parent;
-   - `!task`'s list and form;
-   - the task tools;
-   - `task` and `input` on the automation tools.
+2. **Task files and the engine, this Mac,** in two parts (below): 2a, the language and the engine, built beside the headless host's slice 2; 2b, Website steps and automations of any Task, built after it.
 3. **The headless host and the phone.** Runs on the headless host with Claude, Notify and Task steps only, advanced by slice 2's timer; Tasks listed and started from the phone. The protocol after 29.
 
 ### Slice 1: the record shape (this Mac, no protocol bump)
@@ -490,6 +481,241 @@ The user accepted this option. Their decisions, relayed by the coordinator:
 6. **Delete the automation while a run goes.** The run becomes an ordinary tab, and its Runs leave the Runs tab.
 7. **Check the Website pane.** `!task` reads On this site, the split picker shows a Website tile, and the pane's title says Website. A finding task on the practice shop runs as before, and the Stop shortcut stops it.
 
+### Slice 2: Task files and the engine (this Mac), in two parts
+
+The user's word, later on 2026-10-15 (relayed by the coordinator): the engine is built now, beside the headless host's slice 2 of `prompts-cant-run-on-a-schedule` option 01, on this Mac only. It is too much for one build, so it comes in two parts, and neither bumps the protocol:
+- **2a, the language and the engine:** Task files and the check, the engine, and Claude, Judge, Notify and sub-task steps, started by hand, by a session and by a parent. It changes no automation's record or tools, so it can be built beside the headless host's slice 2.
+- **2b, Website steps and automations of any Task.** It changes the automation record and tools that protocol 29 carries, so it is built after the headless host's slice 2 is merged.
+
+#### Decided in planning
+
+Where the code forced a choice the Solution leaves open. Each is the planner's and stands unless the user says otherwise; the user's questions are under Open questions.
+
+1. **The Claude prompt Task keeps slice 1's path** in both parts. Only an automation starts it, `startRun` builds its Run and `tendRuns` tends it, as now. The headless host's slice 2 builds this Task's runs on the relay at the same time, and two rewrites of one start would collide. It moves onto the engine together with the headless host's engine (slice 3). A Claude step of any other Task shares its pane start and its limits.
+2. **`else` catches every outcome but `failed`.** A `failed` outcome takes a `failed` edge or fails the Run, which then travels up. Otherwise `{"yes": …, "else": …}` would send a Judge's or a sub-task's failure down the "no" branch. Judge gains the outcome `failed`, for when neither Jev nor Claude answered.
+3. **A Judge asks a Choice or a Noul.** Score waits: nothing in Varnick calls it, its request shape is unmeasured, and no Task here needs it. The check says it isn't in this build. A Choice's options are a list, each a label and a criterion, so Jev gets them in the written order. `TaskJev` keeps that order because a label's place is part of what was measured.
+4. **Tasks are found from a folder,** as apps are: the project's Tasks first, then the user's, by name.
+   - A session finds them from its own folder.
+   - `!task` uses the focused pane's folder, or Home with no tab.
+   - A parent uses the folder its own Task came from.
+   - An automation keeps a folder of its own (2b).
+
+   Grants and marks are kept per Task file.
+5. **A binding to a field that may be absent** goes only into an optional field, and is left out when the value is absent. A field may be absent because its schema makes it optional or because some outcomes don't give it. A binding inside text writes a whole number with no decimal point, and a list or an object as JSON.
+6. **A form lists the required fields in `required`'s order, then the rest by name.** Foundation's JSON reader doesn't keep key order, and one form doesn't justify a reader that does.
+7. **A grant of Skip covers only the contents the user has seen.** A Task that is new or changed since (marked) runs with Varnick's setting in place of Skip. Ask, Allowed tools only and the allowed tools still apply. Without this rule, a session that edits a Task the user set to Skip would give the new contents Skip, which slice 3's rule forbids for automations. The Run's line says when this happened.
+8. **The bounds.** An automation's Run has the automation's working limit, any other Run has 60 minutes, and a child has its parent's. Each Run counts its own awake work, as a check counts a run's. Passing that limit, 50 steps or the depth limit fails the Run with that reason. This isn't an outcome a step can branch on, and it reaches a parent as its Task step's `failed`.
+9. **A Run started by hand opens nothing,** just as Run now doesn't. The board's Runs tab shows it selected.
+10. **A Claude step's pane raises Needs you and Messages only.** Its Done and its errors are the step's outcome, and the Run's own notice says how the Run ended.
+11. **Tasks off stops every Run that's going, through its tree,** and turns its hidden tabs into ordinary ones, as Automations off does for runs.
+12. **`runs.json` goes to version 2.** Every new field is optional, so an automation's Run is written exactly as slice 1 wrote it and protocol 29 carries it unchanged. An older build reads version 2 as newer and writes nothing.
+13. **A tab of several panes loses only the pane that ended.** Today, when an unopened run's pane exits, `sessionExited` removes its whole tab. A Run's tab can hold a finished step's pane beside a live one.
+
+#### Slice 2a: the language and the engine
+
+**Goal.** Claude or the user writes a Task file, and Varnick checks it. The user starts it from a form, a session starts it through Varnick's tools, or another Task runs it. Its Claude, Judge, Notify and sub-task steps run out of sight, and each is recorded before it waits. The Run ends with its result as fields, raises its own notice and shows its lines on the board.
+
+**In it:**
+1. **Task files** are `*.json` in a project's `.varnick/tasks` folder or the user's own, beside the custom apps folders.
+   - They are read off the main thread whenever a list shows (`!task`, Settings › Tasks, `tasks_list`), and the last list read stays on screen meanwhile.
+   - A file is marked New or Changed by its contents until the user presses Seen in Settings › Tasks.
+2. **The schema subset** is a value type of its own. It:
+   - reads the subset, `description` included, and refuses anything else by name;
+   - checks a `TaskValue`, naming each wrong field by its path;
+   - writes itself out as JSON Schema;
+   - lists a form's fields.
+3. **The definition and the check:** one function that turns a file's data into either a valid Task or a list of every problem in it. It checks the Solution's list plus decisions 2 to 5. Two capability problems belong to this build only: a Website step "arrives in the next build" (2b), and a Score Judge isn't in it.
+4. **The engine** is one pure function: a Run and an event in, the next Run and its commands out.
+   - **Events:** start, a step's outcome (with its result or reason), a child Run's end, a restart's finding for a step, awake time worked, Stop.
+   - **Commands:** start a step (its `with` resolved), start a child, stop a step, end the Run.
+   - **It** resolves bindings, follows edges (`else`, `failed`, `unsure`), builds the result at `end` and keeps the three bounds.
+   - **Website's outcomes and its restart rule are in it already,** so 2b adds only the adapter.
+5. **The Run record,** at version 2:
+   - **The trigger** also records who started a Run that no automation started: by hand, a session (its title), or a parent (its Run and step). Its automation becomes optional, and for those Runs its slot is the start time.
+   - **The Run** gains a copy of its Task, the folder the Task was found from, its working limit and awake time, and two states, failed and stopped.
+   - **A step** gains its state (pending, started, waiting, done, failed, sending, sent, interrupted), its outcome, its result or reason, its child, who acted, Jev's probability, and when it started and ended. Each visit to a step is a new entry, so every pass through a loop is on record, and a binding reads the latest.
+   - **The list** keeps each automation's last 20 Runs, as now, and each Task's last 20 of the Runs that no automation started. A Run still going is never dropped.
+6. **The host** runs on the main actor, as `AutomationRunner` hosts the slot function.
+   - Every Run the engine returns is written to the file before any of its commands is carried out.
+   - A pane's id is on its step before the pane starts.
+   - It advances when a step's pane changes turn, and on its own tick every two seconds, which also reads the result files.
+   - It counts awake time as a check does.
+   - At launch it applies the restart rules, once the saved tabs are restored, beside `startAutomations`.
+7. **Claude:** a hidden pane, started as `startRun` starts one.
+   - It runs in the folder `with` names, Home when absent, and is refused for the same reasons about the folder, the agent or trust. It runs with its Task's grants (decision 7).
+   - Its record names its Run. The Run's tab, named after the Task, is made at the Run's first pane step, and each later pane is split into it.
+   - Its MCP config lists `notify`, plus `task_result` while the pane's folder holds the step's result schema. The prompt ends with Varnick's fixed line asking for `task_result`.
+   - With a result schema, the step is ok at a valid `task_result`, and fails with "ended without a result" if its turn ends without one. Without a schema, it is ok when its turn ends.
+   - Waiting 24 hours fails it. Once a step is done, its process ends 10 minutes after its turn came to wait, if nobody opened it, as a run's does.
+8. **`task_result`** is answered by the pane's own MCP server, as `notify` is (Open question 3).
+   - The server lists the schema the host wrote into the pane folder.
+   - It checks each call against that schema and refuses a wrong one, naming each wrong field.
+   - It writes an accepted value to a result file in the same folder, and refuses a second call.
+   - The host moves the file's value onto the step, and removes both files when the step ends.
+9. **Judge:** Claude takes Jev's place through `ClaudeSystem1`, on a conversation opened for that one call, with a judging preface of fixed words. The line says who picked and why.
+10. **Notify, and the Run's own notice.**
+    - The notifier keeps notices for Runs beside those for panes, by the Run's id, with the same kinds and switches.
+    - The menu line is written from the Run: Done with a result, Stopped on an error ("Failed at check: no"), or a Message from Notify. Choosing one shows the Run.
+    - A Notify step is recorded as sending, then raised, then recorded as sent.
+    - These notices stay on this Mac (Open question 4).
+11. **Task:** a sub-task is a child Run, with its own grants. Its Task is found from the parent's folder and copied when the child starts. The child's end is the outcome of the parent's step. Stop on any Run stops its whole tree.
+12. **The restart rules:**
+    - a Claude step reattaches to its restored pane by its id; one whose session is gone fails with "the session had ended", unless its result file is there;
+    - a Judge that was waiting for an answer is asked again;
+    - a Notify still marked sending counts as sent;
+    - a pending step starts;
+    - a child Run follows its own rules.
+13. **The Runs tab** lists every Run, newest first, under its automation's name or its Task's, and says how it started.
+    - ↩ on a Claude prompt Run opens it, as now.
+    - ↩ on any other Run shows its view: its lines, written from the step records with who acted; its result as fields; a line for each child, which opens that child; its Task's mark, if it has one; and Open tab and Stop. Esc goes back to the list.
+14. **`!task`** shows the Tasks in the panel, the way Resources is shown.
+    - On this site comes first, and opens the Website pane at once, as now.
+    - The Tasks found from the focused pane's folder follow. An invalid one is dimmed and shows its problems.
+    - ↩ on a Task shows its form. ↩ on the form checks the input: each wrong field is named under it, or the Run starts and the Runs tab shows it.
+15. **The task tools** are the `--tasks` set, listed in every Claude pane started while Tasks is on, but never in a Run's pane.
+    - **`tasks_list`:** each Task found from the session's folder, with its input and result schemas, its capabilities, whether it is valid (with its problems), and its mark.
+    - **`task_run`:** a Task's name and an input object, checked against the schema. The answer is the Run's id, and says the Run's notice will tell the user.
+    - **`task_run_status`:** a Run's state, its current step and its lines, and once it has ended, its result or its failure (Open question 1).
+    - **`task_check`:** a file's path. The file is checked as if it sat in the tasks folder of the project it is in, and the answer is its problems or that it is valid.
+
+    The running Varnick answers them over the socket, with the checks in `AutomationAccess`'s order: the switch, Varnick having started, the calling pane, the runs file, then the tool. The calling pane must be a Claude pane on this Mac whose record names no automation and no Run. The automation tools now refuse a Run's pane, as they already refuse a run's.
+16. **Settings › Tasks,** shown while Tasks is on, lists each Task with:
+    - the grants for its Claude steps: Varnick's setting by default, or Ask, Allowed tools only or Skip, and the allowed tools;
+    - its mark, with Seen;
+    - its problems.
+17. **The tasks skill,** next to the custom-apps skill and linked the same way, covers the format, the capabilities and their outcomes, bindings, the check and `task_check`.
+
+**Saved state.**
+- `runs.json` goes to version 2 (decision 12).
+- Grants and the seen contents are settings, kept in UserDefaults per Task file.
+- While a Claude step is going, its pane folder holds the step's schema file and its result file.
+- Nothing else new is saved.
+
+**The tools.** The automation tools don't change, apart from refusing a Run's pane. `make check-mcp`:
+- lists `--tasks` alone and with the other sets;
+- lists `task_result` for a schema in a scratch folder, and calls it there with a good value and a bad one (it writes only in that folder);
+- never calls a task tool, since that would reach the running Varnick and start a real Run.
+
+**Where it touches,** by symbol:
+- **Siblings:**
+  - `AutomationSlot.check` and `make check-slots`, for the engine and its check;
+  - `NotifyTool`, for `task_result`;
+  - `CustomApp.available`, for the files;
+  - `AutomationRunner`, `startRun` and `tendRuns`, for the host and Claude;
+  - `TaskJev` and `ClaudeSystem1`, for Judge;
+  - `AutomationAccess` and `AutomationMCP`, for the tools;
+  - `showResources`, for `!task`'s view;
+  - `AutomationsSettingsView`, for Settings › Tasks.
+- **The record:** `TaskRunTrigger`, `TaskRunStep`, `TaskRun`, `RunState`, `TaskRunList.record`, `TaskRunFile`; and on `SessionRecord`, the Run a pane belongs to.
+- **A Run's pane:**
+  - `launchClaude`'s run test and its MCP config;
+  - `checkConversation`'s left record;
+  - `sessionExited`'s run branch (decision 13);
+  - `runClosed`, `releaseHiddenRuns`, `releaseUnnamedRuns`, `openRun`, `applyRunFields` and `endedRun`;
+  - `AutomationAccess.run`'s check for a call from a run.
+- **The rest:** `ScreenMCP.Sets` and `answer`, the `--mcp` entry, `PeerManager.handle`, `SessionNotifier`, `RunsBoard`, `LauncherModel.run(_:)`, `panelHeight`, `coversTabs`, `LauncherCommand`, `SettingsSection`.
+
+**Testing.**
+- **`make check-engine`,** a new target that builds the shared package alone and runs a table of cases:
+  - the Solution's cases for the check, the engine and restarts (Website's fed as events);
+  - decisions 2, 5 and 8;
+  - the schema's types, formats, refusals and form order;
+  - `task_result`'s files, in a scratch folder;
+  - runs files at versions 1, 2 and 3;
+  - an automation's Run, written byte for byte as slice 1 wrote it.
+- **`make check-slots`** still passes.
+- **`make build`.**
+
+**Documents.**
+- **ADR 0041** gains an amendment for this slice: the runs file at version 2, the widened trigger, `task_result` in the pane's own server, and the Run's notice.
+- **CONTEXT.md:** Task (its files and the check), Run (any trigger), Notice (a Run's).
+- **where-it-breaks** gets a section of its own, Tasks: the engine. It covers the check, recording before waiting, the restart rules, the grants and marks, the result files, a Run's pane marks and decision 13. The Automations section points to it for the runs file.
+- **The privacy page:** what a Judge step and a Claude step send.
+- **The guide:** `!task` and Settings › Tasks.
+
+**Not in it:**
+- Website steps, and On this site recorded as a Run;
+- automations of any Task other than Claude prompt, and `task` and `input` on the automation tools;
+- the Claude prompt Task started by hand or from a session;
+- Score;
+- the Run's notice on the phone;
+- the headless host.
+
+**By hand, by the user after a restart with Tasks on.** Never by an agent: a Run starts real Claude sessions and TypeSafe calls on the user's accounts.
+1. **Write one.** In a Claude pane started since the restart, ask for a Task called Haiku:
+   - its input is `topic`;
+   - a Claude step writes a haiku, with the result `text`;
+   - a Judge Noul asks "Is `text` a haiku about `topic`?": yes goes to a Notify and then `end`, no goes back to the Claude step;
+   - its result is `text`.
+
+   `task_check` passes, and Settings › Tasks lists it, marked New.
+2. **Break it.** Bind `{steps.write.title}`: `task_check` and `!task` both name the field, and the Task can't start.
+3. **From the form.** `!task` › Haiku, give a topic, press ↩. Nothing opens, and the Runs tab shows the Run. Its Message comes, then Done. Opening it shows the lines (Claude, Jev's pick with its probability, the Notify) and `text`. Open tab shows the Claude pane.
+4. **Without TypeSafe** (the relevance filter set to local): the Judge's line says Claude picked.
+5. **A parent.** "Two haiku" runs Haiku twice and returns both. Its Run shows two child lines, and each opens its own Run.
+6. **A restart during the Claude step.** The pane comes back hidden, and the Run goes on to its result.
+7. **Stop** the parent during a child's Claude step. Both Runs stop, and their panes end.
+8. **From a session.** `tasks_list` shows Haiku with its schemas. `task_run` with a number for `topic` is refused, naming `topic`; with text it answers an id. `task_run_status` gives the result once the Run ends.
+9. **Grants.** Set Haiku to Ask: a tool the step wants raises the pane's Needs you. Then set Skip, press Seen and edit the file: it is marked Changed, and its next Run follows Varnick's setting and says so.
+10. **Tasks off.** A Run that's going stops, and its tab becomes an ordinary one. `!task` and the tools refuse.
+
+#### Slice 2b: Website steps and automations of any Task
+
+**Goal.** A Task's Website step works on a site out of sight, and stops for the person only at a gate. An automation runs any Task with its input values. `!task`'s On this site is recorded as a Run.
+
+**In it:**
+1. **Website:** a Website pane in the Run's tab. It opens the site and, once the page has loaded, starts the loop with the goal. `TaskController` reports to the host, not only to its pane. The outcomes are found (`text`, `page`), finished (`page`) and gave up (`reason`).
+   - **Nobody watching** means the Run's tab hasn't been opened. A gate then raises the Run's Needs you notice, with the question, and waits up to 24 hours, after which the step gives up with "waited on you for 24 hours". Under Allowed tools only it gives up at once, with "needs your Allow". Once the tab is opened, gates are the person's, as today.
+   - **One at a time:** a Website step that finds another Website pane working stays pending ("waiting its turn") and starts when that one ends.
+   - **Recorded before acting:** an Allow, or "I'll do it", is written on the step before the press, so after a restart Varnick knows a submit may have happened.
+   - **Stop in the pane** stops the whole Run.
+   - **After a restart** the step is interrupted. If no submit was allowed, it starts again from the site. Otherwise the Run waits on the person, raising Needs you, with Retry and Stop in its view.
+2. **On this site is recorded as a Run.** `!task`'s one-off opens the pane at once, as now, and once ↩ starts it, it is recorded as a Run started by hand, with the goal as its input. A session's `task_run` and a parent run it hidden.
+3. **An automation runs any Task:**
+   - it keeps the folder its Task is found from; `automations.json` goes to version 3, which an older build reads as newer;
+   - it can run when its Task is found and valid, its input fits, and both switches are on;
+   - a due slot records a Run as starting before `lastSlot` moves; the host then reads the Task and either begins the Run or records "couldn't start" with the reason;
+   - its overlap rule reads the Run's state, and its working limit and permissions override apply to the Run.
+4. **The automation tools gain `task` and `input`.**
+   - `task` names a Task found from the calling session's folder; when it is absent, the Task is Claude prompt.
+   - `input` is an object checked against that Task's schema, and every wrong field is named.
+   - `prompt`, `folder` and `agent` stay as shorthand for Claude prompt, and are refused beside any other Task.
+   - `automations_list` gives each automation's input and task folder.
+   - The permission rules of slice 3 don't change. The request's version goes up.
+5. **The editor's Task picker,** using `!task`'s form for the Task's input.
+
+**Where it touches,** by symbol:
+- `TaskController` (`start`, `decide`, `needsYou`, `finishedWith`);
+- `SavedTab.withoutTasks`, for a run tab that held only a Website pane;
+- `openTask`;
+- `Automation` and `isRunnable`, `AutomationFile`;
+- `AutomationRunner.check`, `isRunGoing`, `runNowRefusal`;
+- `AutomationTools.read`, `make` and `edit`;
+- `AutomationMCP`'s schemas and `AutomationRequest.version`, `AutomationAccess.list`;
+- `AutomationEditor`;
+- the slot-check cases for version 3.
+
+**Not in it:** the headless host, the phone, Score, and the Claude prompt Task on the engine.
+
+**By hand, by the user after a restart with Automations and Tasks on:**
+1. **Delivery price** (the prototype above), from the form, on the practice shop. The Website step finds the price out of sight, and the Run's result has the amount, the currency and the quote.
+2. **A gate with nobody watching.** A Task whose site asks for a postcode raises Needs you. Opening the Run's tab shows the gate, and Allow lets the step go on.
+3. **The same under Allowed tools only.** The step gives up with "needs your Allow", and the Run takes its edge or fails.
+4. **Two at once.** A second Website Run waits its turn.
+5. **A restart during a Website step.** With no submit allowed, the step starts again. After an Allow, the Run shows Retry and Stop.
+6. **An automation of Delivery price,** made by a session with `task` and `input`. A wrong input field is refused by name. The automation runs at its slot, and `automations_list` shows its Task and input.
+7. **The editor.** Pick Delivery price and fill in its form.
+8. **`!task` › On this site.** The pane opens at once, and the Runs tab lists its Run.
+
+#### What the headless host needs to run Tasks (slice 3)
+
+- **The engine, the check, the schema and `task_result` live in the shared package,** Foundation only and with no clock. The relay calls them unchanged, as it will call `AutomationSlot.check`.
+- **Its timer run is the host.** Each run reads the pane folders (turns and result files), feeds the events in, writes the Run, then starts the next step. A Claude step there is a hidden pane started through its launch code. Its `--mcp` lists `notify` and `task_result`, both answered by the server itself, with no running Varnick (Open question 3).
+- **Its runs file is `TaskRunFile` at version 2.** If protocol 29 is built on version 1, its requests don't change, since an automation's Run is written the same way in both.
+- **It can host Claude, Notify and Task steps.** It can't host Website (no WebKit) or Judge. It has no TypeSafe key (inferred), and no text helper for Claude to take Jev's place: none of its sources or scripts mentions one.
+- **What it needs from the Mac:** the grants (kept in Settings › Tasks on the Mac, never in a file), its list of Tasks, and a Run's own notice in its listing for its page server to push. Each is a request in the protocol after 29.
+- **The Claude prompt Task moves onto the engine** there and on the Mac at the same time.
+
 ### Verified and inferred
 
 - **Verified on main at 65cf38a:**
@@ -507,10 +733,24 @@ The user accepted this option. Their decisions, relayed by the coordinator:
   - that a Website pane can sit in a hidden run tab as a Claude pane does (the spike found that a hidden web view keeps working, but in a plain window, not the panel);
   - that the headless host has no TypeSafe key;
   - how often unattended Website steps meet a gate on real sites.
+- **Verified on main at 9e66872, for slice 2:**
+  - slice 1's record: `TaskRunTrigger` names an automation on every Run, `runs.json` is at version 1, and every reader listed under 2a's "A Run's pane";
+  - `sessionExited` removes a whole hidden run tab when its pane exits;
+  - a web pane's web view is made with its record and loaded by `start()`, which `startRun` calls on a pane nobody has shown;
+  - `NotifyTool` is answered in the pane's own server and shared with the relay;
+  - `TaskJev` asks Choice and Noul questions, and nothing in Varnick asks TypeSafe a Score;
+  - the socket's handler is async, so a task request can read files off the main thread;
+  - a pane's server waits 15 s for an answer over the socket, and `AutomationAccess` answers on the main actor;
+  - none of the headless relay's sources or scripts mentions a text helper.
+- **Inferred for slice 2, unverified:**
+  - that a two-second tick advances a Run soon enough;
+  - that Jev's 1.5 s deadline is long enough for a Judge's state.
 
 ### Open questions, recommendation first
 
-Both are for slice 2.
+All four are for slice 2a. The first two have been open since the option was accepted.
 
-1. **A session waiting on a Run's result:** a status tool it calls again (recommended: no long MCP call, and the Run's own notice tells the user), or a call that blocks until the result.
-2. **The Judge step's bar:** 0.7 for every Judge step (recommended, the measured bar), or a bar each step sets.
+1. **A session waiting on a Run's result:** `task_run_status`, called again (recommended), or one call that blocks until the Run ends. A Run can wait a day at a gate, but a pane's server waits only 15 s for the running Varnick, and the automation tools are answered on the main actor. Either way, the Run's own notice tells the user.
+2. **The Judge step's bar:** 0.7 for every Judge step (recommended: it is the measured bar), or a bar each step sets, which nothing has measured.
+3. **Where `task_result` is checked:** in the pane's own MCP server, against the schema the host wrote into its folder, as `notify` is answered (recommended: the check and the refusal are the same, and the headless host's relay can answer it with no running Varnick); or over the socket by the running Varnick, as the Solution says.
+4. **A Run's notice on the phone:** on this Mac only until slice 3 (recommended: a push names a tab and a pane to open, and a Run has neither on the phone until slice 3 lists Runs there); or the phone's half now, which needs a push the page server sends for a Run and a phone page that shows one.
