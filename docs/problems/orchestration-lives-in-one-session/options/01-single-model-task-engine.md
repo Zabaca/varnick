@@ -117,6 +117,13 @@ Agent steps aren't idempotent: a builder run twice commits twice. So the runner 
 
 ## Further Notes
 
+**One engine, decided elsewhere (2026-10-15).** `work-cant-be-saved-or-chained` option 01 was accepted, and with it the user's decision, taken as recommended and relayed by the coordinator, that this problem should run on that option's engine:
+- a Task is a checked state graph in a JSON file;
+- its engine is a pure function in Varnick's shared Swift package, hosted by the running Varnick;
+- each Run is kept in a file of its own, written before every wait.
+
+It is not the Bun and Effect process proposed here. The problem and build types would become Tasks once that engine has an Ask capability (this option's gate) and fan-out (its verify step), neither of which is in its first slices. This option's status is unchanged: the user hasn't chosen among this problem's options.
+
 **What exists, per the 2026-10-04 research (primary sources linked; not re-checked here):**
 
 - **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`). A streaming query with a folder per run; agents defined in code or named; JSON-Schema structured output on the result; a session id on every result, with resume and fork; hooks for session start, stop and end, before and after each tool use, and subagent start and stop; permission modes, an allow-list and a per-tool callback; cost on every result and a per-run spending cap. Subagent messages arrive in the stream tagged with their parent; `usage` leaves out subagent work, and the dollar cost is a client-side estimate. Sources: [TypeScript reference](https://code.claude.com/docs/en/agent-sdk/typescript.md), [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md), [permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md), [sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md), [cost tracking](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md).
