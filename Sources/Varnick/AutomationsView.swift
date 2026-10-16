@@ -5,6 +5,8 @@ import VarnickPeer
 /// The list of this Mac's automations with each one's switch, next run, last outcome and Run now, and an editor for the fields.
 struct AutomationsSettingsView: View {
     @ObservedObject var store: AutomationStore
+    /// Their Runs, which each row's status reads and which can stop every check as the automations file can.
+    @ObservedObject var runStore: TaskRunStore
     let model: LauncherModel
     @ObservedObject private var settings = Settings.shared
     @State private var editing: Automation?
@@ -20,8 +22,8 @@ struct AutomationsSettingsView: View {
                 if editingIsNew {
                     store.save(saved)
                 } else {
-                    // Only the fields the editor has go to the automation as it is now: a run that started since Edit was pressed, and the slot it
-                    // ran for, are the store's, not the draft's.
+                    // Only the fields the editor has go to the automation as it is now: the slot a check fired for since Edit was pressed is the
+                    // store's, not the draft's.
                     store.update(saved.id) { current in
                         current.name = saved.name
                         current.prompt = saved.prompt
@@ -51,7 +53,10 @@ struct AutomationsSettingsView: View {
             if let problem = store.problem {
                 Text(problem).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
-            if let error = store.writeError {
+            if let problem = runStore.problem {
+                Text(problem).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
+            }
+            if let error = store.writeError ?? runStore.writeError {
                 Text(error).font(.system(size: 11.5)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 8)
             }
             if !Zmx.isEnabled {
@@ -95,7 +100,7 @@ struct AutomationsSettingsView: View {
                 }
                 Spacer(minLength: 12)
                 Button("Run now") { notes[automation.id] = model.runNow(automation.id) }
-                    .disabled(store.problem != nil || !settings.automationsOn)
+                    .disabled(store.problem != nil || runStore.problem != nil || !settings.automationsOn)
                 Button("Edit") {
                     editingIsNew = false
                     // Opening the editor is seeing the mark.
@@ -150,7 +155,7 @@ struct AutomationsSettingsView: View {
         } else if let next = AutomationSlot.next(automation.cadence, zone: automation.zone, after: Date()) {
             parts.append("Next " + next.formatted(date: .abbreviated, time: .shortened))
         }
-        if let last = automation.runs.first {
+        if let last = runStore.runs(of: automation.id).first {
             // As last recorded (the check brings it up to date once a minute): the turn is read where a list is refreshed, never while one is drawn.
             parts.append("Last: " + (last.state == .message ? last.detail ?? last.state.text : last.state.text))
         }

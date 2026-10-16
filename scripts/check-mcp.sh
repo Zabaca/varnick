@@ -175,6 +175,15 @@ if all(name in described for name in automation_tools):
         permissions = described[name]["inputSchema"].get("properties", {}).get("permissions", {}).get("enum")
         if permissions != ["varnick_setting", "ask", "allowed_tools_only"]:
             fail("%s's permissions are %s: no skip, and nothing else" % (name, permissions))
+    # An automation is a trigger of the Claude prompt Task (option 01 of work-cant-be-saved-or-chained, slice 1): the list says which Task each names,
+    # and create and edit say theirs is the Claude prompt. Their arguments are the same four fields, with no `task` or `input` until slice 2.
+    if "task" not in described["automations_list"]["description"] or "Claude prompt" not in described["automations_list"]["description"]:
+        fail("automations_list's description doesn't say each automation names a Task, the Claude prompt")
+    for name in ("automation_create", "automation_edit"):
+        if "Claude prompt" not in described[name]["description"]:
+            fail("%s's description doesn't say an automation runs the Claude prompt Task" % name)
+        if {"task", "input"} & set(described[name]["inputSchema"].get("properties", {})):
+            fail("%s takes task or input, which arrive in slice 2" % name)
     limit = properties.get("working_limit_minutes", {})
     if (limit.get("minimum"), limit.get("maximum")) != (5, 1440):
         fail("automation_create's working limit is %s to %s, not 5 to 1440" % (limit.get("minimum"), limit.get("maximum")))

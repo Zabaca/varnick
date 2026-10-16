@@ -430,12 +430,13 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 - **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
   hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.
 - Turning the switch off stops every run from starting and shows the tabs of runs you haven't opened as ordinary tabs. The
-  automations are kept in `automations.json` in Varnick's support folder.
+  automations are kept in `automations.json` in Varnick's support folder (each is a cadence and the Task it runs, for now always the
+  built-in Claude prompt), and what became of each run in `runs.json` beside it.
 
 **Tasks** hands Varnick something to do on a website: find a fact ("how much is delivery to Canada"), or fill in forms ("create an
-account for Robin Vale"). On, `!task` and the split picker's Task tile open a **Task pane**, a browser of Varnick's own. It has none
-of your cookies or logins, keeps nothing when you close it, and is not saved, so a restart ends it. Open the site in it, write the
-task in the task line under the address bar and press ↩. A column of steps beside the page says what Jev, Claude and the harness do,
+account for Robin Vale"). On, `!task` and the split picker's Website tile open a **Website pane**, a browser of Varnick's own. It has none
+of your cookies or logins, keeps nothing when you close it, and is not saved, so a restart ends it. Open the site in it, write what
+to do in the line under the address bar and press ↩. A column of steps beside the page says what Jev, Claude and the harness do,
 one line each, and Varnick can say the milestones aloud (Speak progress, on in the pane). It reads and acts inside the page only, never
 on your screen, so it needs no permission and works while you use the Mac.
 - **You type** passwords, one-time codes and card numbers in the page yourself (Varnick never reads them, and no model sees them),
@@ -448,7 +449,7 @@ on your screen, so it needs no permission and works while you use the Mac.
   steers. Nothing starts without it.
 - One task runs at a time. A second task in the same pane keeps the first one's cookies and cart.
 - What goes where is in [privacy and security](privacy-and-security.md#anthropic-through-tasks). To try it on a made-up shop,
-  run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Task pane.
+  run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Website pane.
 
 ## TypeSafe
 

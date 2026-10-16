@@ -37,8 +37,10 @@ final class LauncherModel: ObservableObject {
             strip.watch(tabs)
         }
     }
-    /// This Mac's automations, the runner that fires them (`startAutomations`), and the switch's watch (option 01 of `prompts-cant-run-on-a-schedule`).
+    /// This Mac's automations, their Runs (a file of its own, option 01 of `work-cant-be-saved-or-chained`), the runner that fires them
+    /// (`startAutomations`), and the switch's watch (option 01 of `prompts-cant-run-on-a-schedule`).
     let automations = AutomationStore()
+    let taskRuns = TaskRunStore()
     let automationRunner = AutomationRunner()
     var automationSwitch: AnyCancellable?
     /// The tabs a person sees: `tabs` less the runs of automations nobody has opened (`ClaudeTab.isHiddenRun`). Every list of tabs for the eye
@@ -3785,7 +3787,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Show outline"
         case .problems: "Show problems board"
         case .resources: "Show Resources"
-        case .task: TaskController.running == nil ? "New task" : "Show the running task"
+        case .task: TaskController.running == nil ? "On this site" : "Show the running one"
         }
     }
 
@@ -3797,7 +3799,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Your bullets, kept on this Mac (also !wf)"
         case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         case .resources: "Memory by tab, pane and helper (also !memory)"
-        case .task: "A browser of Varnick's own where it carries out a task on a site, step by step"
+        case .task: "A Website pane: a browser of Varnick's own where it works toward a goal on a site, step by step"
         }
     }
 

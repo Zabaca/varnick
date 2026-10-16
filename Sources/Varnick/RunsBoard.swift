@@ -47,10 +47,10 @@ final class RunsBoard: ObservableObject {
         var next: [Row] = []
         let here = PeerIdentity.name ?? "this Mac"
         for automation in model.automations.automations {
-            for (index, run) in automation.runs.enumerated() {
+            for (index, run) in model.taskRuns.runs(of: automation.id).enumerated() {
                 let now = model.displayed(run)
-                next.append(Row(id: run.id, automation: automation.name, when: run.startedAt ?? run.slot, state: now.state, detail: now.detail,
-                                late: run.late, manual: run.manual, count: run.count ?? 1, opens: run.state.ran, place: here,
+                next.append(Row(id: run.id, automation: automation.name, when: run.startedAt ?? run.trigger.slot, state: now.state, detail: now.detail,
+                                late: run.trigger.late, manual: run.trigger.manual, count: run.count ?? 1, opens: run.state.ran, place: here,
                                 mark: index == 0 ? automation.mark?.line : nil))
             }
         }

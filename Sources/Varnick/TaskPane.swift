@@ -97,9 +97,9 @@ final class TaskController: ObservableObject, TaskUser {
     func start(_ text: String, in web: WKWebView) {
         let task = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Settings.shared.tasksOn, !task.isEmpty, !phase.isActive else { return }
-        if let other = Self.running, other !== self, other.phase.isActive { return add(.harness, "A task is running in another pane: one task runs at a time") }
+        if let other = Self.running, other !== self, other.phase.isActive { return add(.harness, "Another Website pane is working, and one works at a time") }
         guard let url = web.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-            return add(.harness, "Open the site first: a task starts on the page this pane shows")
+            return add(.harness, "Open the site first: work starts on the page this pane shows")
         }
         guard let model else { return }
         lines = []
@@ -120,7 +120,7 @@ final class TaskController: ObservableObject, TaskUser {
             // Stop while the login was being checked.
             guard !Task.isCancelled else { return self.finishedWith(.stopped, runner: nil) }
             guard claudeState.loginPassed, let path = found.claude, TextHelper.isInstalled else {
-                self.add(.harness, "No task starts without Claude Code logged in: open a Claude pane and log in, then try again")
+                self.add(.harness, "Nothing starts without Claude Code logged in: open a Claude pane and log in, then try again")
                 self.finishedWith(.gaveUp("Claude Code isn't available"), runner: nil)
                 return
             }
@@ -310,7 +310,7 @@ struct TaskLine: View {
                 .onSubmit { if let web = session.webView { task.start(task.draft, in: web) } }
             if task.phase.isActive {
                 Button("Stop") { task.stop() }
-                    .help(Settings.shared.combo(.stopTask).map { "Stop the task (\($0.label))" } ?? "Stop the task")
+                    .help(Settings.shared.combo(.stopTask).map { "Stop (\($0.label))" } ?? "Stop")
             } else if !task.draft.trimmingCharacters(in: .whitespaces).isEmpty {
                 Button("Start") { if let web = session.webView { task.start(task.draft, in: web) } }
             }
@@ -336,7 +336,7 @@ struct TaskSteps: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 5) {
                         if task.lines.isEmpty {
-                            Text("Open the site, write the task above and press ↩. Varnick reads and acts inside this page only. You type passwords and card numbers yourself, and every form submit waits for your Allow.")
+                            Text("Open the site, write what to do above and press ↩. Varnick reads and acts inside this page only. You type passwords and card numbers yourself, and every form submit waits for your Allow.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                         }
                         ForEach(task.lines) { line in

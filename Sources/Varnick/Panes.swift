@@ -24,7 +24,7 @@ enum PaneKind: Equatable {
         case .claude: "Claude"
         case .terminal: "Terminal"
         case .web: "Browser"
-        case .task: "Task"
+        case .task: "Website"
         case .app(let app): app.name
         case .hostApp(let app): app.name
         }
