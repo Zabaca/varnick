@@ -85,8 +85,8 @@ This prototype encodes the decisions: the subset of JSON Schema, bindings in bra
 | **Notify** | a title and a body | ok | none |
 | **Task** | a Task's name and its input | ok, failed | the child's result |
 
-- **Claude:** a hidden Claude pane, started as an automation's run is (ADR 0040). It answers through a `task_result` tool on Varnick's MCP server, whose input schema is the step's result schema.
-  - The running Varnick checks each call over its socket, as it checks the automation tools, and refuses one that doesn't fit, naming each wrong field. Claude then tries again.
+- **Claude:** a hidden Claude pane, started as an automation's run is (ADR 0040). It answers through a `task_result` tool on the pane's own MCP server, whose input schema is the step's result schema, read from a file the host writes into the pane's folder before the pane starts.
+  - The pane's MCP server checks each call against that schema, as it answers `notify`, and refuses one that doesn't fit, naming each wrong field. Claude then tries again. An accepted value goes into a result file in the pane's folder, and the host moves it onto the step. So the headless host's relay can answer it with no running Varnick. Amended 2026-10-15 at the user's word: the running Varnick was to check each call over its socket.
   - A turn that ends with no valid result is failed: "ended without a result".
   - A Needs you mid-step is the pane's own notice, as for any run.
 - **Website:** the loop of ADR 0039, unchanged, in a Website pane (today's Task pane) that opens the site before it starts.
@@ -489,7 +489,7 @@ The user's word, later on 2026-10-15 (relayed by the coordinator): the engine is
 
 #### Decided in planning
 
-Where the code forced a choice the Solution leaves open. Each is the planner's and stands unless the user says otherwise; the user's questions are under Open questions.
+Where the code forced a choice the Solution leaves open. Each is the planner's and stands unless the user says otherwise; the user's answers are under Resolved for slice 2a.
 
 1. **The Claude prompt Task keeps slice 1's path** in both parts. Only an automation starts it, `startRun` builds its Run and `tendRuns` tends it, as now. The headless host's slice 2 builds this Task's runs on the relay at the same time, and two rewrites of one start would collide. It moves onto the engine together with the headless host's engine (slice 3). A Claude step of any other Task shares its pane start and its limits.
 2. **`else` catches every outcome but `failed`.** A `failed` outcome takes a `failed` edge or fails the Run, which then travels up. Otherwise `{"yes": …, "else": …}` would send a Judge's or a sub-task's failure down the "no" branch. Judge gains the outcome `failed`, for when neither Jev nor Claude answered.
@@ -547,7 +547,7 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
    - Its MCP config lists `notify`, plus `task_result` while the pane's folder holds the step's result schema. The prompt ends with Varnick's fixed line asking for `task_result`.
    - With a result schema, the step is ok at a valid `task_result`, and fails with "ended without a result" if its turn ends without one. Without a schema, it is ok when its turn ends.
    - Waiting 24 hours fails it. Once a step is done, its process ends 10 minutes after its turn came to wait, if nobody opened it, as a run's does.
-8. **`task_result`** is answered by the pane's own MCP server, as `notify` is (Open question 3).
+8. **`task_result`** is answered by the pane's own MCP server, as `notify` is (Resolved for slice 2a, 3).
    - The server lists the schema the host wrote into the pane folder.
    - It checks each call against that schema and refuses a wrong one, naming each wrong field.
    - It writes an accepted value to a result file in the same folder, and refuses a second call.
@@ -557,7 +557,7 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
     - The notifier keeps notices for Runs beside those for panes, by the Run's id, with the same kinds and switches.
     - The menu line is written from the Run: Done with a result, Stopped on an error ("Failed at check: no"), or a Message from Notify. Choosing one shows the Run.
     - A Notify step is recorded as sending, then raised, then recorded as sent.
-    - These notices stay on this Mac (Open question 4).
+    - These notices stay on this Mac (Resolved for slice 2a, 4).
 11. **Task:** a sub-task is a child Run, with its own grants. Its Task is found from the parent's folder and copied when the child starts. The child's end is the outcome of the parent's step. Stop on any Run stops its whole tree.
 12. **The restart rules:**
     - a Claude step reattaches to its restored pane by its id; one whose session is gone fails with "the session had ended", unless its result file is there;
@@ -575,7 +575,7 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
 15. **The task tools** are the `--tasks` set, listed in every Claude pane started while Tasks is on, but never in a Run's pane.
     - **`tasks_list`:** each Task found from the session's folder, with its input and result schemas, its capabilities, whether it is valid (with its problems), and its mark.
     - **`task_run`:** a Task's name and an input object, checked against the schema. The answer is the Run's id, and says the Run's notice will tell the user.
-    - **`task_run_status`:** a Run's state, its current step and its lines, and once it has ended, its result or its failure (Open question 1).
+    - **`task_run_status`:** a Run's state, its current step and its lines, and once it has ended, its result or its failure. A session calls it again until then (Resolved for slice 2a, 1).
     - **`task_check`:** a file's path. The file is checked as if it sat in the tasks folder of the project it is in, and the answer is its problems or that it is valid.
 
     The running Varnick answers them over the socket, with the checks in `AutomationAccess`'s order: the switch, Varnick having started, the calling pane, the runs file, then the tool. The calling pane must be a Claude pane on this Mac whose record names no automation and no Run. The automation tools now refuse a Run's pane, as they already refuse a run's.
@@ -710,7 +710,7 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
 #### What the headless host needs to run Tasks (slice 3)
 
 - **The engine, the check, the schema and `task_result` live in the shared package,** Foundation only and with no clock. The relay calls them unchanged, as it will call `AutomationSlot.check`.
-- **Its timer run is the host.** Each run reads the pane folders (turns and result files), feeds the events in, writes the Run, then starts the next step. A Claude step there is a hidden pane started through its launch code. Its `--mcp` lists `notify` and `task_result`, both answered by the server itself, with no running Varnick (Open question 3).
+- **Its timer run is the host.** Each run reads the pane folders (turns and result files), feeds the events in, writes the Run, then starts the next step. A Claude step there is a hidden pane started through its launch code. Its `--mcp` lists `notify` and `task_result`, both answered by the server itself, with no running Varnick (the Solution's Claude capability).
 - **Its runs file is `TaskRunFile` at version 2.** If protocol 29 is built on version 1, its requests don't change, since an automation's Run is written the same way in both.
 - **It can host Claude, Notify and Task steps.** It can't host Website (no WebKit) or Judge. It has no TypeSafe key (inferred), and no text helper for Claude to take Jev's place: none of its sources or scripts mentions one.
 - **What it needs from the Mac:** the grants (kept in Settings › Tasks on the Mac, never in a file), its list of Tasks, and a Run's own notice in its listing for its page server to push. Each is a request in the protocol after 29.
@@ -746,11 +746,11 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
   - that a two-second tick advances a Run soon enough;
   - that Jev's 1.5 s deadline is long enough for a Judge's state.
 
-### Open questions, recommendation first
+### Resolved for slice 2a (2026-10-15)
 
-All four are for slice 2a. The first two have been open since the option was accepted.
+The user answered all four as recommended (relayed by the coordinator):
 
-1. **A session waiting on a Run's result:** `task_run_status`, called again (recommended), or one call that blocks until the Run ends. A Run can wait a day at a gate, but a pane's server waits only 15 s for the running Varnick, and the automation tools are answered on the main actor. Either way, the Run's own notice tells the user.
-2. **The Judge step's bar:** 0.7 for every Judge step (recommended: it is the measured bar), or a bar each step sets, which nothing has measured.
-3. **Where `task_result` is checked:** in the pane's own MCP server, against the schema the host wrote into its folder, as `notify` is answered (recommended: the check and the refusal are the same, and the headless host's relay can answer it with no running Varnick); or over the socket by the running Varnick, as the Solution says.
-4. **A Run's notice on the phone:** on this Mac only until slice 3 (recommended: a push names a tab and a pane to open, and a Run has neither on the phone until slice 3 lists Runs there); or the phone's half now, which needs a push the page server sends for a Run and a phone page that shows one.
+1. **A session polls `task_run_status`** for a Run's result. No call blocks until the Run ends: a Run can wait a day at a gate, but a pane's server waits only 15 s for the running Varnick. The Run's own notice tells the user either way.
+2. **Every Judge step uses the 0.7 bar,** the measured one. A step can't set a bar of its own.
+3. **`task_result` is checked in the pane's own MCP server,** against the schema file the host writes into the pane's folder, as `notify` is answered. The user agreed to amend the accepted text, and the Solution's Claude capability now says so.
+4. **A Run's notice is this Mac's only until slice 3.** A push names a tab and a pane to open, and a Run has neither on the phone until slice 3 lists Runs there.
