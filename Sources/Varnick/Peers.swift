@@ -1040,6 +1040,9 @@ final class PeerManager: ObservableObject {
         case .apps:
             guard let model else { return starting }
             return PeerJSON.line(await model.hostApps(folder: request.folder))
+        case .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened:
+            // Automations on a headless host are that host's: a Mac keeps its own in its own files, through Settings and the tools.
+            return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "This Mac") keeps its own automations: only a headless host answers these"))
         case .attach, .status, .screen, .watch, .tabs, .take, .file, .files, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))

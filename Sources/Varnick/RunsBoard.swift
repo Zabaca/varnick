@@ -21,10 +21,12 @@ final class RunsBoard: ObservableObject {
         let count: Int
         /// A session was started for it, so it can be opened.
         let opens: Bool
-        /// Where it ran: this Mac, until runs can be on a headless host.
+        /// Where it ran: this Mac's name, or the headless host's.
         let place: String
         /// What a session last did to the automation through the automation tools, until the user has seen it: on its newest run only.
         let mark: String?
+        /// The paired headless host the run is on (its id); nil for this Mac's own.
+        var host: String?
         /// A Task's own Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a): ↩ shows its view, not a session.
         var isTask = false
         /// How a Task's Run started, for its row.
@@ -60,6 +62,7 @@ final class RunsBoard: ObservableObject {
                                 mark: index == 0 ? automation.mark?.line : nil))
             }
         }
+        next += model.hostRunRows()
         next += taskRows(model: model, place: here)
         next.sort { $0.when > $1.when }
         next = Array(next.prefix(Self.shown))
@@ -102,7 +105,7 @@ final class RunsBoard: ObservableObject {
             return
         }
         if row.isTask { return showDetail(of: id) }
-        refusal = model?.openRun(id)
+        if let host = row.host { refusal = model?.openHostRun(id, on: host) } else { refusal = model?.openRun(id) }
     }
 }
 

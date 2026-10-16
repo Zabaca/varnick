@@ -6,7 +6,9 @@
 #
 # Inputs (env): ACTION=install|uninstall, COMMIT (short), RUN (the near half's name for this run's files), NAME (the host's name,
 # optional), PROBLEMS=on|off|auto (the work-link hooks of ADR 0020 in the sessions this host starts: `on` writes ~/.varnick/problems, which the
-# relay looks for when it builds a session's hook settings, `off` removes it, `auto` keeps what is there; prints PROBLEMS=on|off), PAGE=on|auto|remove
+# relay looks for when it builds a session's hook settings, `off` removes it, `auto` keeps what is there; prints PROBLEMS=on|off), AUTOMATIONS=on|off|auto
+# (the automations' timer, option 01 of `prompts-cant-run-on-a-schedule`: `on` writes a systemd user timer that starts a `oneshot` service running
+# `varnick-peer tick` once a minute, `off` removes both units, `auto` rewrites them only where they exist; prints AUTOMATIONS=on|off), PAGE=on|auto|remove
 # (the Phone page, ADR 0011: `on` installs its server and unit, `auto` updates them only where the unit already
 # exists, `remove` takes them away; default auto). The package arrives as ~/.varnick/incoming-$RUN.tar.gz (`git archive
 # <commit> Packages/VarnickPeer`), and the page, when PAGE is on or auto and the unit exists, as ~/.varnick/incoming-page-$RUN.tar.gz
@@ -15,8 +17,8 @@
 # PAGE_PUBLISH_PORT are ADR 0011's note of 2026-10-06.
 #
 # What this far half supports, which the near half reads rather than guessing from a function name: RUN (per-run tarball names), LOCK
-# (the install lock), PROBLEMS (the problems file). Add a word when a feature the near half adapts to arrives; never remove one.
-# supports: RUN LOCK PROBLEMS
+# (the install lock), PROBLEMS (the problems file), AUTOMATIONS (the timer). Add a word when a feature the near half adapts to arrives; never remove one.
+# supports: RUN LOCK PROBLEMS AUTOMATIONS
 #
 # Everything that runs is called from `main`, with stdin on /dev/null: this script is read from stdin, and a command
 # that read stdin would take the rest of it. The functions above `main` only define what it calls.
@@ -29,6 +31,9 @@ BUN_VERSION=1.3.14
 BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
 BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-linux-x64.zip"
 PAGE_UNIT=varnick-phone-page.service
+# The automations' timer and the service it starts (ADR 0009's amendment, ADR 0040): the service runs `varnick-peer tick`, the host's firing step.
+TICK_SERVICE=varnick-automations.service
+TICK_TIMER=varnick-automations.timer
 # The port the unit's Host check expects, and the one this script publishes (the only mount it touches; ADR 0011's note).
 PAGE_PORT=8444
 PUBLISH_PORT=${PAGE_PUBLISH_PORT:-8444}
@@ -319,6 +324,72 @@ UNIT
   return 0
 }
 
+# The automations' timer: a user `.timer` that starts a `oneshot` `.service` running `varnick-peer tick` at the start of every minute, so nothing stays
+# running between ticks. Not persistent: the slot function catches up by itself. KillMode=process is the line that matters, as the page's unit has it: a
+# run's zmx daemon is created by the relay this service runs, so it lives in the service's cgroup, and any other mode would end every run when the
+# tick exits (what was measured, and what it does not show, is in docs/agents/where-it-breaks.md, Automations). Prints AUTOMATIONS=on and the markers
+# the near half judges, or AUTOMATIONS=failed.
+automations_install() {
+  local unit_dir="$HOME/.config/systemd/user" changed=no state
+  adopt_runtime_dir
+  command -v systemctl >/dev/null 2>&1 || { echo "AUTOMATIONS=failed"; echo "no systemd here"; return 0; }
+  mkdir -p "$unit_dir"
+  cat >"$unit_dir/$TICK_SERVICE.new" <<UNIT
+[Unit]
+Description=Varnick's automations: fires what is due on this host
+
+[Service]
+Type=oneshot
+ExecStart=%h/.varnick/varnick-peer tick
+KillMode=process
+UNIT
+  cat >"$unit_dir/$TICK_TIMER.new" <<UNIT
+[Unit]
+Description=Varnick's automations, once a minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=false
+Unit=$TICK_SERVICE
+
+[Install]
+WantedBy=timers.target
+UNIT
+  for unit in "$TICK_SERVICE" "$TICK_TIMER"; do
+    if [ -f "$unit_dir/$unit" ] && cmp -s "$unit_dir/$unit.new" "$unit_dir/$unit"; then rm -f "$unit_dir/$unit.new"; else mv -f "$unit_dir/$unit.new" "$unit_dir/$unit"; changed=yes; fi
+  done
+  if [ "$changed" = yes ]; then systemctl --user daemon-reload; fi
+  if ! systemctl --user is-enabled "$TICK_TIMER" >/dev/null 2>&1; then
+    systemctl --user enable --now "$TICK_TIMER" >/dev/null 2>&1
+  elif [ "$changed" = yes ]; then
+    systemctl --user restart "$TICK_TIMER" >/dev/null 2>&1
+  elif ! systemctl --user is-active "$TICK_TIMER" >/dev/null 2>&1; then
+    systemctl --user start "$TICK_TIMER" >/dev/null 2>&1
+  fi
+  state=$(systemctl --user is-active "$TICK_TIMER" 2>/dev/null)
+  if [ "$state" = active ]; then echo "AUTOMATIONS=on"; else echo "AUTOMATIONS=failed"; journalctl --user -u "$TICK_TIMER" -n 8 --no-pager 2>/dev/null | cut -c1-200; fi
+  echo "TICKCHANGED=$changed"
+  echo "TICKTIMER=${state:-unknown}"
+  echo "TICKKILLMODE=$(systemctl --user show -p KillMode --value "$TICK_SERVICE" 2>/dev/null)"
+  echo "TICKTYPE=$(systemctl --user show -p Type --value "$TICK_SERVICE" 2>/dev/null)"
+  echo "TICKNEXT=$(systemctl --user show -p NextElapseUSecRealtime --value "$TICK_TIMER" 2>/dev/null)"
+  echo "LINGER=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null | sed 's/^$/no/')"
+}
+
+# Takes the timer away: stopped and removed, with its service. Never state/ (the automations and their Runs) or a session a tick started, which the
+# service's KillMode=process leaves running.
+automations_remove() {
+  local unit_dir="$HOME/.config/systemd/user"
+  adopt_runtime_dir
+  if [ -f "$unit_dir/$TICK_TIMER" ] || [ -f "$unit_dir/$TICK_SERVICE" ]; then
+    systemctl --user disable --now "$TICK_TIMER" >/dev/null 2>&1
+    rm -f "$unit_dir/$TICK_TIMER" "$unit_dir/$TICK_SERVICE"
+    systemctl --user daemon-reload >/dev/null 2>&1
+  fi
+  echo "AUTOMATIONS=off"
+}
+
 # Whether the user is Tailscale's operator, which `tailscale cert` (the port proxy's certificate, ADR 0035) needs: yes, no, or unknown when it
 # can't be read. tailscaled run with TS_PERMIT_CERT_UID is another way and is not visible from here, so no is a warning, not a failure.
 operator_state() {
@@ -401,13 +472,14 @@ main() {
   find "$ROOT" -maxdepth 1 -name 'incoming*-*.tar.gz' ! -name "$(basename "$INCOMING")" ! -name "$(basename "$INCOMING_PAGE")" -mmin +1440 -exec rm -f {} + 2>/dev/null || true
 
   if [ "${ACTION:-install}" = uninstall ]; then
+    automations_remove >/dev/null
     page_remove
     # Only a link that points at this install's binary is ours to remove.
     if [ "$(readlink "$LINK" 2>/dev/null)" = "$ROOT/varnick-peer" ]; then rm -f "$LINK"; fi
     rm -f "$ROOT/varnick-peer" "$ROOT/varnick-peer.new" "$ROOT/build" "$ROOT/problems"
     rm -f "$INCOMING" "$INCOMING_PAGE"
     rm -rf "$SRC"
-    echo "REMOVED=$ROOT/varnick-peer, $LINK, $ROOT/build, $ROOT/problems and $SRC"
+    echo "REMOVED=$ROOT/varnick-peer, $LINK, $ROOT/build, $ROOT/problems, the automations' timer and its service, and $SRC"
     echo "KEPT=$ROOT/state, $ROOT/config.json, $ROOT/zmx, Bun and any running session"
     return 0
   fi
@@ -520,6 +592,13 @@ main() {
     off) rm -f "$ROOT/problems" ;;
   esac
   if [ -e "$ROOT/problems" ]; then echo "PROBLEMS=on"; else echo "PROBLEMS=off"; fi
+  # The automations' timer, after the relay it runs: installed, kept up to date where it is installed, or removed.
+  case "${AUTOMATIONS:-auto}" in
+    off) automations_remove ;;
+    on) automations_install ;;
+    *)
+      if [ -f "$HOME/.config/systemd/user/$TICK_TIMER" ]; then automations_install; else echo "AUTOMATIONS=off"; fi ;;
+  esac
 
   # 9. The Phone page (ADR 0011), after the relay it runs on: installed, kept up to date where it is installed, or removed.
   case "${PAGE:-auto}" in

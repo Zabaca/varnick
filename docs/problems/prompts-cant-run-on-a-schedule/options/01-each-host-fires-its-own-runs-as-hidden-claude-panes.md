@@ -316,7 +316,7 @@ If the refusal brings up a dialog, Allowed tools only is left out and Ask and Sk
 
 ### Slice 2: the headless host, protocol 29
 
-Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of `work-cant-be-saved-or-chained` option 01 (ADR 0041). The user decided that this slice is built on that shape: an automation is a trigger (a cadence, a Task and its input) in `automations.json` at version 2, and its Runs, with their steps, are in a runs file of their own. Protocol 29 carries Tasks and Runs as they are now. Four questions are for the user, below.
+Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of `work-cant-be-saved-or-chained` option 01 (ADR 0041). The user decided that this slice is built on that shape: an automation is a trigger (a cadence, a Task and its input) in `automations.json` at version 2, and its Runs, with their steps, are in a runs file of their own. Protocol 29 carries Tasks and Runs as they are now. The user answered the slice's four questions as recommended later the same day (relayed by the coordinator): they are under Resolved for slice 2, below.
 
 **Goal.** An automation can be kept on the headless host and fired there with every Mac asleep. Its run is a Claude pane in that host's zmx, labelled for the Mac that saved it. That Mac, while it runs, holds the run as an unseen tab and raises its notices; the phone gets the push when the user is away. Every Mac edits the host's list from Settings › Automations, the Runs tab lists the host's runs beside this Mac's, and a run nobody opened is hidden from every Mac's lists and listed under Runs on the phone.
 
@@ -330,7 +330,7 @@ Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of 
 7. **Documents:** ADR 0009 and ADR 0040 amended, `CONTEXT.md`, where-it-breaks, the guide and the privacy page.
 
 **Not in it:**
-- **The automation tools on the headless host** (question 2): they stay this Mac's.
+- **The automation tools on the headless host** (resolved 2): they stay this Mac's.
 - **Any Task but Claude prompt there** (below).
 - **Search of a headless run's conversation:** no headless session is searched from a Mac (below).
 - **A notice that outlives a headless run's view,** and a notice for a run ended at its limit: both wait for the Run's own notice, which the engine slice of `work-cant-be-saved-or-chained` builds.
@@ -419,7 +419,7 @@ Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of 
 - **Other Macs** drop marked tabs from what their lists read (the session list, the board's cards, the remembered tabs and the marks) while their own Automations switch is on, and keep them in a list of their own for their views and for adopting. With the switch off they show them as ordinary tabs, so nothing runs out of sight.
 - **The mark goes when the run is opened:** shown on the saving Mac (which tells the host), taken over anywhere, or released by Delete.
 
-**The saving Mac's view** (question 1, recommended):
+**The saving Mac's view** (resolved 1):
 - **Adopted at the minute check.** Once a minute and after a wake, while Automations is on, each Mac asks each headless host on protocol 29 for its `tabs`. A marked tab whose control names this Mac, and that no tab here holds, opens here unseen:
   - as a tab of that host's, not shown (`openHostTab`, which opens a paired machine's tab without showing it);
   - its records marked with the automation and unopened, so the hidden-tab rule applies as it stands;
@@ -439,7 +439,7 @@ Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of 
   - whether its timer has run in the last three minutes ("Nothing fires on it until its timer is installed": the installer with `--automations`).
 - **The editor takes the host for a new automation:** This Mac, or a headless host on protocol 29. For a headless host:
   - the folders are its `projects` and the agents its `agents`;
-  - "Varnick's setting" is that host's Skip permissions (question 3);
+  - "Varnick's setting" is that host's Skip permissions (resolved 3);
   - the warning drops the macOS grants, which the host doesn't have.
 
   An automation's host doesn't change once it is saved.
@@ -499,7 +499,7 @@ Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of 
 
 #### Checks
 
-**First, the throwaway check on the headless host**, by the user or, with their go-ahead, the builder (never the real install root or `/tmp/zmx-<uid>`):
+**First, the throwaway check on the headless host,** run by the builder over ssh at the user's word (2026-10-15, relayed by the coordinator), and removed afterwards. It never touches the real install root or `/tmp/zmx-<uid>`:
 1. Make a throwaway user timer and `oneshot` service with `KillMode=process`, every minute. Its script, in a throwaway folder:
    - appends the time and the account's login sessions to a file;
    - on its first run, makes a zmx session with the relay's own zmx, a short throwaway absolute `ZMX_DIR` and a pty, as Varnick does, running a long `sleep`, and detaches.
@@ -544,7 +544,7 @@ The answers go in where-it-breaks, Peers. Host names and figures stay in this pr
 12. **Reboot the host with a run going:**
     - the run reads ended, and nothing starts it again;
     - a slot that passed during the reboot runs once at the timer's next run, if under 12 hours old.
-13. **Automations off on this Mac:** its views become ordinary tabs, and the host fires on (question 4).
+13. **Automations off on this Mac:** its views become ordinary tabs, and the host fires on (resolved 4).
 14. **Three runs going at once:** each view attaches.
 15. **Search,** on this Mac: a local run's prompt word finds its conversation, and ↩ resumes it with `/mcp` listing `notify` alone.
 
@@ -576,24 +576,22 @@ The answers go in where-it-breaks, Peers. Host names and figures stay in this pr
 - **The Phone page:** its protocol number, `shapeHome`, the Home view and its tests.
 - **The installer's two halves:** the flag, the units, the markers and the `supports:` word.
 
-#### Open questions for slice 2, recommendation first
+#### Resolved for slice 2
 
-1. **Does the saving Mac attach to a headless run?** (Open question 1 below.)
-   - **Recommended: yes.** It holds the unseen view above, attached like any session it controls on the host. That needs no change to the page server's routing or to the notices, since every Mac-controlled session there already works this way.
-   - The cost is one ssh channel per unopened run going, on the connection the panes share. OpenSSH's default is ten sessions a connection; ADR 0008's spike ran 14 on Tailscale SSH.
-   - **The other way:** follow only. The page server would route a run by the saving Mac's presence with no client attached, and the Mac would raise a notice for a pane it doesn't hold. That is a change to the push rule and a notice with no pane.
-2. **The automation tools.**
-   - **Recommended:** Settings only in this slice, with the four tools still this Mac's, and a `host` argument in a later slice on these same requests, with no bump.
-     - The engine slice adds `task` and `input` to the same tools and files.
-     - A host's folders and agents can only be checked there.
-     - The tools' answer would have to wait on ssh.
-   - **The other way:** the tools take a host now.
-3. **What "Varnick's setting" means for a run on the headless host.**
-   - **Recommended:** that host's own Skip permissions (its config, off unless set), read at each run's start and stored on the run, and shown in the editor. A session nobody asked for there follows that setting already.
-   - **The other way:** the saving Mac's Skip permissions at its save, stored on the automation as if overridden.
-4. **The Automations switch and the headless host.**
-   - **Recommended:** the switch is each Mac's own. A headless host fires its automations on its timer whatever any Mac's switch says; an automation's own switch, from any Mac, or removing the timer stops it. Turning a Mac's switch off opens that Mac's views of the host's runs, and the switch's detail says the host's automations go on.
-   - **The other way:** turning the saving Mac's switch off also switches off the automations it saved on the host, losing their own on and off.
+**Answered by the user, 2026-10-15** (relayed by the coordinator), all four as recommended:
+
+1. **The saving Mac attaches to each headless run.** It holds the unseen view above, attached like any session it controls on the host, so the page server's routing and the notices don't change.
+   - The cost, accepted with it: one ssh channel per unopened run going, on the connection the panes share. OpenSSH's default is ten sessions a connection; ADR 0008's spike ran 14 on Tailscale SSH. The hand test's three runs at once is its check.
+   - Not chosen: following only, which needed a change to the push rule and a notice with no pane.
+2. **Settings only in this slice.** The four automation tools stay this Mac's. A `host` argument comes in a later slice on these same requests, with no bump.
+   - The reasons: the engine slice adds `task` and `input` to the same tools and files, a host's folders and agents can only be checked there, and the tools' answer would have to wait on ssh.
+   - Not chosen: the tools taking a host now.
+3. **"Varnick's setting" on the headless host is that host's own Skip permissions** (its config, off unless set), read at each run's start, stored on the run and shown in the editor. A session nobody asked for there follows that setting already.
+   - Not chosen: the saving Mac's Skip permissions at its save, stored on the automation as if overridden.
+4. **The Automations switch is each Mac's own.** A headless host fires its automations on its timer whatever any Mac's switch says; an automation's own switch, from any Mac, or removing the timer stops it. Turning a Mac's switch off opens that Mac's views of the host's runs, and the switch's detail says the host's automations go on.
+   - Not chosen: turning the saving Mac's switch off also switching off the automations it saved on the host, which would lose their own on and off.
+
+**The throwaway check** is the builder's, over ssh, at the user's word (Checks, above). It removes its units, its session and its folder when done.
 
 #### Verified and inferred, for slice 2
 
@@ -761,5 +759,5 @@ It never calls a tool the set lists. With Varnick running on the user's Mac, tha
 
 ### Open questions, recommendation first
 
-1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** For slice 2, whose question 1 it now is, with what attaching costs. Recommendation: attach. It is how every Mac-controlled session there already works, and it needs no change to the routing.
+1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** Resolved by the user, 2026-10-15 (relayed by the coordinator): attach, as recommended. It is how every Mac-controlled session there already works, and it needs no change to the routing. Slice 2's Resolved for slice 2 has the cost.
 2. **Should a run ended at its working limit raise a notice?** The pane is gone, so it needs one of two things: a notice the notifier keeps for a run rather than a pane, or a way to end the turn and leave the pane. Recommendation: decide after slice 1's hand test shows how often limits are hit. Until then it is marked in the run list only.

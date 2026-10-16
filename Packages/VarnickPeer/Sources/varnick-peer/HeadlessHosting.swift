@@ -9,9 +9,15 @@ import VarnickPeer
 
 extension HeadlessPeerHost {
     func forward(_ op: PeerOp, line: String) -> PeerForwarded {
-        guard let request = PeerJSON.decode(PeerRequest.self, from: line), let by = request.by else {
+        guard let request = PeerJSON.decode(PeerRequest.self, from: line) else {
+            // The asker is known from the head, which stays readable whatever else a build changes: say what couldn't be read.
+            if PeerJSON.decode(PeerRequestHead.self, from: line)?.by != nil {
+                return .reply(.failure(PeerProtocol.isAutomationRequest(op) ? "\(name) can't read that automation's format: both Macs need the same build"
+                                       : "\(name) can't read that request"))
+            }
             return .reply(.failure("The request needs the Mac's id"))
         }
+        guard let by = request.by else { return .reply(.failure("The request needs the Mac's id")) }
         switch op {
         case .start: return .reply(start(request, by: by))
         case .resume: return .reply(resumeConversation(request, by: by))
@@ -23,6 +29,8 @@ extension HeadlessPeerHost {
         case .agents: return .reply(agents(folder: request.folder))
         // A headless host runs no custom apps, so there are none to offer.
         case .apps: return .reply(PeerReply(v: PeerProtocol.version, ok: true, apps: []))
+        case .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened:
+            return .reply(automationRequest(op, request, by: by))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }
@@ -162,10 +170,20 @@ extension HeadlessPeerHost {
         }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         guard !running.contains(id) else { return taken }
-        let record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
+        var record = HeadlessSession(id: id, folder: folder, prompt: "", agent: ask.agent, skipPermissions: ask.skipPermissions, origin: by,
                                      conversation: conversation, bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
+        // A conversation that was a run's keeps what a run has, as `applyRunFields` does on a Mac: the automation, and the permissions it started with.
+        if let run = state.runFields(forConversation: conversation) {
+            record.automation = run.automation.uuidString.lowercased()
+            if let launch = run.launch {
+                record.skipPermissions = launch.skipPermissions
+                record.dontAsk = launch.dontAsk ? true : nil
+                record.allowedTools = launch.allowedTools.isEmpty ? nil : launch.allowedTools
+            }
+        }
+        let started = record
         do {
-            switch try state.add(record, refusing: { records in
+            switch try state.add(started, refusing: { records in
                 HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: StateFolder.conversations(of: records))
             }) {
             case .exists: return taken
@@ -175,7 +193,7 @@ extension HeadlessPeerHost {
         } catch {
             return stateFailure(error)
         }
-        return launch(record, control: by, origin: by, resuming: conversation) { ended(id) }
+        return launch(started, control: by, origin: by, resuming: conversation) { ended(id) }
     }
 
     // MARK: end
@@ -374,8 +392,11 @@ extension HeadlessPeerHost {
                     UUID(uuidString: member.id).map { self.pane(member, uuid: $0, status: statuses[Zmx.sessionName($0)]) }
                 }
             }
+            // A run nobody opened is marked (protocol 29), with its automation: the Macs keep it out of their lists and the phone lists it under Runs.
+            let unopened = members.filter { $0.runUnopened == true }
+            let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first)
             var tab = PeerTab(tab: id, name: record.name, doneAge: members.compactMap(\.done).max().map { Int(max(0, now.timeIntervalSince($0))) },
-                              layout: record.layout, panes: panes)
+                              layout: record.layout, panes: panes, run: mark)
             tab.settleControl()
             return tab
         }
@@ -390,7 +411,9 @@ extension HeadlessPeerHost {
                             control: status?.control)
         }
         let conversation = record.conversationID(reported: PaneFolder.reportedConversation(for: uuid))
-        let title = TranscriptReader.title(directory: folder, conversation: conversation) ?? Self.firstLine(of: record.prompt) ?? "New session"
+        // A run's pane is named after its automation, so a Mac's notice and the phone's notification say "Morning summary".
+        let title = (record.automation != nil ? record.tabName : nil) ?? TranscriptReader.title(directory: folder, conversation: conversation)
+            ?? Self.firstLine(of: record.prompt) ?? "New session"
         let found = PeerTurn.read(for: uuid)
         return PeerPane(id: record.id, kind: .claude, title: title, folder: folder, running: running, clients: status?.clients,
                         control: status?.control, agent: record.agent, conversation: conversation == record.id ? nil : conversation,
@@ -420,7 +443,8 @@ extension HeadlessPeerHost {
         let stillOpen = Set(records.filter { $0.ended == nil }.map(\.tabID))
         var seen = Set<String>()
         var order: [String] = [], tabs: [String: [(record: HeadlessSession, session: PeerRecentSession)]] = [:]
-        for record in records.filter({ $0.ended != nil && !$0.isTerminal && !stillOpen.contains($0.tabID) })
+        // A run that ended unopened never reaches Recent, as a Mac's run never does: the Runs tab opens it.
+        for record in records.filter({ $0.ended != nil && !$0.isTerminal && $0.runUnopened != true && !stillOpen.contains($0.tabID) })
             .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
             let folder = record.folder ?? config.defaultFolder
@@ -452,7 +476,7 @@ extension HeadlessPeerHost {
         return String(line.prefix(80))
     }
 
-    private static func isFolder(_ path: String) -> Bool {
+    static func isFolder(_ path: String) -> Bool {
         var isFolder: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
     }

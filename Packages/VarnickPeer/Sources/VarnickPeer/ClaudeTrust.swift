@@ -34,10 +34,17 @@ public enum ClaudeTrust {
         return pathForms(folder).contains { projects[$0]?.trusted == true }
     }
 
+    /// The path with the home folder as `~`. Foundation on Linux has no `abbreviatingWithTildeInPath`, and the headless relay builds this package.
+    public static func abbreviated(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path == home { return "~" }
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
     /// What to tell the user when the folder is known not to be trusted; nil when it is, or when that can't be told.
     public static func note(for folder: String) -> String? {
         guard isTrusted(folder) == false else { return nil }
-        return "Claude Code hasn't trusted \((folder as NSString).abbreviatingWithTildeInPath) yet, so a run there would stop at its \"trust this folder?\" question with nobody to answer. Open a session in that folder once and accept it."
+        return "Claude Code hasn't trusted \(abbreviated(folder)) yet, so a run there would stop at its \"trust this folder?\" question with nobody to answer. Open a session in that folder once and accept it."
     }
 
     private static func projects(in config: Data) -> [String: Entry]? {

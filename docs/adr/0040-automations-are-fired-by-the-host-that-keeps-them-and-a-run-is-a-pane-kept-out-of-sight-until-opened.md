@@ -23,7 +23,7 @@ An **Automation** (`CONTEXT.md`) is a saved prompt with a folder, an optional ag
 
 - **An unattended run on a Mac can reach the screen** through the macOS grants every pane inherits (`panes-share-launchys-permissions`), with a shell and no tool for it. With Skip permissions on, which is every install that predates the setting, a run runs any command without asking. The editor says so; only closing that problem would change it.
 - **Each run draws on the user's Claude subscription,** unattended. The 15-minute floor and the one-run-at-a-time rule bound it; nothing caps it.
-- **Until the headless host has runs,** a run tab is listed to paired Macs and the phone as an ordinary tab, which is what lets the host's page server push its notices.
+- **Until the headless host has runs (slice 1),** a run tab is listed to paired Macs and the phone as an ordinary tab, which is what lets the host's page server push its notices. Slice 2 marks it in the listing instead (the amendment below); the page server still reads it whole, so it still pushes.
 - **A run ended at its limit tells no one.** The pane is gone, so neither the Mac's notifier nor the page server has a turn to read; it is marked in the run list only.
 - **A session can make an automation that runs unattended,** as the amendment below records. Whoever reads a session's output with Anthropic reads the prompts the list shows.
 
@@ -39,5 +39,15 @@ A Claude session on this Mac can list, make, edit and switch automations through
 - **Claude Code's own dialog is the only approval:** the tools are not in a session's allow list, so a pane with Skip permissions off asks before each call.
 
 Considered and not chosen: a `propose` tool the user approves (the user decided against an approval step); tying the tools to Panel access (it would make the user grant reading screens and pressing keys to get this); a switch of their own (the Automations switch is already that decision); a notice besides the mark (it is mostly raised for the pane the user is looking at, needs a message only the hook writes or a new kind in both languages, and the first run tells them anyway).
+
+## Amendment, 2026-10-15: the headless host fires its own (slice 2, protocol 29)
+
+A headless host keeps and fires the automations a Mac saved on it, with every Mac asleep. The user decided the four open points: the saving Mac attaches to each headless run as an unseen view; the four tools stay this Mac's and the host's automations are managed in Settings only; "Varnick's setting" on the host is the host's own Skip permissions; the Automations switch is each Mac's own.
+
+- **A systemd user timer runs the relay once a minute** (`varnick-peer tick`, a `oneshot` service with `KillMode=process`), so nothing stays running between ticks and a run's zmx session outlives the tick that started it. What was measured on the user's machine, and what it does not show, is in `docs/agents/where-it-breaks.md`, Automations. Installed once with the installer's `--automations`.
+- **The host keeps the Macs' two files in its state folder,** under its state lock, and fires with the Mac's rules (the slot function, the overlap rule, the limits, the catch-up window, the permissions stored on the record). A run there is labelled for the Mac that last saved the automation, which holds the unseen view, so the host's page server routes by that Mac's presence and the notices are the pane's as they are on a Mac.
+- **A run nobody opened is marked in the host's `tabs`,** so other Macs keep it out of their lists while their Automations switch is on and the phone lists it under Runs. Opening it from anywhere takes the mark off.
+- **Considered and not chosen:** the saving Mac following the run without a view (it needed a change to the push rule and a notice with no pane); the four tools taking a host now (the engine slice adds a Task and its input to the same requests, and a host's folders can only be checked there); turning one Mac's Automations switch off also switching its automations off on the host (it would lose their own on and off).
+- **Consequence:** one ssh channel per run going, on the connection the panes share, for the unseen views.
 
 - Amended by ADR 0041: an Automation is a trigger (a cadence, a Task and its input), and its Runs are kept in a runs file of their own.

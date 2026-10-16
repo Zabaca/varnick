@@ -34,6 +34,13 @@ struct HeadlessSession: Codable, Equatable {
     /// A terminal pane (the account's login shell in the folder, with no hooks or turn); nil is a Claude session. Optional so a file saved
     /// before terminals loads.
     var kind: PeerPaneKind?
+    /// An automation's run (option 01 of `prompts-cant-run-on-a-schedule`, protocol 29): the automation's id, for the record's life; whether nobody
+    /// has opened the run yet, until someone does (`runOpened`, a take over, a delete, or no Run naming it); and what its Run was started with, passed
+    /// again on a restart of the session: Allowed tools only and the allowed tools. All optional, so an older relay reads the record as an ordinary session.
+    var automation: String?
+    var runUnopened: Bool?
+    var dontAsk: Bool?
+    var allowedTools: [String]?
 
     /// The tab the session is in, as a Mac names it.
     var tabID: String { tab ?? id }
@@ -84,7 +91,7 @@ extension StateFolder {
     private var tabsURL: URL { url.appendingPathComponent("tabs.json") }
 
     /// The saved tab records, one bad entry skipped. A file that isn't a list at all throws, so a write never replaces something to repair.
-    private func readTabs() throws -> [HeadlessTab] {
+    func readTabs() throws -> [HeadlessTab] {
         guard FileManager.default.fileExists(atPath: tabsURL.path) else { return [] }
         guard let data = try? Data(contentsOf: tabsURL) else { throw StateError(message: "\(tabsURL.path) couldn't be read") }
         guard let entries = try? JSONDecoder().decode([Lossy<HeadlessTab>].self, from: data) else {
@@ -93,7 +100,7 @@ extension StateFolder {
         return entries.compactMap(\.value)
     }
 
-    private func writeTabs(_ tabs: [HeadlessTab]) throws {
+    func writeTabs(_ tabs: [HeadlessTab]) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try write(try encoder.encode(tabs), to: tabsURL)
@@ -119,7 +126,7 @@ extension StateFolder {
 
     /// The saved records, one bad entry skipped. A file that isn't a list at all throws, so a write never
     /// replaces something the user may want to repair.
-    private func readSessions() throws -> [HeadlessSession] {
+    func readSessions() throws -> [HeadlessSession] {
         guard FileManager.default.fileExists(atPath: sessionsURL.path) else { return [] }
         guard let data = try? Data(contentsOf: sessionsURL) else { throw StateError(message: "\(sessionsURL.path) couldn't be read") }
         let decoder = JSONDecoder()
@@ -130,7 +137,7 @@ extension StateFolder {
         return entries.compactMap(\.value)
     }
 
-    private func writeSessions(_ sessions: [HeadlessSession]) throws {
+    func writeSessions(_ sessions: [HeadlessSession]) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -148,17 +155,21 @@ extension StateFolder {
     /// can't both go on.
     func add(_ session: HeadlessSession, placed placement: Placement = .newTab,
              refusing: ([HeadlessSession]) -> Bool = { _ in false }) throws -> Added {
-        try locked(exclusive: true) {
-            var sessions = try readSessions()
-            guard !sessions.contains(where: { $0.id == session.id }) else { return .exists }
-            guard !refusing(sessions) else { return .refused }
-            var tabs = try readTabs()
-            HeadlessTabs.place(session, placement, among: sessions, tabs: &tabs)
-            sessions.append(session)
-            try writeSessions(sessions)
-            try writeTabs(tabs)
-            return .added
-        }
+        try locked(exclusive: true) { try addLocked(session, placed: placement, refusing: refusing) }
+    }
+
+    /// `add` for a caller that holds the exclusive lock already (a run's claim saves the record in the step that records the Run).
+    func addLocked(_ session: HeadlessSession, placed placement: Placement = .newTab,
+                   refusing: ([HeadlessSession]) -> Bool = { _ in false }) throws -> Added {
+        var sessions = try readSessions()
+        guard !sessions.contains(where: { $0.id == session.id }) else { return .exists }
+        guard !refusing(sessions) else { return .refused }
+        var tabs = try readTabs()
+        HeadlessTabs.place(session, placement, among: sessions, tabs: &tabs)
+        sessions.append(session)
+        try writeSessions(sessions)
+        try writeTabs(tabs)
+        return .added
     }
 
     enum Arranged { case done, noTab, refused }
@@ -374,6 +385,8 @@ extension StateFolder {
                 }
                 var record = before
                 (record.ended, record.starting, record.bootID, record.started, record.origin, record.done) = (nil, true, bootID, now, by, nil)
+                // Reopening a run's tab is opening it.
+                record.runUnopened = nil
                 if let conversation { record.conversation = conversation }
                 sessions[index] = record
                 claimed.append(Reopening(record: record, before: before, conversation: conversation, freshUnder: freshUnder))

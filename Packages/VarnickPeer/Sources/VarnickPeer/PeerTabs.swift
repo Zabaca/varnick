@@ -285,6 +285,15 @@ public struct PeerPane: Codable, Equatable, Sendable {
     }
 }
 
+/// The mark on a tab that is a run nobody opened. It is on the tab and not on a pane, so a Run of several panes is one mark; the automation is
+/// optional, so a Run started by hand or by a session is a mark with none.
+public struct PeerRunMark: Codable, Equatable, Sendable {
+    /// The automation's id, a lowercase uuid.
+    public var automation: String?
+
+    public init(automation: String? = nil) { self.automation = automation }
+}
+
 /// An open tab of the host: its id, name and mark, who is in control of it, how its panes are laid out and what each shows.
 public struct PeerTab: Codable, Equatable, Sendable {
     /// The tab's id (ADR 0032), a lowercase uuid.
@@ -304,9 +313,12 @@ public struct PeerTab: Codable, Equatable, Sendable {
     public var panes: [PeerPane]
     /// The file tree shows as a column beside the panes (protocol 26). Nil: it doesn't, or the host has none.
     public var showsFiles: Bool?
+    /// The tab is a run nobody opened (protocol 29): the Macs drop it from their lists while their Automations switch is on, and the Phone page lists
+    /// it under Runs. Nil: an ordinary tab.
+    public var run: PeerRunMark?
 
     public init(tab: String, name: String? = nil, doneAge: Int? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
-                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil) {
+                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil) {
         self.tab = tab
         self.name = name
         self.doneAge = doneAge
@@ -314,6 +326,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
         self.controlName = controlName
         self.clients = clients
         self.showsFiles = showsFiles
+        self.run = run
         self.layout = layout
         self.panes = panes
     }
