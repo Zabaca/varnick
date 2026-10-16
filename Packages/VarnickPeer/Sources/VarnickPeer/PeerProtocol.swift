@@ -6,11 +6,16 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 28
+    public static let version = 29
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
     public static func answersAnyVersion(_ op: PeerOp) -> Bool { op == .upgrade || op == .restart }
+
+    /// The five requests a headless host answers about its automations (protocol 29), for a listed Mac only.
+    public static func isAutomationRequest(_ op: PeerOp) -> Bool {
+        op == .automations || op == .saveAutomation || op == .deleteAutomation || op == .runAutomation || op == .runOpened
+    }
 
     /// The one wording for two builds that disagree, whichever side says it.
     public static func mismatch(_ theirs: Int?) -> String {
@@ -158,6 +163,18 @@ public enum PeerOp: String, Codable, Sendable {
     /// What restarting the receiving Mac's Varnick (never the Mac) would end, or with `confirm` the restart. Frozen like `upgrade`
     /// (`PeerRestartReport`).
     case restart
+    /// The headless host's automations and their Runs, as its files hold them (protocol 29, `HostAutomations`). For a listed Mac only, and only a
+    /// headless host answers: a Mac keeps its own automations in its own files.
+    case automations
+    /// Saves a whole automation on a headless host (`PeerRequest.automation`): a new one, or an edit by the same id. The host checks it, names every
+    /// problem and saves nothing when there is one, and the sender is its saver. The reply is the list after it.
+    case saveAutomation
+    /// Deletes an automation of a headless host (`PeerRequest.automationID`) with its Runs; a run session still going becomes an ordinary tab.
+    case deleteAutomation
+    /// Run now on a headless host (`PeerRequest.automationID`): starts the automation's run at once. The reply is the list after it and the tab of the run.
+    case runAutomation
+    /// A Mac showed a run's tab (`PeerRequest.tab`): the host takes the run mark off the tab and dates the Run opened, so no tick ends it.
+    case runOpened
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -771,6 +788,10 @@ public struct PeerRequest: Codable, Sendable {
     public var begin: Bool?
     public var fetch: Bool?
     public var confirm: Bool?
+    /// SaveAutomation (protocol 29): the whole automation. The host never takes its saver from it.
+    public var automation: Automation?
+    /// DeleteAutomation and RunAutomation: the automation's id, a uuid.
+    public var automationID: String?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -843,6 +864,9 @@ public struct PeerReply: Codable, Sendable {
     public var upgrade: PeerUpgradeReport?
     /// Restart: what a restart would end, or that it begins.
     public var restart: PeerRestartReport?
+
+    /// Automations, SaveAutomation, DeleteAutomation and RunAutomation (protocol 29): the headless host's automations and Runs.
+    public var automations: HostAutomations?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

@@ -703,6 +703,220 @@ try? Data("not json".utf8).write(to: moveFile)
 expect("a file this build can't read is kept as it is", AutomationFile.giveFolder("/old/default", toThoseWithout: moveFile) == .kept("the automations file isn't one this build writes"))
 try? FileManager.default.removeItem(at: moveFile)
 
+// MARK: The headless host's automations (protocol 29)
+
+let hostMac = "11111111-2222-3333-4444-555555555555"
+let otherMac = "66666666-7777-8888-9999-000000000000"
+let hostNow = at("2026-10-15 12:00")
+let hostFolders: Set<String> = ["/home/u/Projects/a", "/home/u"]
+let hostEnvironment = HostAutomationSave.Environment(
+    defaultFolder: "/home/u", isFolder: { hostFolders.contains($0) },
+    agents: { $0 == "/home/u/Projects/a" ? ["reviewer"] : [] },
+    trust: { _ in nil })
+let hostBase = Automation(name: "Morning summary", prompt: "Say hello", folder: "/home/u/Projects/a", cadence: .daily(hour: 9, minute: 0), timeZone: "UTC")
+
+func saved(_ outcome: HostAutomationSave.Outcome) -> [Automation] {
+    if case .saved(let list) = outcome { list } else { [] }
+}
+func refused(_ outcome: HostAutomationSave.Outcome) -> [String] {
+    if case .refused(let list) = outcome { list } else { [] }
+}
+
+// A new automation: its slots start from now, its saver is the sender (never the body's), and it carries no mark.
+var incoming = hostBase
+incoming.savedBy = "someone-else"
+incoming.mark = AutomationMark(what: "Made", by: "x", at: hostNow)
+incoming.lastSlot = at("2020-01-01 00:00")
+let first = saved(HostAutomationSave.save(incoming, into: [], sender: hostMac, now: hostNow, in: hostEnvironment))
+expect("a new automation is saved", first.count == 1)
+expect("its slots start from now", first.first?.lastSlot == hostNow && first.first?.createdAt == hostNow)
+expect("its saver is the sender, not the body's", first.first?.savedBy == hostMac)
+expect("it carries no mark", first.first?.mark == nil)
+
+// An edit puts the editor's fields on the host's copy, keeps the last slot, and makes the sender the saver.
+var host = first[0]
+host.lastSlot = at("2026-10-15 09:00")
+host.mark = AutomationMark(what: "Edited: prompt", by: "Planning", at: hostNow)
+var renamed = host
+renamed.name = "Evening summary"
+renamed.lastSlot = nil
+renamed.createdAt = at("2019-01-01 00:00")
+renamed.mark = nil
+let edited = saved(HostAutomationSave.save(renamed, into: [host], sender: otherMac, now: hostNow, in: hostEnvironment)).first
+expect("an edit changes the editor's fields", edited?.name == "Evening summary")
+expect("an edit keeps the last slot, the creation date and the mark", edited?.lastSlot == host.lastSlot && edited?.createdAt == host.createdAt && edited?.mark == host.mark)
+expect("the last Mac to save it is its saver", edited?.savedBy == otherMac)
+var recadenced = host
+recadenced.cadence = .daily(hour: 10, minute: 0)
+expect("a new cadence starts the slots from now", saved(HostAutomationSave.save(recadenced, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment)).first?.lastSlot == hostNow)
+var rezoned = host
+rezoned.timeZone = "Asia/Tokyo"
+expect("a new zone starts the slots from now", saved(HostAutomationSave.save(rezoned, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment)).first?.lastSlot == hostNow)
+var wasOff = host
+wasOff.enabled = false
+var switchedOnAgain = wasOff
+switchedOnAgain.enabled = true
+expect("switching it on starts the slots from now", saved(HostAutomationSave.save(switchedOnAgain, into: [wasOff], sender: hostMac, now: hostNow, in: hostEnvironment)).first?.lastSlot == hostNow)
+var hostSwitchedOff = host
+hostSwitchedOff.enabled = false
+expect("switching it off keeps the last slot", saved(HostAutomationSave.save(hostSwitchedOff, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment)).first?.lastSlot == host.lastSlot)
+var another = hostBase
+another.id = UUID()
+let beside = saved(HostAutomationSave.save(another, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment))
+expect("another automation is added beside it", beside.count == 2)
+
+// Every problem is named, and nothing is saved.
+func problems(_ change: (inout Automation) -> Void) -> [String] {
+    var automation = hostBase
+    change(&automation)
+    return refused(HostAutomationSave.save(automation, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment))
+}
+expect("On this site is refused by name", problems { $0.task = BuiltInTask.onThisSite.name; $0.input = ["site": .text("https://example.com"), "goal": .text("find")] }
+    .contains(HostAutomationSave.siteRefusal))
+expect("a Task the host doesn't have is refused by name", problems { $0.task = "Other" }.contains { $0.contains("\"Other\"") })
+expect("no name is a problem", problems { $0.name = "  " }.contains("It has no name"))
+expect("no prompt is a problem", problems { $0.prompt = " " }.contains { $0.contains("prompt") })
+expect("a folder that isn't one is a problem", problems { $0.folder = "/nowhere" }.contains { $0.contains("/nowhere isn't a folder") })
+expect("an agent the folder lacks is a problem", problems { $0.agent = "ghost" }.contains { $0.contains("@ghost") })
+expect("an agent the folder has is not", problems { $0.agent = "reviewer" }.isEmpty)
+let untrustedEnvironment = HostAutomationSave.Environment(defaultFolder: "/home/u", isFolder: { _ in true }, agents: { _ in [] }, trust: { _ in "not trusted" })
+expect("an untrusted folder is refused with Claude Code's note",
+       refused(HostAutomationSave.save(hostBase, into: [], sender: hostMac, now: hostNow, in: untrustedEnvironment)) == ["not trusted"])
+expect("a cadence the presets lack is a problem", problems { $0.cadence = .minutes(7) }.contains("The cadence isn't one the presets have"))
+expect("a zone the host doesn't know is a problem", problems { $0.timeZone = "Nowhere/Land" }.contains { $0.contains("Nowhere/Land") })
+expect("a working limit out of range is a problem", problems { $0.workingLimitMinutes = 1 }.contains("The working limit must be 5 to 1440 minutes"))
+expect("no folder means the host's default folder", problems { $0.folder = nil }.isEmpty)
+expect("several problems are all named", problems { $0.name = ""; $0.cadence = .minutes(7); $0.workingLimitMinutes = 0 }.count == 3)
+var nameless = hostBase
+nameless.name = ""
+let untouched = HostAutomationSave.save(nameless, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment)
+expect("nothing is saved while there is a problem", saved(untouched).isEmpty && !refused(untouched).isEmpty)
+var gone = hostBase
+gone.folder = "/gone"
+expect("a run can't start in a folder the host lacks", !HostAutomationSave.startProblems(gone, in: hostEnvironment).isEmpty)
+
+// The `automations` value: same versions, and a newer automations or runs version is read as newer, with empty lists, never as a failure to decode.
+let listing = HostAutomations(automations: [host], runs: [TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .done)], timerAge: 30, skipPermissions: true)
+let roundTrip = PeerJSON.decode(HostAutomations.self, from: PeerJSON.line(listing))
+expect("the value survives the wire", roundTrip == listing)
+expect("at this build's versions nothing is newer", roundTrip?.automationsNewer == false && roundTrip?.runsNewer == false && roundTrip?.savingProblem == nil)
+let futureLine = #"{"automationsVersion":99,"runsVersion":99,"automations":[{"future":"shape"}],"runs":"not even a list","timerAge":5,"skipPermissions":false}"#
+let future = PeerJSON.decode(HostAutomations.self, from: futureLine)
+expect("a newer automations and runs version decodes", future != nil)
+expect("it is read as newer with empty lists", future?.automationsNewer == true && future?.runsNewer == true && future?.automations.isEmpty == true && future?.runs.isEmpty == true)
+expect("and nothing can be saved to it", future?.savingProblem != nil)
+let newerRunsOnly = PeerJSON.decode(HostAutomations.self, from: #"{"automationsVersion":2,"runsVersion":99,"automations":[],"runs":[{"x":1}]}"#)
+expect("a newer runs file alone stops saving", newerRunsOnly?.runsNewer == true && newerRunsOnly?.automationsNewer == false && newerRunsOnly?.savingProblem != nil)
+let brokenList = PeerJSON.decode(HostAutomations.self, from: #"{"automationsVersion":2,"runsVersion":1,"automations":[{"x":1}],"runs":[]}"#)
+expect("a list in this build's version that doesn't decode says so and stops saving", brokenList?.automationsProblem != nil && brokenList?.savingProblem != nil)
+let fromFiles = HostAutomations(automations: .newer(7), runs: .loaded([]), timerAge: nil, skipPermissions: false)
+expect("a newer file reads as its version with no list and a problem", fromFiles.automationsVersion == 7 && fromFiles.automations.isEmpty && fromFiles.automationsProblem != nil)
+expect("a timer that ran a minute ago runs", HostAutomations(timerAge: 60).timerRuns && !HostAutomations(timerAge: 400).timerRuns && !HostAutomations().timerRuns)
+var wholeReply = PeerReply.success()
+wholeReply.automations = listing
+expect("it travels in a reply", PeerJSON.decode(PeerReply.self, from: PeerJSON.line(wholeReply))?.automations == listing)
+
+// The slots a tick judges, with the Mac's rules.
+var ticking = hostBase
+ticking.lastSlot = at("2026-10-15 08:00")
+ticking.savedBy = hostMac
+let quiet = AutomationTick.plan(ticking, runs: TaskRunList(), going: false, now: at("2026-10-15 08:30"))
+expect("a tick with nothing due does nothing", quiet == nil)
+let dueTick = AutomationTick.plan(ticking, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20"))
+expect("a due slot is started", dueTick?.start?.slot == at("2026-10-15 09:00") && dueTick?.start?.late == false && dueTick?.notRun.isEmpty == true)
+expect("and is the new last slot", dueTick?.newest == at("2026-10-15 09:00"))
+let goingTick = AutomationTick.plan(ticking, runs: TaskRunList(), going: true, now: at("2026-10-15 09:00:20"))
+expect("a slot while a run goes is skipped, not started", goingTick?.start == nil && goingTick?.notRun.map(\.state) == [.skipped])
+var daysAgo = ticking
+daysAgo.cadence = .daily(hour: 9, minute: 0)
+daysAgo.lastSlot = at("2026-10-12 09:00")
+let missedTick = AutomationTick.plan(daysAgo, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20"))
+expect("slots that passed are missed and only the newest is started", missedTick?.start?.slot == at("2026-10-15 09:00") && missedTick?.notRun.map(\.state) == [.missed, .missed])
+let lateTick = AutomationTick.plan(ticking, runs: TaskRunList(), going: false, now: at("2026-10-15 09:05"))
+expect("a start after its minute is late", lateTick?.start?.late == true)
+var hostOff = ticking
+hostOff.enabled = false
+expect("an automation that is off is not judged", AutomationTick.plan(hostOff, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20")) == nil)
+var otherTask = ticking
+otherTask.task = BuiltInTask.onThisSite.name
+expect("a Task the host doesn't run is not judged", AutomationTick.plan(otherTask, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20")) == nil)
+let slotRun = TaskRun(trigger: TaskRunTrigger(automation: ticking.id, slot: at("2026-10-15 09:00")), state: .done)
+expect("the newest Run's slot is the anchor when it is newer than the last slot (a crash between the writes)",
+       AutomationTick.plan(ticking, runs: TaskRunList([slotRun]), going: false, now: at("2026-10-15 09:00:50")) == nil)
+
+// The Runs that are going: the working limit across ticks and a gap, the waits, a take over, a session gone.
+expect("a tick a minute after the last adds a minute", RunTend.elapsed(since: at("2026-10-15 09:00"), now: at("2026-10-15 09:01")) == 60)
+expect("a gap over 150 seconds adds nothing", RunTend.elapsed(since: at("2026-10-15 09:00"), now: at("2026-10-15 09:03")) == 0)
+expect("a first tick adds nothing", RunTend.elapsed(since: nil, now: at("2026-10-15 09:03")) == 0)
+expect("a clock that went back adds nothing", RunTend.elapsed(since: at("2026-10-15 09:03"), now: at("2026-10-15 09:00")) == 0)
+func running(worked: TimeInterval? = nil, opened: Bool = false, started: Date = at("2026-10-15 09:00"), state: RunState = .running) -> TaskRun {
+    var run = TaskRun(task: BuiltInTask.claudePrompt.name, trigger: TaskRunTrigger(automation: ticking.id, slot: started), state: state, startedAt: started, opened: opened,
+                      steps: [TaskRunStep(name: "claude", capability: "claude", pane: UUID())])
+    run.worked = worked
+    return run
+}
+let tickAt = at("2026-10-15 10:00")
+let working = RunTend.Session(turn: .working, turnAge: 30)
+let busy = RunTend.decide(running(worked: 100), session: working, limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("working time adds up across ticks", busy.run.worked == 160 && busy.run.state == .running && !busy.endSession)
+let atLimit = RunTend.decide(running(worked: 3590), session: working, limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("a run past its working limit is stopped, its session ended and the end dated",
+       atLimit.run.state == .stoppedAtLimit && atLimit.endSession && atLimit.run.endedAt == tickAt && atLimit.run.detail == "Worked past 60 minutes")
+let slept = RunTend.decide(running(worked: 3590), session: working, limitMinutes: 60, elapsed: 0, now: tickAt)
+expect("a gap between ticks counts nothing toward the limit", slept.run.state == .running && !slept.endSession)
+let waitingLong = RunTend.decide(running(), session: RunTend.Session(turn: .permission, turnAge: 25 * 3600), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("24 hours waiting on the user ends it", waitingLong.run.state == .endedAfterWaiting && waitingLong.endSession)
+let waitingShort = RunTend.decide(running(), session: RunTend.Session(turn: .question, turnAge: 3600), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("a question waits, as Needs you", waitingShort.run.state == .waiting && waitingShort.run.detail == "Question" && !waitingShort.endSession)
+expect("a waiting run adds no working time", waitingShort.run.worked == nil)
+let finished = RunTend.decide(running(), session: RunTend.Session(turn: .waiting, turnAge: 11 * 60), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("10 minutes after Done it is ended, as done", finished.run.state == .done && finished.endSession && finished.run.endedAt == tickAt)
+let justFinished = RunTend.decide(running(), session: RunTend.Session(turn: .waiting, turnAge: 5 * 60), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("sooner it is left running", justFinished.run.state == .done && !justFinished.endSession && justFinished.run.endedAt == nil)
+let messaged = RunTend.decide(running(), session: RunTend.Session(turn: .waiting, turnAge: 11 * 60, message: "Count: 3"), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("a finished run that left a message ends as a message", messaged.run.state == .message && messaged.run.detail == "Count: 3" && messaged.endSession)
+let failedTurn = RunTend.decide(running(), session: RunTend.Session(turn: .failed, turnAge: 11 * 60, failure: .rateLimit), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("10 minutes after a failed turn it is ended, with the failure", failedTurn.run.state == .done && failedTurn.run.detail?.contains("rate limit") == true && failedTurn.endSession)
+let tookOver = RunTend.decide(running(worked: 3590), session: RunTend.Session(turn: .working, turnAge: 30, takenOver: true), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("a take over opens it, and an opened run is never ended", tookOver.opened && tookOver.run.opened && !tookOver.endSession && tookOver.run.state == .running)
+let openedAlready = RunTend.decide(running(opened: true), session: RunTend.Session(turn: .waiting, turnAge: 3 * 3600, unopened: false), limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("an opened run is left alone however long it waits", !openedAlready.endSession && openedAlready.run.endedAt == nil)
+let sessionGone = RunTend.decide(running(started: at("2026-10-15 09:30")), session: nil, limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("a session that is gone ends the Run as done, dated", sessionGone.run.state == .done && sessionGone.run.endedAt == tickAt && sessionGone.run.detail == "The session had ended" && !sessionGone.endSession)
+let neverStarted = RunTend.decide(running(started: at("2026-10-15 09:59:30")), session: nil, limitMinutes: 60, elapsed: 60, now: tickAt)
+expect("one gone within a minute of its start couldn't start", neverStarted.run.state == .couldntStart)
+let limitRun = running(state: .stoppedAtLimit)
+expect("a Run a limit ended is left as it is", RunTend.decide(limitRun, session: working, limitMinutes: 60, elapsed: 60, now: tickAt).run == limitRun)
+let notRunSlot = TaskRun(trigger: TaskRunTrigger(automation: ticking.id, slot: tickAt), state: .skipped)
+expect("a slot that did not run is left as it is", RunTend.decide(notRunSlot, session: nil, limitMinutes: 60, elapsed: 0, now: tickAt).run == notRunSlot)
+
+// The run mark on a tab: a round trip, and a tab without one reads without it.
+let markedID = "aaaaaaaa-0000-0000-0000-000000000001"
+let markedTab = PeerTab(tab: markedID, layout: .leaf(markedID), panes: [], run: PeerRunMark(automation: host.id.uuidString.lowercased()))
+expect("a run mark survives the wire", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(markedTab)) == markedTab)
+let markWithNone = PeerTab(tab: markedID, layout: .leaf(markedID), panes: [], run: PeerRunMark())
+expect("a mark with no automation is still a mark", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(markWithNone))?.run != nil)
+let plainTab = PeerTab(tab: markedID, layout: .leaf(markedID), panes: [])
+expect("an ordinary tab has no mark and writes none", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(plainTab))?.run == nil && !PeerJSON.line(plainTab).contains("\"run\""))
+expect("a device is still told the mark", markedTab.hiding(from: UUID().uuidString).run == markedTab.run)
+
+// A request carries a whole automation, and the five requests are told apart.
+var saveRequest = PeerRequest(.saveAutomation)
+saveRequest.automation = hostBase
+let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveRequest))
+expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
+expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
+expect("this is protocol 29", PeerProtocol.version == 29)
+
+// tick.json: when the timer last ran.
+let tickFolder = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-tick-\(getpid())")
+let tickFile = HostTickFile.url(in: tickFolder)
+expect("a timer that never ran has no age", HostTickFile.read(at: tickFile) == nil && HostTickFile.age(of: nil, now: hostNow) == nil)
+try? HostTickFile.write(at("2026-10-15 11:59"), to: tickFile)
+expect("tick.json reads back", HostTickFile.read(at: tickFile) == at("2026-10-15 11:59"))
+expect("its age is seconds by the host's clock", HostTickFile.age(of: HostTickFile.read(at: tickFile), now: hostNow) == 60)
+try? FileManager.default.removeItem(at: tickFolder)
+
 if failures > 0 {
     FileHandle.standardError.write(Data("error: check-slots: \(failures) of \(cases) checks failed\n".utf8))
     exit(1)

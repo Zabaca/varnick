@@ -22,7 +22,8 @@ public protocol PeerHost {
     var ownID: String? { get }
     /// The answer to a hello, which the relay has found to speak this version.
     func hello(line: String) -> PeerReply
-    /// `start`, `resume`, `end`, `done`, `arrange`, `reopen`, `projects` and `agents`, which the host's app does.
+    /// `start`, `resume`, `end`, `done`, `arrange`, `reopen`, `projects`, `agents`, `apps` and the five automation requests, which the host's app does
+    /// (on a headless host, its own code: only it answers the automation requests).
     func forward(_ op: PeerOp, line: String) -> PeerForwarded
     /// Fills in what the host's saved state says about running sessions (`status`).
     func follow(_ statuses: inout [String: PeerSessionStatus])
@@ -82,7 +83,8 @@ public enum PeerRelay {
         var ownPageServer = false
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || op == .files || PeerProtocol.answersAnyVersion(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || op == .files || PeerProtocol.isAutomationRequest(op)
+                || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) {
                 device = head.by
             } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {
@@ -97,7 +99,8 @@ public enum PeerRelay {
         switch op {
         case .hello:
             return finish(host.hello(line: line))
-        case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps:
+        case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps, .automations, .saveAutomation, .deleteAutomation, .runAutomation,
+             .runOpened:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)
