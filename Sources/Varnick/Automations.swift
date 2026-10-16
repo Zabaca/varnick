@@ -204,6 +204,7 @@ final class AutomationRunner {
     /// Tends the runs that exist, then fires what is due. Off while Automations is off, and while either file (the automations or the runs) can't be read.
     func check(now: Date = Date()) {
         guard let model, Settings.shared.automationsOn else { return }
+        model.followHostRuns()
         let store = model.automations, runs = model.taskRuns
         guard model.automationFilesProblem == nil else { return }
         let elapsed = lastCheck.map { now.timeIntervalSince($0) }.flatMap { $0 > 0 && $0 <= Self.awakeGap ? $0 : nil } ?? 0
@@ -267,6 +268,7 @@ extension LauncherModel {
                 self.objectWillChange.send()
             }
         }
+        HostAutomationStore.shared.model = self
         automationRunner.start(model: self)
     }
 
@@ -282,13 +284,15 @@ extension LauncherModel {
     /// be read is not a missing one (its Runs are there, unread), so nothing is released while it is.
     func releaseUnnamedRuns() {
         guard taskRuns.problem == nil else { return }
-        releaseHiddenRuns { pane in taskRuns.run(pane: pane.id) == nil }
+        // A view of a headless host's run is named by that host's runs file, not this Mac's: the host's listing says whether it is still a run (`adoptHostRuns`).
+        releaseHiddenRuns { pane in pane.record.host == nil && taskRuns.run(pane: pane.id) == nil }
     }
 
     private func releaseHiddenRuns(where wanted: (ClaudeSession) -> Bool) {
         var changed = false
         for tab in tabs {
             for pane in tab.sessions where pane.record.runUnopened == true && wanted(pane) {
+                noteHostRunOpened(pane, in: tab)
                 pane.markRunOpened()
                 taskRuns.markOpened(pane: pane.id)
                 changed = true
@@ -311,6 +315,7 @@ extension LauncherModel {
     /// The run tab is shown: it is an ordinary tab from now on (`activate`), and the run list says it was opened. An opened run is never ended by a check.
     func runOpened(_ tab: ClaudeTab) {
         for pane in tab.sessions where pane.record.runUnopened == true {
+            noteHostRunOpened(pane, in: tab)
             pane.markRunOpened()
             taskRuns.markOpened(pane: pane.id)
         }

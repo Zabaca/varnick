@@ -9,6 +9,8 @@ struct AutomationsSettingsView: View {
     @ObservedObject var runStore: TaskRunStore
     let model: LauncherModel
     @ObservedObject private var settings = Settings.shared
+    /// The headless hosts' automations (protocol 29): their sections, and the editor when one is being edited there.
+    @ObservedObject private var hostStore = HostAutomationStore.shared
     @State private var editing: Automation?
     @State private var editingIsNew = false
     /// What Run now answered, by automation: a refusal, or why the run could not start.
@@ -43,6 +45,9 @@ struct AutomationsSettingsView: View {
                 }
                 editing = nil
             }, onCancel: { editing = nil })
+        } else if let remote = hostStore.editing {
+            AutomationEditor(draft: remote.draft, isNew: remote.isNew, projects: [], remote: RemoteEditor(editing: remote),
+                             onSave: { saved, _ in Task { await hostStore.saveEditing(saved) } }, onCancel: { hostStore.editing = nil })
         } else {
             list
         }
@@ -82,6 +87,7 @@ struct AutomationsSettingsView: View {
                 Spacer()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
+            HostAutomationSections()
         }
     }
 
@@ -166,11 +172,30 @@ struct AutomationsSettingsView: View {
     }
 }
 
+/// What the editor needs of a headless host (protocol 29): which host, its projects and Skip permissions, and what its last Save came to.
+private struct RemoteEditor {
+    let host: String
+    let folders: [String]
+    let skipPermissions: Bool
+    let problem: String?
+    let saving: Bool
+
+    init(editing: HostAutomationStore.Editing) {
+        host = editing.host
+        folders = editing.folders
+        skipPermissions = editing.skipPermissions
+        problem = editing.problem
+        saving = editing.saving
+    }
+}
+
 /// The fields of an automation: what Claude is asked, where, how often and with which permissions.
 private struct AutomationEditor: View {
     @State var draft: Automation
     let isNew: Bool
     let projects: [Project]
+    /// Set when the automation lives on a headless host: its folders and agents, its Skip permissions, and the host's refusal of the last Save.
+    var remote: RemoteEditor?
     /// The edited automation and whether its slots start from now (a new cadence or zone).
     let onSave: (Automation, Bool) -> Void
     let onCancel: () -> Void
@@ -214,14 +239,16 @@ private struct AutomationEditor: View {
                     .frame(width: 320, height: 96)
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.hairline))
             }
-            field("Folder", detail: "A project, or Home, Varnick's own folder for sessions that belong to no project." + (trustNote.map { " " + $0 } ?? "")) {
+            field("Folder", detail: remote != nil ? "A project on the host, or its default folder. The host checks the folder, the agent and Claude Code's trust of it when you save."
+                  : "A project, or Home, Varnick's own folder for sessions that belong to no project." + (trustNote.map { " " + $0 } ?? "")) {
                 Picker("", selection: Binding(get: { draft.folder ?? "" }, set: { draft.folder = $0.isEmpty ? nil : $0 })) {
-                    Text("Home").tag("")
+                    Text(remote == nil ? "Home" : "Host's default folder").tag("")
                     ForEach(folders, id: \.self) { path in Text((path as NSString).abbreviatingWithTildeInPath).tag(path) }
                 }
                 .labelsHidden().frame(width: 260)
             }
-            field("Agent", detail: "A Claude Code agent of that folder, or none. Home has only your own, so to use a repo's agent, choose that repo as the folder.") {
+            field("Agent", detail: remote != nil ? "A Claude Code agent of that folder on the host, or none."
+                  : "A Claude Code agent of that folder, or none. Home has only your own, so to use a repo's agent, choose that repo as the folder.") {
                 Picker("", selection: Binding(get: { draft.agent ?? "" }, set: { draft.agent = $0.isEmpty ? nil : $0 })) {
                     Text("None").tag("")
                     ForEach(agentNames, id: \.self) { name in Text("@" + name).tag(name) }
@@ -264,7 +291,8 @@ private struct AutomationEditor: View {
             }
             field("Permissions", detail: permissionsDetail) {
                 Picker("", selection: Binding(get: { draft.permissions?.rawValue ?? "" }, set: { draft.permissions = AutomationPermissions(rawValue: $0) })) {
-                    Text("Varnick's setting (Skip permissions \(settings.skipPermissions ? "on" : "off"))").tag("")
+                    Text(remote != nil ? "The host's setting (Skip permissions \(remote?.skipPermissions == true ? "on" : "off"))"
+                         : "Varnick's setting (Skip permissions \(settings.skipPermissions ? "on" : "off"))").tag("")
                     ForEach(AutomationPermissions.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
                 }
                 .labelsHidden().frame(width: 260)
@@ -284,12 +312,15 @@ private struct AutomationEditor: View {
             Text(warning)
                 .font(.system(size: 11.5)).foregroundStyle(.orange)
                 .padding(.horizontal, 14).padding(.vertical, 8)
+            if let problem = remote?.problem {
+                Text(problem).font(.system(size: 11.5)).foregroundStyle(.red).padding(.horizontal, 14).padding(.bottom, 8)
+            }
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
                 Button(isNew ? "Add" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
+                    .disabled(!canSave || remote?.saving == true)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
         }
@@ -303,12 +334,22 @@ private struct AutomationEditor: View {
 
     /// The project folders, plus the folder the automation has if it is no longer one.
     private var folders: [String] {
-        var paths = projects.map(\.path)
+        var paths = remote?.folders ?? projects.map(\.path)
         if let own = draft.folder, !paths.contains(own) { paths.insert(own, at: 0) }
         return paths
     }
 
     private func readAgents() {
+        if let remote {
+            // The host's agents come from the host, off the main actor; its own checks (trust, folder) are made when the host saves.
+            let folder = draft.folder, host = remote.host
+            Task {
+                let found = await HostAutomationStore.shared.agents(in: folder, on: host)
+                guard draft.folder == folder else { return }
+                agentNames = draft.agent.map { own in found.contains(own) ? found : [own] + found } ?? found
+            }
+            return
+        }
         let found = Agent.available(in: draft.folder ?? HomeFolder.path).map(\.name)
         agentNames = draft.agent.map { own in found.contains(own) ? found : [own] + found } ?? found
         trustNote = ClaudeTrust.note(for: draft.folder ?? HomeFolder.path)
@@ -325,6 +366,12 @@ private struct AutomationEditor: View {
     }
 
     private var warning: String {
+        if remote != nil {
+            var text = "A run never gets Screen access or Panel access tools, and a headless host has no screen for a command to reach."
+            let skips = draft.permissions == .skip || (draft.permissions == nil && remote?.skipPermissions == true)
+            if skips { text += " With permission checks skipped every command the run tries is allowed, as the host's own user." }
+            return text
+        }
         var text = "A run never gets Screen access or Panel access tools. It does have this Mac's macOS permissions like every pane: a shell command it may run can reach the screen through Varnick's Accessibility and Screen Recording, with no tool for it."
         let skips = draft.permissions == .skip || (draft.permissions == nil && settings.skipPermissions)
         if skips { text += " With permission checks skipped that covers every command." }

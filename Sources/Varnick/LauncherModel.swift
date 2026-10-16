@@ -1799,9 +1799,14 @@ final class LauncherModel: ObservableObject {
     func updatePeerTabs(_ found: [PeerTab]?, for id: String, sentAt: Date = Date()) {
         // An answer to an ask sent before the one already taken in is older news, whichever came back first.
         if found != nil, let taken = peerOpenSessionsSentAt[id], sentAt < taken { return }
-        if peerTabs[id] != found { peerTabs[id] = found }
-        updatePeerOpenSessions(found?.flatMap(\.openSessions), for: id, sentAt: sentAt)
-        if let found { applyHostTabs(found, on: id, sentAt: sentAt) }
+        // The lists read the host's tabs less the runs nobody opened (while Automations is on); this Mac's views of its own runs read them whole.
+        let listed = listingWithoutRuns(found, for: id)
+        if peerTabs[id] != listed { peerTabs[id] = listed }
+        updatePeerOpenSessions(listed?.flatMap(\.openSessions), for: id, sentAt: sentAt)
+        if let found {
+            applyHostTabs(found, on: id, sentAt: sentAt)
+            adoptHostRuns(found, on: id)
+        }
     }
 
     /// The session list drops a paired Mac's rows for sessions that were just opened here, before the next listing says so.
@@ -1864,7 +1869,7 @@ final class LauncherModel: ObservableObject {
     /// pane here that shows what it answers (the card of any session being started there), and the
     /// user is in control. Always the user's own action: `ClaudeSession.resumesOnPeer` is what tells
     /// the pane to ask for it, and nothing that runs by itself sets it.
-    private func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?) {
+    func resumeOnPeer(conversation: String, on host: String, folder: String, title: String, agent: String?) {
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == conversation }) {
                 activate(tab)

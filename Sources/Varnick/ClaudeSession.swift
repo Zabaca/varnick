@@ -1528,6 +1528,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// A run nobody had opened is shown or taken over: its tab is an ordinary one from now on (`LauncherModel.runOpened`).
     func markRunOpened() { record.runUnopened = nil }
 
+    /// A view of a run a headless host started for this Mac (`LauncherModel.adoptHostRuns`): marked as the automation's, and unopened, so the hidden-tab
+    /// rule keeps its tab out of sight until it is opened.
+    func markHostRun(of automation: UUID) {
+        record.automation = automation
+        record.runUnopened = true
+    }
+
     /// Record with the current label, for saving.
     var snapshot: SessionRecord {
         var r = record
