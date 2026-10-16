@@ -6,7 +6,7 @@ public struct Automation: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String
     public var prompt: String
-    /// A Project's folder, or nil for the Default folder as Settings has it at each run.
+    /// A Project's folder, or nil for Home (Varnick's own folder for sessions that belong to no project; an earlier build called it the Default folder).
     public var folder: String?
     /// A Claude Code agent of that folder; nil is none.
     public var agent: String?
@@ -283,6 +283,27 @@ public enum AutomationFile {
     /// Atomic and owner-only, as the device list is written (`OwnerOnlyFile`).
     public static func write(_ automations: [Automation], to url: URL) throws {
         try OwnerOnlyFile.replace(url, with: try encoded(automations))
+    }
+
+    public enum FolderMove: Equatable {
+        case nothingToMove
+        case moved(Int)
+        /// The file was left as it was; the reason is a fixed phrase.
+        case kept(String)
+    }
+
+    /// Gives the folder to every automation that has none (they ran in the old Default folder), so they keep running where they did.
+    public static func giveFolder(_ folder: String, toThoseWithout url: URL) -> FolderMove {
+        switch read(at: url) {
+        case .missing: return .nothingToMove
+        case .unreadable, .newer: return .kept("the automations file isn't one this build writes")
+        case .loaded(var list):
+            let without = list.indices.filter { list[$0].folder == nil }
+            if without.isEmpty { return .nothingToMove }
+            for index in without { list[index].folder = folder }
+            do { try write(list, to: url) } catch { return .kept("the automations file can't be written") }
+            return .moved(without.count)
+        }
     }
 
     private static var decoder: JSONDecoder {

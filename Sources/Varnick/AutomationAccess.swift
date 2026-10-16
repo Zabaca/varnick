@@ -107,7 +107,7 @@ final class AutomationAccess {
     // MARK: The tools
 
     private func create(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
-        let context = AutomationTools.Context(sessionFolder: caller.record.directory, defaultFolder: LauncherModel.claudeDirectory)
+        let context = AutomationTools.Context(sessionFolder: caller.record.directory, homeFolder: HomeFolder.path)
         let fields: AutomationTools.Fields
         switch AutomationTools.read(args, creating: true, in: context) {
         case .success(let found): fields = found
@@ -130,7 +130,7 @@ final class AutomationAccess {
         let found = automation(args, store)
         var problems = found.problem.map { [$0] } ?? []
         if let current = found.automation, let refusal = AutomationTools.editRefusal(for: current) { problems.append(refusal) }
-        let context = AutomationTools.Context(sessionFolder: caller.record.directory, defaultFolder: LauncherModel.claudeDirectory, current: found.automation)
+        let context = AutomationTools.Context(sessionFolder: caller.record.directory, homeFolder: HomeFolder.path, current: found.automation)
         var fields = AutomationTools.Fields()
         switch AutomationTools.read(args, creating: false, in: context) {
         case .success(let read): fields = read
@@ -211,9 +211,9 @@ final class AutomationAccess {
                 "editable_by_sessions": AutomationTools.editRefusal(for: automation) == nil,
             ]
         }
-        let document: [String: Any] = ["time_zone": zone.identifier, "default_folder": LauncherModel.claudeDirectory, "automations": rows]
+        let document: [String: Any] = ["time_zone": zone.identifier, "home_folder": HomeFolder.path, "automations": rows]
         let data = (try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
-        let intro = rows.isEmpty ? "This Mac has no automations." : "This Mac's \(rows.count) automation\(rows.count == 1 ? "" : "s"). A null folder is the Default folder."
+        let intro = rows.isEmpty ? "This Mac has no automations." : "This Mac's \(rows.count) automation\(rows.count == 1 ? "" : "s"). A null folder is Home, Varnick's own folder for sessions that belong to no project."
         return intro + "\n" + String(decoding: data, as: UTF8.self)
     }
 
@@ -246,7 +246,7 @@ final class AutomationAccess {
 
     /// "Daily at 9:00, in ~/Projects/x, as @reviewer, permissions: ask."
     private static func sentence(_ automation: Automation) -> String {
-        var parts = [automation.cadence.label + " (\(automation.timeZone))", "in " + (automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the Default folder")]
+        var parts = [automation.cadence.label + " (\(automation.timeZone))", "in " + (automation.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Home")]
         if let agent = automation.agent { parts.append("as @" + agent) }
         parts.append("permissions: " + (automation.permissions.map { AutomationTools.permissionName($0) } ?? "follow Varnick's Skip permissions setting (\(Settings.shared.skipPermissions ? "on" : "off"))"))
         if !automation.allowedTools.isEmpty { parts.append("allowed tools: " + automation.allowedTools.joined(separator: ", ")) }

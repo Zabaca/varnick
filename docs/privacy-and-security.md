@@ -448,6 +448,12 @@ never on your screen, needs no permission, and brings nothing to the front.
 - **What steers a task can steer it:** a page it reads is read by Jev and by Claude, and a page that talks to them is read like
   any text. The gates above are in code, not in the models' hands.
 
+### Home is marked trusted in Claude Code
+
+When Varnick makes `Home` (`~/Library/Application Support/Varnick/Home`), it sets that one folder's trust in Claude Code's own
+`~/.claude.json`. It is the only thing Varnick writes there, it changes that one value and no other byte, and it never does this for
+any other folder. How is in `docs/agents/where-it-breaks.md`.
+
 ### Automations act while you are away
 
 An automation (Settings › Experimental › Automations) starts Claude sessions with nobody there to answer a dialog. Which tools it

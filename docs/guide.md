@@ -54,6 +54,10 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
+- **A session with no `#project` starts in Home,** a folder of Varnick's own, `~/Library/Application Support/Varnick/Home`, made the
+  first time it is needed. It is not your home folder, and there is no setting for it. A session started from nowhere in particular
+  doesn't land in a repo. Varnick also marks Home trusted in Claude Code, so Claude doesn't stop to ask
+  ([privacy and security](privacy-and-security.md#home-is-marked-trusted-in-claude-code)). Resumed sessions keep their own folder.
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
@@ -130,7 +134,7 @@ or an MCP request), and that tab's row carries the same orange mark, as a row in
 ## The projects column
 
 **⌘⇧P** shows a column left of the panes, as ⌘⇧F shows the file tree on the right. It lists **All**, then each project that has
-open tabs, by name, then **Other** for tabs in no project (the home folder, say). Each row shows how many tabs it has, and an orange
+open tabs, by name, then **Other** for tabs in no project (one started in Home, say). Each row shows how many tabs it has, and an orange
 mark with how many of them have a session waiting on you.
 
 - **A tab's project** is its first Claude pane's (a tab with none, its first pane's): the project whose folder is exactly that pane's
@@ -402,8 +406,8 @@ and binding ⌘⇧Y to another action leaves it alone. If it is showing when you
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
 
 **Automations** run a Claude prompt for you on a cadence, without opening anything. On, Settings gets an **Automations** page. An
-automation is a name, a prompt (sent to Claude as written, as the first message), a folder (a project, or the Default folder), an
-optional agent, a time and its permissions. Pick the time from the presets: every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12
+automation is a name, a prompt (sent to Claude as written, as the first message), a folder (a project, or Home), an
+optional agent (of that folder: Home has only your own, in `~/.claude/agents`, so to use a repo's agent choose that repo), a time and its permissions. Pick the time from the presets: every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12
 hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now** tries one before you leave it to the clock.
 - **A run is a Claude session like one you type,** started in the background. Its tab stays out of the tab strip, the session list,
   Recent and the board's Sessions tab until you open it, from the board's **Runs** tab (⌘⇧B, then Tab) or from its notice in the menu

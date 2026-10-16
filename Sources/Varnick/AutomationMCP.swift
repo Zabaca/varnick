@@ -76,7 +76,7 @@ enum AutomationMCP {
                 ] as [String: Any],
                 "required": ["kind"],
             ] as [String: Any],
-            "folder": ["type": "string", "description": "An existing folder on this Mac, by absolute path or from ~. On create, absent is this session's own folder; the user's Default folder is a Settings choice a session can't set."],
+            "folder": ["type": "string", "description": "An existing folder on this Mac, by absolute path or from ~. On create, absent is this session's own folder. An automation with no folder runs in Home, Varnick's own folder for sessions that belong to no project; a session started there passes its own folder to say so."],
             "agent": ["type": "string", "description": "A Claude Code agent of that folder, by name. On edit, an empty string clears it."],
             "permissions": ["type": "string", "enum": AutomationTools.permissionNames,
                             "description": "Absent follows Varnick's Skip permissions setting, as a prompt the user types does (with it on, a run runs any command without asking). ask: a command that isn't allowed waits for the user (Needs you). allowed_tools_only: anything not allowed is refused with no dialog. A session may not set Skip permissions; varnick_setting on an edit goes back to following the setting."],
