@@ -362,7 +362,7 @@ let valueCase: TaskValue = .object(["a": .list([.number(1.5), .bool(true), .null
 let valueBack = (try? JSONEncoder().encode(valueCase)).flatMap { try? JSONDecoder().decode(TaskValue.self, from: $0) }
 expect("a value survives JSON", valueBack == valueCase, "\(String(describing: valueBack))")
 
-// The runs file is a file of its own at version 1, with the automations file's rules.
+// The runs file is a file of its own at version 2 (slice 2a; version 1 is read), with the automations file's rules.
 let runsFile = TaskRunFile.url(in: folder)
 expect("the runs file is not the automations file", runsFile.lastPathComponent == "runs.json" && runsFile != AutomationFile.url(in: folder))
 expect("no runs file reads as missing, which is not a problem", TaskRunFile.read(at: runsFile) == .missing && TaskRunFile.read(at: runsFile).problem == nil)
@@ -377,12 +377,12 @@ do {
     let mode = (try? FileManager.default.attributesOfItem(atPath: runsFile.path)[.posixPermissions] as? Int) ?? 0
     expect("the runs file is owner-only", mode == 0o600, String(mode, radix: 8))
     let version = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: runsFile))) as? [String: Any])?["version"] as? Int
-    expect("it is written as version 1", version == 1)
+    expect("it is written as version 2", version == 2)
 } catch {
     expect("the runs file can be written", false, "\(error)")
 }
-try? Data("{\"version\": 2, \"runs\": []}".utf8).write(to: runsFile)
-expect("a version 2 runs file is read as newer and never written over", TaskRunFile.read(at: runsFile) == .newer(2) && TaskRunFile.read(at: runsFile).problem != nil)
+try? Data("{\"version\": 3, \"runs\": []}".utf8).write(to: runsFile)
+expect("a version 3 runs file is read as newer and never written over", TaskRunFile.read(at: runsFile) == .newer(3) && TaskRunFile.read(at: runsFile).problem != nil)
 try? Data("not json".utf8).write(to: runsFile)
 if case .unreadable = TaskRunFile.read(at: runsFile) {} else { expect("garbage in the runs file is unreadable", false) }
 expect("an unreadable runs file has a problem and reads no runs", TaskRunFile.read(at: runsFile).problem != nil && TaskRunFile.read(at: runsFile).runs.isEmpty)

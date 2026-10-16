@@ -81,7 +81,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -181,6 +181,12 @@ check-mcp:
 # check first, in the package's own folder (the headless relay builds there too), so it needs no `make build`.
 check-slots:
 	@swift run --package-path Packages/VarnickPeer slot-check
+
+# The language and the engine of Tasks (`TaskDefinition.check`, `TaskEngine`, `TaskJudge`, `TaskResultTool`, the runs file; Packages/VarnickPeer) over a
+# table of cases, with no Varnick, no model and no network: the check, the engine with fake adapters, a Judge with stub voices, `task_result`'s files in
+# a scratch folder, and an automation's Run written byte for byte as slice 1 wrote it. Built the same way as check-slots.
+check-engine:
+	@swift run --package-path Packages/VarnickPeer engine-check
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.
