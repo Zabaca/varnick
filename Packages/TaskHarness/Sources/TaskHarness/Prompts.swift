@@ -65,10 +65,13 @@ public enum Prompts {
         .choice("shape", "What shape does the answer to `task` take?", AnswerShape.allCases.map { ($0.rawValue, $0.criterion) })
     }
 
+    /// The first line of the fallback prompt for the web loop; a Judge step of a Task puts its own (`lead`) in its place.
+    public static let fallbackLead = "You are System 1 of a web agent: the fast model that picks each step. The state is JSON; answer every question below."
+
     /// The prompt for Claude when it makes System 1's choices: the same state and questions, one JSON object back.
-    public static func fallback(state: JSON, questions: [Question]) -> String {
+    public static func fallback(state: JSON, questions: [Question], lead: String = fallbackLead) -> String {
         var lines = [
-            "You are System 1 of a web agent: the fast model that picks each step. The state is JSON; answer every question below.",
+            lead,
             "State: \(state.text)", "",
         ]
         for q in questions {

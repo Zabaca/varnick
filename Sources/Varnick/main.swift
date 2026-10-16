@@ -214,6 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
             // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
             if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
+            // The Tasks view takes ↑, ↓, ↩ and esc; typing in a form's fields goes on to them.
+            if self.model.showingTasks, !self.model.showingSettings, self.model.tasksPanel.key(event) { return nil }
             // Settings › Resources takes the same keys, but only while that tab shows: the tab underneath gets none of them.
             if self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
@@ -252,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.notifier.start(model: model)
         // The saved tabs are restored and the notifier reads by now. The first check runs a slot missed while Varnick was quit, once.
         model.startAutomations()
+        model.startTasks()
         PresenceReader.shared.start()
 
         settingsSubs = [
@@ -448,7 +451,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// Shows the panel on the notice's pane, over the board or Settings if either is open.
     @objc func openNotice(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? UUID, model.claudePane(id) != nil || model.endedRun(id) != nil else { return }
+        guard let id = item.representedObject as? UUID else { return }
+        // A Task Run's notice shows the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
+        if model.notifier.notices.first(where: { $0.id == id })?.runLine != nil {
+            if let why = model.openTaskRun(id) { model.claudeError = why }
+            show()
+            return
+        }
+        guard model.claudePane(id) != nil || model.endedRun(id) != nil else { return }
         if model.showingSettings { model.toggleSettings() }
         // A run whose process ended is resumed, as the Runs tab does.
         if model.claudePane(id) != nil { model.showPane(id) } else if let why = model.openRun(id) { model.claudeError = why }
@@ -959,13 +969,14 @@ MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
-    // The app's own copy of the custom-apps skill, linked for Claude Code as `make skill-link` does for a checkout.
+    // The app's own copy of the custom-apps and tasks skills, linked for Claude Code as `make skill-link` does for a checkout.
     if ResourceFolder.current.inBundle {
-        let skill = ResourceFolder.current.folder.appendingPathComponent("skills/custom-apps", isDirectory: true)
-        if FileManager.default.fileExists(atPath: skill.path) {
+        for name in ["custom-apps", "tasks"] {
+            let skill = ResourceFolder.current.folder.appendingPathComponent("skills/\(name)", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: skill.path) else { continue }
             let outcome = InstalledApp.linkSkill(
-                in: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills", isDirectory: true), to: skill)
-            if case .failed(let reason) = outcome { NSLog("Varnick: the custom-apps skill link failed: \(reason)") }
+                name, in: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills", isDirectory: true), to: skill)
+            if case .failed(let reason) = outcome { NSLog("Varnick: the \(name) skill link failed: \(reason)") }
         }
     }
     app.setActivationPolicy(.accessory) // no Dock icon

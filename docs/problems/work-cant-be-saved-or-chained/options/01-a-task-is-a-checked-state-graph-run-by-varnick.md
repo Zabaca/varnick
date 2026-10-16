@@ -545,7 +545,7 @@ Where the code forced a choice the Solution leaves open. Each is the planner's a
    - It runs in the folder `with` names, Home when absent, and is refused for the same reasons about the folder, the agent or trust. It runs with its Task's grants (decision 7).
    - Its record names its Run. The Run's tab, named after the Task, is made at the Run's first pane step, and each later pane is split into it.
    - Its MCP config lists `notify`, plus `task_result` while the pane's folder holds the step's result schema. The prompt ends with Varnick's fixed line asking for `task_result`.
-   - With a result schema, the step is ok at a valid `task_result`, and fails with "ended without a result" if its turn ends without one. Without a schema, it is ok when its turn ends.
+   - With a result schema, the step is ok at a valid `task_result`, and fails with "ended without a result" if its turn ends without one. Without a schema, it is ok when its turn ends. Amended 2026-10-15 (the user's decision, relayed by the coordinator): in a step whose tab the person has opened, a turn that ends with no result keeps waiting, up to 24 hours, since the tab is theirs to go on in; the Run says so, and raises a notice of its own, so the stall is seen.
    - Waiting 24 hours fails it. Once a step is done, its process ends 10 minutes after its turn came to wait, if nobody opened it, as a run's does.
 8. **`task_result`** is answered by the pane's own MCP server, as `notify` is (Resolved for slice 2a, 3).
    - The server lists the schema the host wrote into the pane folder.

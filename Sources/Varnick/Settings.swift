@@ -660,7 +660,7 @@ struct SettingsView: View {
 
     private var section: SettingsSection {
         let chosen = SettingsSection(rawValue: sectionID) ?? .claude
-        return chosen == .automations && !settings.automationsOn ? .claude : chosen
+        return (chosen == .automations && !settings.automationsOn) || (chosen == .tasks && !settings.tasksOn) ? .claude : chosen
     }
 
     var body: some View {
@@ -763,6 +763,8 @@ struct SettingsView: View {
                             }
                             case .automations:
                             AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
+                            case .tasks:
+                            TasksSettingsView(catalog: launcher.taskCatalog, model: launcher, runStore: launcher.taskRuns)
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)
                             case .search:
@@ -1046,7 +1048,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Tasks",
-                                       detail: "!task or the split picker's Website tile opens a Website pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. What goes to TypeSafe and to Anthropic is in Privacy and security. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. Turning it off hides the command and the tile and stops the work of a running Website pane. Experimental.") {
+                                       detail: "!task lists On this site and your saved Tasks. On this site, or the split picker's Website tile, opens a Website pane: a browser of Varnick's own, with none of your cookies or logins, where you write what to do on the site it shows (find a fact, fill a form) and Varnick carries it out in the page, step by step in a column beside it. Jev on TypeSafe chooses each step when the relevance filter is on TypeSafe with a key saved; without it, Claude chooses, more slowly. Your own Claude Code writes the values and steers. You type passwords, one-time codes and card numbers in the page yourself, which are never read or sent; you tick the terms; and every form submit but a search waits for your Allow. A click or a key in the page pauses it, and Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) ends it. A saved Task is a JSON file in a project's .varnick/tasks or your own ~/.varnick/tasks (Claude writes them; Varnick checks them as it reads them): !task asks for its input in a form and starts a Run out of sight, and the board's Runs tab shows its steps and its result. A Run's Claude steps draw on your Claude subscription, and its Judge steps send their question and state to TypeSafe, or to Claude when Jev is unsure; Settings › Tasks keeps the permissions of each Task's Claude steps, which a file can't set. With it on, every Claude session you start or restart afterwards can also list, check and start Tasks through four Varnick tools with no approval step of Varnick's. What goes to TypeSafe and to Anthropic is in Privacy and security. Turning it off hides the command and the tile, stops every Run and the work of a running Website pane. Experimental.") {
                                 Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Automations",
@@ -1076,7 +1078,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(spacing: 2) {
-            ForEach(SettingsSection.allCases.filter { $0 != .automations || settings.automationsOn }) { item in
+            ForEach(SettingsSection.allCases.filter { ($0 != .automations || settings.automationsOn) && ($0 != .tasks || settings.tasksOn) }) { item in
                 let selected = item == section
                 Button { sectionID = item.rawValue } label: {
                     HStack(spacing: 8) {
@@ -1254,7 +1256,7 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, automations, apps, search, listening, peers, models, shortcuts, resources, experimental
+    case claude, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -1262,6 +1264,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .claude: "sparkles"
         case .automations: "clock.arrow.circlepath"
+        case .tasks: "checklist"
         case .apps: CustomApp.defaultIcon
         case .search: "magnifyingglass"
         case .listening: "waveform"

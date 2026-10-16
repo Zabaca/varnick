@@ -62,8 +62,9 @@ CUTOVER_NOTE := The cutover is the user's step, done from Terminal.app (docs/pro
 OLD_LABEL := com.zabaca.launchy
 OLD_PLIST := $(HOME)/Library/LaunchAgents/$(OLD_LABEL).plist
 
-SKILL_LINK := $(HOME)/.claude/skills/custom-apps
-SKILL_TARGET := $(CURDIR)/.claude/skills/custom-apps
+# The skills linked into the user's own (custom-apps, and tasks beside it): each is a link to this checkout's folder, made only where the path is free.
+SKILL_NAMES := custom-apps tasks
+SKILL_FOLDER := $(HOME)/.claude/skills
 
 # The Phone page's server (ADR 0011): Varnick clones this copy next to its binary, as it does zmx, at each launch (the
 # launch snapshot), so edits in a checkout reach a running server only through a build and a restart. The tests and
@@ -81,7 +82,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -182,6 +183,12 @@ check-mcp:
 check-slots:
 	@swift run --package-path Packages/VarnickPeer slot-check
 
+# The language and the engine of Tasks (`TaskDefinition.check`, `TaskEngine`, `TaskJudge`, `TaskResultTool`, the runs file; Packages/VarnickPeer) over a
+# table of cases, with no Varnick, no model and no network: the check, the engine with fake adapters, a Judge with stub voices, `task_result`'s files in
+# a scratch folder, and an automation's Run written byte for byte as slice 1 wrote it. Built the same way as check-slots.
+check-engine:
+	@swift run --package-path Packages/VarnickPeer engine-check
+
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.
 build-stamp:
@@ -276,8 +283,8 @@ stop:
 	-@pkill -a -f '$(LAUNCHY_PROCESS)' || true
 
 # Start at login via a LaunchAgent that runs this repo's release build (so `make build`
-# updates what the next login starts). Also starts it now, and links the custom-apps skill into
-# the user's skills so agents in any project find it (linked, not copied: one source). The link is
+# updates what the next login starts). Also starts it now, and links the custom-apps and tasks skills into
+# the user's skills so agents in any project find them (linked, not copied: one source). A link is
 # made only when the path is free or already ours; anything else there is left alone.
 install: cutover-check cutover-confirm build stop
 	mkdir -p $(dir $(PLIST)) $(dir $(LOG))
@@ -299,20 +306,26 @@ uninstall: cutover-check
 # "Ours" is a link whose target is the path `skill-link` writes. A dangling link or a file or folder
 # of the user's own is not ours. Neither target fails when it leaves the entry alone.
 skill-link:
-	@if [ ! -e "$(SKILL_LINK)" ] && [ ! -L "$(SKILL_LINK)" ]; then \
-	  mkdir -p "$(dir $(SKILL_LINK))" && ln -sfn "$(SKILL_TARGET)" "$(SKILL_LINK)" && echo "linked $(SKILL_LINK)"; \
-	elif [ "$$(readlink "$(SKILL_LINK)")" = "$(SKILL_TARGET)" ]; then \
-	  echo "$(SKILL_LINK) already links here"; \
-	else \
-	  echo "left $(SKILL_LINK) alone: it is not a link to $(SKILL_TARGET)"; \
-	fi
+	@for name in $(SKILL_NAMES); do \
+	  link="$(SKILL_FOLDER)/$$name"; target="$(CURDIR)/.claude/skills/$$name"; \
+	  if [ ! -e "$$link" ] && [ ! -L "$$link" ]; then \
+	    mkdir -p "$(SKILL_FOLDER)" && ln -sfn "$$target" "$$link" && echo "linked $$link"; \
+	  elif [ "$$(readlink "$$link")" = "$$target" ]; then \
+	    echo "$$link already links here"; \
+	  else \
+	    echo "left $$link alone: it is not a link to $$target"; \
+	  fi; \
+	done
 
 skill-unlink:
-	@if [ -L "$(SKILL_LINK)" ] && [ "$$(readlink "$(SKILL_LINK)")" = "$(SKILL_TARGET)" ]; then \
-	  rm -f "$(SKILL_LINK)" && echo "removed $(SKILL_LINK)"; \
-	elif [ -e "$(SKILL_LINK)" ] || [ -L "$(SKILL_LINK)" ]; then \
-	  echo "left $(SKILL_LINK) alone: it is not a link to $(SKILL_TARGET)"; \
-	fi
+	@for name in $(SKILL_NAMES); do \
+	  link="$(SKILL_FOLDER)/$$name"; target="$(CURDIR)/.claude/skills/$$name"; \
+	  if [ -L "$$link" ] && [ "$$(readlink "$$link")" = "$$target" ]; then \
+	    rm -f "$$link" && echo "removed $$link"; \
+	  elif [ -e "$$link" ] || [ -L "$$link" ]; then \
+	    echo "left $$link alone: it is not a link to $$target"; \
+	  fi; \
+	done
 
 # Leaves db/: it holds history Chrome may have already dropped.
 clean: cutover-confirm
@@ -378,7 +391,7 @@ app-bundle: app-guard
 	scripts/copy-catalog.sh $(CURDIR)/$(APP)/Contents/Resources/apps
 	cp .build/release/build-stamp $(APP)/Contents/Resources/build-stamp
 	mkdir -p $(APP)/Contents/Resources/skills
-	cp -RL .claude/skills/custom-apps $(APP)/Contents/Resources/skills/custom-apps
+	for name in $(SKILL_NAMES); do cp -RL .claude/skills/$$name $(APP)/Contents/Resources/skills/$$name || exit 1; done
 	find $(APP) -name .DS_Store -delete
 	cp LICENSE THIRD_PARTY_NOTICES.md $(APP)/Contents/Resources/
 	cp -R LICENSES $(APP)/Contents/Resources/LICENSES

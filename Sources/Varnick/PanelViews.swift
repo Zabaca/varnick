@@ -59,6 +59,7 @@ enum PanelViews {
         if model.showingBoard { return BoardPanelView(model: model) }
         if model.showingOutline { return OutlinePanelView(model: model) }
         if model.showingResources { return NoKeys("Resources is showing: its keys close tabs, so a session may not press keys there") }
+        if model.showingTasks { return NoKeys("Tasks is showing: it starts Runs that draw on the user's accounts, so a session may not press keys there") }
         if model.activeTab != nil { return PanePanelView(model: model) }
         return SearchPanelView(model: model)
     }

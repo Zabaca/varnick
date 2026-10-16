@@ -131,21 +131,41 @@ final class TaskRunStore: ObservableObject {
     /// What a check judges the automation's slots from: the newer of its last slot and its newest Run's slot.
     func anchor(for automation: Automation) -> Date { list.anchor(for: automation) }
 
-    /// Adds Runs in order (`TaskRunList.record`) and writes the file once. Nothing happens while the file is unreadable.
-    func record(_ runs: [TaskRun]) {
-        guard problem == nil, !runs.isEmpty else { return }
+    /// Adds Runs in order (`TaskRunList.record`) and writes the file once. Nothing happens while the file is unreadable. Answers whether the file now
+    /// holds them: a Task's host carries out nothing it could not write first.
+    @discardableResult
+    func record(_ runs: [TaskRun]) -> Bool {
+        guard problem == nil, !runs.isEmpty else { return false }
+        // A Run that could not be written is not kept: it would show as going for ever, be saved by the next write and start after a relaunch.
+        let before = list, wasUnsaved = unsaved
         for run in runs { list.record(run) }
-        write()
+        guard write() else {
+            list = before
+            unsaved = wasUnsaved
+            return false
+        }
+        return true
     }
 
-    /// Changes one Run in place and writes it when it differs.
-    func update(_ id: UUID, _ change: (inout TaskRun) -> Void) {
-        guard problem == nil, let index = list.runs.firstIndex(where: { $0.id == id }) else { return }
+    /// Changes one Run in place and writes it when it differs. Answers whether the file holds the Run as it is now (false when the Run is gone, the
+    /// file is unreadable, or the write failed, here or earlier and not since). With `rollingBack` a failed write puts the Run back as the file has it,
+    /// so what is in memory is never ahead of what a restart would find.
+    @discardableResult
+    func update(_ id: UUID, rollingBack: Bool = false, _ change: (inout TaskRun) -> Void) -> Bool {
+        guard problem == nil, let index = list.runs.firstIndex(where: { $0.id == id }) else { return false }
         var next = list.runs[index]
         change(&next)
-        guard next != list.runs[index] else { return }
+        guard next != list.runs[index] else { return !unsaved }
+        let before = list.runs[index], wasUnsaved = unsaved
         list.runs[index] = next
-        write()
+        guard write() else {
+            if rollingBack {
+                list.runs[index] = before
+                unsaved = wasUnsaved
+            }
+            return false
+        }
+        return true
     }
 
     /// The user opened the Run whose step has the pane.
@@ -160,13 +180,21 @@ final class TaskRunStore: ObservableObject {
         write()
     }
 
-    private func write() {
+    /// The last write failed, so the file is behind the list.
+    private var unsaved = false
+
+    @discardableResult
+    private func write() -> Bool {
         do {
             try TaskRunFile.write(list.runs, to: url)
             if writeError != nil { writeError = nil }
+            unsaved = false
+            return true
         } catch {
             writeError = "The runs couldn't be saved: \(error)"
             NSLog("Varnick: \(writeError ?? "")")
+            unsaved = true
+            return false
         }
     }
 }
@@ -276,7 +304,8 @@ extension LauncherModel {
     /// when an automation is deleted (`deleteAutomation`). An automation's own switch releases nothing: its unopened runs stay hidden and are
     /// still ended by their limits.
     func releaseRuns(of automation: UUID? = nil) {
-        releaseHiddenRuns { pane in automation == nil || pane.record.automation == automation }
+        // A Task's Run tab is the Tasks switch's to release, never the Automations switch's.
+        releaseHiddenRuns { pane in pane.record.taskRun == nil && (automation == nil || pane.record.automation == automation) }
     }
 
     /// At launch, before the first check: a hidden run tab that no Run names becomes an ordinary tab. That covers an automations file of version 1,
@@ -536,7 +565,7 @@ extension LauncherModel {
             showPane(paneID)
             return nil
         }
-        guard let run, run.state.ran, let conversation = run.conversationID, let automation = automations.automation(run.trigger.automation) else {
+        guard let run, run.state.ran, let conversation = run.conversationID, let automation = run.trigger.automation.flatMap({ automations.automation($0) }) else {
             return "That slot never ran"
         }
         // Already open in a tab (resumed from here before, or from search): a second claude on one conversation would fight it.
@@ -570,6 +599,7 @@ extension LauncherModel {
         guard let run = taskRuns.runs.first(where: { $0.state.ran && $0.step(conversation: conversation) != nil }),
               let step = run.step(conversation: conversation) else { return }
         record.automation = run.trigger.automation
+        if run.trigger.automation == nil { record.taskRun = run.id }
         if let launch = step.launch {
             record.skipPermissions = launch.skipPermissions
             record.dontAsk = launch.dontAsk ? true : nil
@@ -581,7 +611,7 @@ extension LauncherModel {
     /// notice's, a pane's.
     func endedRun(_ id: UUID) -> (automation: Automation, run: TaskRun)? {
         guard claudePane(id) == nil, let run = taskRuns.run(pane: id), run.state.ran, !run.opened,
-              let automation = automations.automation(run.trigger.automation) else { return nil }
+              let automation = run.trigger.automation.flatMap({ automations.automation($0) }) else { return nil }
         return (automation, run)
     }
 

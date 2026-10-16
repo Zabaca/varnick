@@ -282,6 +282,8 @@ final class SessionBoard: ObservableObject {
     /// The Runs tab: every run of every automation, newest first.
     let runs = RunsBoard()
     private var runsSwitch: AnyCancellable?
+    /// Tasks keeps the Runs tab too (their Runs are listed there), so the tab goes only when both switches are off.
+    private var tasksSwitch: AnyCancellable?
     /// Turning the switch off while Problems shows (Settings opens over the board) puts the board back on Sessions. The publisher sends
     /// before the value is stored, so this reads the value it is sent.
     private var problemsSwitch: AnyCancellable?
@@ -291,14 +293,17 @@ final class SessionBoard: ObservableObject {
             if !on { self?.show(.sessions) }
         }
         runsSwitch = Settings.shared.$automationsOn.removeDuplicates().sink { [weak self] on in
-            if !on, self?.tab == .runs { self?.show(.sessions) }
+            if !on, !Settings.shared.tasksOn, self?.tab == .runs { self?.show(.sessions) }
+        }
+        tasksSwitch = Settings.shared.$tasksOn.removeDuplicates().sink { [weak self] on in
+            if !on, !Settings.shared.automationsOn, self?.tab == .runs { self?.show(.sessions) }
         }
     }
 
     /// Whether the board has a Problems tab, and the key that switches to it.
     var hasProblems: Bool { Settings.shared.problemsBoard }
-    /// Whether it has a Runs tab (Automations is on).
-    var hasRuns: Bool { Settings.shared.automationsOn }
+    /// Whether it has a Runs tab (Automations or Tasks is on).
+    var hasRuns: Bool { Settings.shared.automationsOn || Settings.shared.tasksOn }
     /// The tabs there are, in the order Tab goes through them.
     var availableTabs: [Tab] { [.sessions] + (hasProblems ? [.problems] : []) + (hasRuns ? [.runs] : []) }
 

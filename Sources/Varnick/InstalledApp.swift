@@ -44,11 +44,12 @@ enum InstalledApp {
         case failed(String)
     }
 
-    /// Links `<skillsFolder>/custom-apps` to the app's own copy of the skill (`target`), when nothing is at that path (a dangling link counts as
-    /// something) or when the link there points into a `<name>.app/Contents/Resources/skills/custom-apps`. Anything else is left alone.
-    static func linkSkill(in skillsFolder: URL, to target: URL) -> LinkOutcome {
+    /// Links `<skillsFolder>/<skill>` to the app's own copy of the skill (`target`), when nothing is at that path (a dangling link counts as
+    /// something) or when the link there points into a `<name>.app/Contents/Resources/skills/<skill>`. Anything else is left alone. The skills are
+    /// `custom-apps` and `tasks`.
+    static func linkSkill(_ skill: String = "custom-apps", in skillsFolder: URL, to target: URL) -> LinkOutcome {
         let fm = FileManager.default
-        let path = skillsFolder.appendingPathComponent("custom-apps")
+        let path = skillsFolder.appendingPathComponent(skill)
         var info = stat()
         if lstat(path.path, &info) != 0 {
             guard errno == ENOENT else { return .failed("couldn't look at \(path.path): errno \(errno)") }
@@ -63,9 +64,9 @@ enum InstalledApp {
         guard (info.st_mode & S_IFMT) == S_IFLNK, let written = try? fm.destinationOfSymbolicLink(atPath: path.path) else { return .leftAlone }
         let destination = URL(fileURLWithPath: written, relativeTo: skillsFolder).standardizedFileURL
         if destination.path == target.standardizedFileURL.path { return .alreadyLinked }
-        guard isAppSkill(destination) else { return .leftAlone }
+        guard isAppSkill(destination, skill) else { return .leftAlone }
         // Made beside the link and renamed over it, so nothing sees the path missing.
-        let temporary = skillsFolder.appendingPathComponent(".custom-apps.\(getpid()).new")
+        let temporary = skillsFolder.appendingPathComponent(".\(skill).\(getpid()).new")
         do {
             try? fm.removeItem(at: temporary)
             try fm.createSymbolicLink(at: temporary, withDestinationURL: target)
@@ -80,11 +81,11 @@ enum InstalledApp {
         }
     }
 
-    /// `…/<name>.app/Contents/Resources/skills/custom-apps`.
-    private static func isAppSkill(_ url: URL) -> Bool {
+    /// `…/<name>.app/Contents/Resources/skills/<skill>`.
+    private static func isAppSkill(_ url: URL, _ skill: String) -> Bool {
         let parts = url.pathComponents
         guard parts.count >= 5 else { return false }
         let tail = parts.suffix(5)
-        return Array(tail.dropFirst()) == ["Contents", "Resources", "skills", "custom-apps"] && URL(fileURLWithPath: tail.first!).pathExtension == "app"
+        return Array(tail.dropFirst()) == ["Contents", "Resources", "skills", skill] && URL(fileURLWithPath: tail.first!).pathExtension == "app"
     }
 }

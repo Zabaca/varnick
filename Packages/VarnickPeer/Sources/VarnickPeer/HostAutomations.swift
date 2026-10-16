@@ -51,9 +51,10 @@ public struct HostAutomations: Codable, Equatable, Sendable {
         self.userHome = userHome
     }
 
-    /// The reply's value from what the two files read as.
+    /// The reply's value from what the two files read as. The runs version is the version of what the file holds: 1 while it holds only Runs version 1
+    /// wrote (an automation's, as a host holds), so a Mac from before slice 2a still reads the reply; this build writes the file at version 2.
     public init(automations: AutomationFile.ReadResult, runs: TaskRunFile.ReadResult, timerAge: Int?, skipPermissions: Bool, userHome: String? = nil) {
-        var automationsVersion = AutomationFile.currentVersion, runsVersion = TaskRunFile.currentVersion
+        var automationsVersion = AutomationFile.currentVersion, runsVersion = runs.runs.allSatisfy(\.isVersionOneShape) ? 1 : TaskRunFile.currentVersion
         if case .newer(let version) = automations { automationsVersion = version }
         if case .newer(let version) = runs { runsVersion = version }
         self.init(automationsVersion: automationsVersion, runsVersion: runsVersion, automations: automations.automations, runs: runs.runs,

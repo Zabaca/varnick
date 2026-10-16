@@ -170,6 +170,13 @@ final class LauncherModel: ObservableObject {
     let resources = Resources()
     /// Settings › Resources has a model of its own (`Resources.inSettings`).
     let settingsResources = Resources(inSettings: true)
+    /// The Tasks view replaces the panel's content the same way (`!task`): On this site, then the Tasks found from the focused pane's folder, and a
+    /// Task's form. Never with the board, the outline or Resources, and Settings shows over it.
+    @Published private(set) var showingTasks = false
+    let tasksPanel = TasksPanel()
+    /// The Tasks found from a folder, read off the main thread (option 01 of `work-cant-be-saved-or-chained`, slice 2a), and the host that runs their Runs.
+    let taskCatalog = TaskCatalog()
+    let taskHost = TaskHost()
     /// Bumped to move keyboard focus back into the search field.
     @Published var focusToken = 0
 
@@ -321,6 +328,8 @@ final class LauncherModel: ObservableObject {
     static let boardHeight: CGFloat = 600
     static let outlineHeight: CGFloat = 600
     static let resourcesHeight: CGFloat = 600
+    /// The Tasks view (`!task`): a list of rows or a form.
+    static let tasksHeight: CGFloat = 600
     static let sessionRowHeight: CGFloat = 44
     static let sessionHeaderHeight: CGFloat = 30
     /// A tab's row above its matching sessions, in the prompt's list and in a search's results; a session's is `sessionRowHeight` in the prompt's.
@@ -358,6 +367,7 @@ final class LauncherModel: ObservableObject {
         }
         resources.model = self
         settingsResources.model = self
+        tasksPanel.model = self
         strip.model = self
         tabProjects.model = self
         restoreSessions()
@@ -376,6 +386,7 @@ final class LauncherModel: ObservableObject {
         if showingBoard { return Self.boardHeight }
         if showingOutline { return Self.outlineHeight }
         if showingResources { return Self.resourcesHeight }
+        if showingTasks { return Self.tasksHeight }
         if activeTab != nil { return Self.claudeHeaderHeight + 1 + Self.claudeTerminalHeight }
         // The card needs more than a bare search field or a short list has.
         guard askingRestart else { return searchPanelHeight }
@@ -411,7 +422,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// A full-panel view (Settings, the board, the outline, Resources) is over the tabs. A new one is added here, and calls `willCoverTabs` as it opens.
-    var coversTabs: Bool { showingSettings || showingBoard || showingOutline || showingResources }
+    var coversTabs: Bool { showingSettings || showingBoard || showingOutline || showingResources || showingTasks }
 
     /// A full-panel view is about to cover the tabs: the lists under the strip close.
     func willCoverTabs() { strip.closeList() }
@@ -1194,13 +1205,14 @@ final class LauncherModel: ObservableObject {
             showResources()
         case .task:
             if clearingQuery { query = "" }
-            openTask()
+            showTasks()
         }
     }
 
     /// `!task`: a new tab holding one Task pane, or the pane of the task that is running (one task runs at a time on this Mac).
     func openTask() {
         guard Settings.shared.tasksOn else { return }
+        hideTasks()
         if let running = TaskController.running, running.phase.isActive, let pane = running.session,
            let tab = tabs.first(where: { $0.contains(pane) }) {
             activate(tab)
@@ -1329,7 +1341,7 @@ final class LauncherModel: ObservableObject {
                 // A resume on the host later passes it again, as a local resume does.
                 record.skipPermissions = start.skipPermissions
                 // Opens at once unless the prompt moved on while the host was starting it.
-                let waiting = self.query == typed && !self.showingBoard && !self.showingOutline && !self.showingResources
+                let waiting = self.query == typed && !self.showingBoard && !self.showingOutline && !self.showingResources && !self.showingTasks
                 // The tab here is the host's tab for it, under the host's id (ADR 0032).
                 let tab = self.addTab(PaneNode(session: self.makeSession(record, resuming: false, query: typed)),
                                       id: reply.tab.flatMap(UUID.init(uuidString:)), show: waiting)
@@ -1348,6 +1360,7 @@ final class LauncherModel: ObservableObject {
         followPeerSessionsNow()
         if showingBoard { board.appear() }
         if showingResources { resources.appear() }
+        if showingTasks { tasksPanel.appear() }
         settingsResources.panelDidShow()
     }
 
@@ -2523,6 +2536,17 @@ final class LauncherModel: ObservableObject {
     private func sessionExited(_ session: ClaudeSession, code: Int32?, query prompt: String) {
         guard !quitting, let index = tabs.firstIndex(where: { $0.contains(session) }) else { return }
         let tab = tabs[index]
+        // A step of a Task's Run nobody opened ends with its pane alone: the tab holds a finished step's pane beside a live one, so only the pane that
+        // ended goes, and the tab with the last of them. The host's tick sees the pane gone (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
+        if tab.isHiddenRun, session.record.taskRun != nil {
+            if !tab.remove(session, focusing: false) {
+                closing[tab.id] = nil
+                tabs.remove(at: index)
+                sessionSelection = min(sessionSelection, max(0, shownTabs.count - 1))
+            }
+            saveSessions()
+            return
+        }
         // A run nobody opened ends into its automation's run list: not Recent, not an ended card, not Completed.
         if tab.isHiddenRun, session.record.automation != nil {
             runClosed(session, code: code)
@@ -3000,6 +3024,7 @@ final class LauncherModel: ObservableObject {
             hideBoard()
             hideOutline()
             hideResources()
+            hideTasks()
         }
         activeTab = tab
         // A tab under the board, the outline or Settings isn't on screen: a card of it must not take the keys.
@@ -3050,7 +3075,7 @@ final class LauncherModel: ObservableObject {
         willCoverTabs()
         Settings.shared.recording = nil
         showingSettings.toggle()
-        guard !showingSettings, !showingBoard, !showingResources else { return }
+        guard !showingSettings, !showingBoard, !showingResources, !showingTasks else { return }
         // The outline needs a first responder of its own: the caret goes back into its bullet.
         if showingOutline { return outline.restoreCaret() }
         focusShown()
@@ -3089,6 +3114,7 @@ final class LauncherModel: ObservableObject {
         willCoverTabs()
         hideOutline()
         hideResources()
+        hideTasks()
         if let tab { board.show(tab) }
         guard !showingBoard else { return }
         showingBoard = true
@@ -3130,6 +3156,7 @@ final class LauncherModel: ObservableObject {
         willCoverTabs()
         hideBoard()
         hideResources()
+        hideTasks()
         guard !showingOutline else { return }
         showingOutline = true
         outline.appear(focusing: focusing)
@@ -3165,6 +3192,7 @@ final class LauncherModel: ObservableObject {
         willCoverTabs()
         hideBoard()
         hideOutline()
+        hideTasks()
         guard !showingResources else { return }
         showingResources = true
         // A hidden panel reads nothing; `panelDidShow` calls it when the panel comes up.
@@ -3183,6 +3211,34 @@ final class LauncherModel: ObservableObject {
         guard showingResources else { return }
         showingResources = false
         resources.close()
+    }
+
+    /// `!task`: the Tasks view in place of the current view; the board, the outline and Resources close. Esc goes back (or, in a form, to the list).
+    func showTasks() {
+        guard Settings.shared.tasksOn else { return }
+        pendingSplit = nil
+        willCoverTabs()
+        hideBoard()
+        hideOutline()
+        hideResources()
+        guard !showingTasks else { return }
+        showingTasks = true
+        // A hidden panel reads nothing; `panelDidShow` calls it when the panel comes up.
+        if SessionBoard.panelIsVisible { tasksPanel.appear() }
+    }
+
+    /// Back to the tab underneath, focused, or to search with focus in the field.
+    func closeTasks() {
+        guard showingTasks else { return }
+        hideTasks()
+        focusShown()
+    }
+
+    /// Closes the Tasks view without moving focus, for a caller that is about to focus a pane or the search itself.
+    func hideTasks() {
+        guard showingTasks else { return }
+        showingTasks = false
+        tasksPanel.close()
     }
 
     /// A pane's tab, with focus on that pane.
@@ -3792,7 +3848,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Show outline"
         case .problems: "Show problems board"
         case .resources: "Show Resources"
-        case .task: TaskController.running == nil ? "On this site" : "Show the running one"
+        case .task: "Tasks"
         }
     }
 
@@ -3804,7 +3860,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .outline: "Your bullets, kept on this Mac (also !wf)"
         case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         case .resources: "Memory by tab, pane and helper (also !memory)"
-        case .task: "A Website pane: a browser of Varnick's own where it works toward a goal on a site, step by step"
+        case .task: "On this site (a Website pane), and the Tasks saved as files: each with a form for its input"
         }
     }
 

@@ -119,8 +119,10 @@ extension StateFolder {
     /// What a conversation that was a run's, resumed through `resume`, keeps of the run: the automation and the permissions it started with.
     func runFields(forConversation conversation: String) -> (automation: UUID, launch: RunLaunch?)? {
         guard let files = try? automationFiles(), files.runs.problem == nil else { return nil }
-        guard let run = files.runs.runs.first(where: { $0.state.ran && $0.step(conversation: conversation) != nil }) else { return nil }
-        return (run.trigger.automation, run.step(conversation: conversation)?.launch)
+        // A Task's own Run (no automation) never reaches a host in this build.
+        let found = files.runs.runs.lazy.compactMap { run in run.trigger.automation.map { (run: run, automation: $0) } }
+            .first { $0.run.state.ran && $0.run.step(conversation: conversation) != nil }
+        return found.map { ($0.automation, $0.run.step(conversation: conversation)?.launch) }
     }
 }
 
@@ -313,15 +315,19 @@ extension HeadlessPeerHost {
     func tend(automations: [Automation], now: Date, elapsed: TimeInterval) -> [TaskRun] {
         guard let files = try? state.automationFiles(), files.runs.problem == nil, let records = try? state.sessions() else { return [] }
         let limits = Dictionary(automations.map { ($0.id, $0.workingLimitMinutes) }) { first, _ in first }
-        let kept = files.runs.runs.filter { limits[$0.trigger.automation] != nil && $0.state.ran && $0.endedAt == nil }
+        // Runs with no automation (a Task's own) are not this timer's to tend.
+        let kept = files.runs.runs.compactMap { run -> (run: TaskRun, limit: Int)? in
+            guard let automation = run.trigger.automation, let limit = limits[automation], run.state.ran, run.endedAt == nil else { return nil }
+            return (run, limit)
+        }
         guard !kept.isEmpty else { return [] }
         // Gone is what zmx's listing says, as `reconcile` reads it, never one failed `zmx get`: a live claude would get an ended record and nothing would
         // ever end it. A listing that can't be had tends nothing.
         guard let running = StateFolder.runningIDs() else { return [] }
-        let statuses = Zmx.statuses(of: kept.compactMap { $0.pane.map(Zmx.sessionName) })
+        let statuses = Zmx.statuses(of: kept.compactMap { $0.run.pane.map(Zmx.sessionName) })
         var changed: [TaskRun] = []
-        for run in kept {
-            guard let paneID = run.pane, let limit = limits[run.trigger.automation] else { continue }
+        for (run, limit) in kept {
+            guard let paneID = run.pane else { continue }
             let record = records.first { $0.id == paneID.uuidString.lowercased() && $0.ended == nil }
             // A start under way (a Mac's Run now, while a tick tends): its session isn't up yet and isn't gone. `reconcile` ends one that never handed over.
             if record?.starting == true { continue }

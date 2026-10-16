@@ -458,6 +458,27 @@ on your screen, so it needs no permission and works while you use the Mac.
 - What goes where is in [privacy and security](privacy-and-security.md#anthropic-through-tasks). To try it on a made-up shop,
   run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Website pane.
 
+**Saved Tasks** are work Varnick can repeat with values you give it. A Task is a JSON file in a project's `.varnick/tasks` folder or in
+your own `~/.varnick/tasks`: a typed input, steps (a Claude session, a judgement by Jev, a notice to you, another Task) and a typed
+result. You don't write one by hand; ask a Claude session ("make a Task called Haiku that takes a topic, writes a haiku and has a judge
+check it"), and Varnick checks the file as it is read, so a mistake is named before anything runs.
+- **`!task`** lists *On this site* first (the Website pane above, opened at once) and then the Tasks found from the focused pane's folder
+  and your own. A Task that isn't valid is dimmed and shows its problems. ↩ on a Task shows a form drawn from its input; ↩ in the form
+  checks it, naming each wrong field, or starts a **Run**, which opens nothing: the board's **Runs** tab (⌘⇧B, then Tab) shows it, and
+  opening it shows its steps one line each, marked with who acted (Jev, Claude, the harness), its result as fields, and **Open tab** for
+  the Claude session of a step. **Stop** ends the Run and everything it started.
+- **A Run tells you when it ends,** in the menu bar menu: Done with its result, Stopped on an error with the step that failed ("Failed at
+  check: no"), or a message from the Task's own notice step. A Claude step's session raises Needs you and messages as any session does.
+  These notices stay on this Mac. Each Claude step draws on your Claude subscription, and a Judge step sends its question and state to
+  TypeSafe (or to Claude when Jev is unsure or the relevance filter isn't on TypeSafe): see
+  [privacy and security](privacy-and-security.md#anthropic-through-task-runs).
+- **Settings › Tasks** (shown while Tasks is on) lists each Task file with its problems and the permissions of its Claude steps:
+  Varnick's setting, Ask, Allowed tools only or Skip, and the allowed tools. These are yours alone and never in the file. A file that is new
+  or changed since you pressed **Seen** is marked.
+- **A session can list, check and start Tasks** through four Varnick tools while Tasks is on (`tasks_list`, `task_check`, `task_run`,
+  `task_run_status`), with no approval step of Varnick's; a Run's own sessions never have them. It polls `task_run_status` for the result.
+- Not in this build: a Task step on a website, and a saved Task as an automation's work.
+
 ## TypeSafe
 
 The relevance filter can run on [TypeSafe](https://www.typesafe.ai)'s API, with your own key (Settings

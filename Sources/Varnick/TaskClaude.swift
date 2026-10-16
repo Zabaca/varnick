@@ -210,15 +210,18 @@ final class ClaudeSystem1: System1, @unchecked Sendable {
     let name = "Claude"
     private let claude: TaskClaude
     private let preface: String
+    private let lead: String
 
-    /// `preface` is the role and the task, which starts a guidance conversation that this System 1 is the first to speak in.
-    init(claude: TaskClaude, preface: String) {
+    /// `preface` is the role and the task, which starts a guidance conversation that this System 1 is the first to speak in. `lead` is the first
+    /// line of each message, the web loop's by default; a Judge step of a Task gives its own.
+    init(claude: TaskClaude, preface: String, lead: String = Prompts.fallbackLead) {
         self.claude = claude
         self.preface = preface
+        self.lead = lead
     }
 
     func ask(state: JSON, questions: [Question]) async throws -> [String: Answer] {
-        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions), preface: preface)
+        let reply = try await claude.ask(.guidance, Prompts.fallback(state: state, questions: questions, lead: lead), preface: preface)
         guard let answers = Prompts.readFallback(reply, questions: questions) else { throw ClaudeConversation.Failure(kind: "reply unreadable") }
         return answers
     }

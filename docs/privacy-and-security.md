@@ -90,6 +90,12 @@ Mac** or leave it off (it is off by default): then none of this happens.
   email and address you wrote in the task, for example); the last few steps; and Claude's hints. A password, a one-time
   code and a card number are never among them: you type those in the page, and the harness never reads them. Without the
   filter on TypeSafe, none of this goes to TypeSafe and Claude chooses the steps instead (below). Not logged.
+- **Judge steps of a saved Task** (Settings › Experimental › Tasks). A Judge step asks Jev one question in the same filter
+  and key conditions: the question the Task's file wrote and, for a Choice, its options with their criteria, and the
+  step's `state`, which is the values the Task's file bound into it (the Task's input and earlier steps' results, so
+  whatever a Claude step wrote or the user typed into the Task's form, if the Task's file puts it there). Nothing else of
+  the Run goes. The Task's author, usually a Claude session, decides what is in the state; read a Task's file before you
+  start it. Without the filter on TypeSafe, none of this goes to TypeSafe. Not logged.
 
 None of this goes to a model server.
 
@@ -188,6 +194,26 @@ types and steers, in two conversations kept open for the length of the task, on 
   the 20 it is limited to, plus a call for each step when Jev isn't used.
 - Varnick doesn't log a task, a page's address or title, a label, a value or a reply; only each step's kind, who acted,
   how long it took and the task's counts.
+
+### Anthropic, through Task Runs
+
+A saved Task (a JSON file in `.varnick/tasks`, run from `!task`, by a session's `task_run` or by another Task; Settings ›
+Experimental › **Tasks**, off by default) is carried out by Varnick in steps, and two kinds of step send to Anthropic.
+
+- **A Claude step** is a hidden Claude session like an automation's run, on your plan, started in the folder the step names
+  (Home when it names none) with the permissions you set in Settings › Tasks. What goes to Anthropic is what any session
+  sends: the step's prompt (with the Task's input and earlier steps' results filled in as the file bound them), what Claude
+  reads and runs, and the result it gives back through the `task_result` tool. Its MCP server lists `notify` and
+  `task_result` alone: no Screen access, Panel access or Varnick's automation and task tools. Its conversation is a session
+  like any, resumable from the Run's view.
+- **A Judge step asks Claude instead of Jev** when the relevance filter isn't on TypeSafe with a key, Jev fails, or Jev is
+  not sure (below 0.7): the question, the options and the step's state go to your Claude Code in a conversation opened for
+  that one call and ended after it, not saved as a session. Never this Mac's own model for a pick.
+- **The tools:** `tasks_list`, `task_run`, `task_run_status` and `task_check` answer a session with the Tasks' names,
+  descriptions, schemas, problems and results, which goes to Anthropic with that session. `task_run` starts a Run that draws on
+  your Claude subscription with nobody asked first, so a session starts only what you asked for.
+- Varnick doesn't log a Task, an input, a state, a prompt or a result: only the tool, the kind of outcome and durations.
+- A Task's Run stays on this Mac. Its notice is not pushed to the phone, and no paired Mac or phone lists it.
 
 ### Anthropic, through Automations
 

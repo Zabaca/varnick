@@ -33,7 +33,7 @@ enum AutomationRefusal: Error {
         case .off: "Automations is off in Varnick's Settings › Experimental"
         case .starting: "Varnick is still starting"
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
-        case .fromRun: "An automation's own run may not make, change or list automations"
+        case .fromRun: "An automation's own run, and a Task's, may not make, change or list automations"
         case .fileProblem(let why): why
         case .unknownTool(let name): "Unknown tool \(name)"
         case .unknownID: "No automation has this id. automations_list gives them"
@@ -92,7 +92,7 @@ final class AutomationAccess {
         guard Settings.shared.automationsOn else { throw AutomationRefusal.off }
         guard let model = PeerManager.shared.model else { throw AutomationRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
-        guard caller.record.automation == nil else { throw AutomationRefusal.fromRun }
+        guard !caller.record.isRun else { throw AutomationRefusal.fromRun }
         if let problem = model.automationFilesProblem { throw AutomationRefusal.fileProblem(problem) }
         switch request.tool {
         case AutomationMCP.list: return list(model)

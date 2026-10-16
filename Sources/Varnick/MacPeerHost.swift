@@ -243,7 +243,10 @@ enum PeerOpenTabs {
         // A pane runs in zmx, where another machine can attach to it, only while Keep sessions running is on.
         let keepOff = !PeerIdentity.defaults.bool(forKey: Settings.keepSessionsRunningKey)
         let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "that Mac")'s Settings."
-        return hosted(in: state).map { tab in
+        // A hidden Task Run's tab (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is not listed at all: the phone's Runs list and the other Macs'
+        // lists are automation runs only until slice 3 lists a Task's Runs there.
+        let listable = hosted(in: state).filter { tab in !tab.layout.records.contains { $0.taskRun != nil && $0.runUnopened == true } }
+        return listable.map { tab in
             // A run nobody opened is marked (protocol 29), as a headless host marks its own: the other Macs keep it out of their lists.
             let unopened = tab.layout.records.filter { $0.runUnopened == true }
             let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first.map { $0.uuidString.lowercased() })

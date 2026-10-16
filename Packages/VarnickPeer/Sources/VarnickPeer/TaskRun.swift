@@ -141,6 +141,10 @@ public enum RunState: String, Codable, Equatable {
     /// A slot that passed while nothing checked, and was not caught up.
     case missed
     case couldntStart
+    /// A Task's Run that ended without its result: a step failed, or a bound was passed (an automation's Run never has this state).
+    case failed
+    /// A Task's Run the person stopped.
+    case stopped
 
     public init(from decoder: Decoder) throws {
         // A state a newer build wrote is read as the run having finished, so one unknown word doesn't make the file unreadable.
@@ -169,24 +173,95 @@ public enum RunState: String, Codable, Equatable {
         case .skipped: "Skipped"
         case .missed: "Missed"
         case .couldntStart: "Couldn't start"
+        case .failed: "Failed"
+        case .stopped: "Stopped"
         }
     }
 }
 
-/// What started a Run. In this build it is always an automation's slot.
+/// How a Run that no automation started began.
+public enum TaskRunOrigin: String, Codable, Equatable {
+    /// The person, from `!task`'s form.
+    case hand
+    /// A Claude session, through `task_run`.
+    case session
+    /// Another Run's Task step.
+    case task
+}
+
+/// What started a Run: an automation's slot, or (slice 2a) the person, a session or a parent Run. Every field after `manual` is optional and left out
+/// of the file when it is nil, so an automation's Run is written as slice 1 wrote it.
 public struct TaskRunTrigger: Codable, Equatable {
-    public var automation: UUID
+    /// Nil for a Run that no automation started.
+    public var automation: UUID?
+    /// The automation's slot; the start time for a Run that no automation started.
     public var slot: Date
     /// Started after its slot's own minute (the Mac slept, or Varnick was quit).
     public var late: Bool
     /// Run now, not by the clock.
     public var manual: Bool
+    /// Who started a Run that no automation started.
+    public var origin: TaskRunOrigin?
+    /// The title of the session that called `task_run`.
+    public var session: String?
+    /// The Run whose Task step started this one, and that step.
+    public var parent: UUID?
+    public var parentStep: String?
 
-    public init(automation: UUID, slot: Date, late: Bool = false, manual: Bool = false) {
+    public init(automation: UUID?, slot: Date, late: Bool = false, manual: Bool = false, origin: TaskRunOrigin? = nil, session: String? = nil,
+                parent: UUID? = nil, parentStep: String? = nil) {
         self.automation = automation
         self.slot = slot
         self.late = late
         self.manual = manual
+        self.origin = origin
+        self.session = session
+        self.parent = parent
+        self.parentStep = parentStep
+    }
+
+    public static func byHand(at date: Date) -> TaskRunTrigger { TaskRunTrigger(automation: nil, slot: date, origin: .hand) }
+
+    public static func session(titled title: String, at date: Date) -> TaskRunTrigger {
+        TaskRunTrigger(automation: nil, slot: date, origin: .session, session: title)
+    }
+
+    public static func child(of parent: UUID, step: String, at date: Date) -> TaskRunTrigger {
+        TaskRunTrigger(automation: nil, slot: date, origin: .task, parent: parent, parentStep: step)
+    }
+
+    /// How it started, in a few words.
+    public var startedBy: String {
+        switch origin {
+        case .hand?: "By hand"
+        case .session?: session.map { "By a session: " + $0 } ?? "By a session"
+        case .task?: "By a parent Task"
+        case nil: manual ? "Run now" : "By the clock"
+        }
+    }
+}
+
+/// Where a step stands. Each visit to a step is an entry of its own, so every pass through a loop is on record.
+public enum StepState: String, Codable, Equatable {
+    case pending
+    /// Its capability works on it: a pane is running, a question is asked, a child Run goes.
+    case started
+    /// It waits on the person.
+    case waiting
+    case done
+    case failed
+    /// A Notify step recorded before the notice is raised, so a restart between the two doesn't send it twice.
+    case sending
+    case sent
+    /// A restart found it going and its pane gone: a Website step.
+    case interrupted
+
+    /// The step has said all it will.
+    public var isFinal: Bool {
+        switch self {
+        case .done, .failed, .sent: true
+        case .pending, .started, .waiting, .sending, .interrupted: false
+        }
     }
 }
 
@@ -202,18 +277,40 @@ public struct TaskRunStep: Codable, Equatable {
     public var launch: RunLaunch?
     /// Seconds the step's turn has worked or run background work while the Mac was awake, which the working limit counts (sleep is not work).
     public var worked: TimeInterval?
+    // Slice 2a: a Task's own steps. All optional and left out when nil, so a Claude prompt Run's step is written as before.
+    public var state: StepState?
+    /// The outcome the step ended with: ok, failed, a Judge's label, found.
+    public var outcome: String?
+    /// The fields the step gave, once it is done.
+    public var result: TaskValue?
+    /// Why the step failed, or the line to show for it ("Jev picked yes").
+    public var reason: String?
+    /// The Run a Task step started.
+    public var child: UUID?
+    /// Who acted: Jev, Claude, the harness or the person.
+    public var actor: String?
+    /// Jev's probability for the pick.
+    public var probability: Double?
+    public var startedAt: Date?
+    public var endedAt: Date?
 
-    public init(name: String, capability: String, pane: UUID? = nil, conversation: String? = nil, launch: RunLaunch? = nil, worked: TimeInterval? = nil) {
+    public init(name: String, capability: String, pane: UUID? = nil, conversation: String? = nil, launch: RunLaunch? = nil, worked: TimeInterval? = nil,
+                state: StepState? = nil, startedAt: Date? = nil) {
         self.name = name
         self.capability = capability
         self.pane = pane
         self.conversation = conversation
         self.launch = launch
         self.worked = worked
+        self.state = state
+        self.startedAt = startedAt
     }
 
     /// The conversation to resume, nil for a step with no pane.
     public var conversationID: String? { conversation ?? pane.map { $0.uuidString.lowercased() } }
+
+    /// Its capability, nil for one this build doesn't know.
+    public var kind: TaskCapability? { TaskCapability(rawValue: capability) }
 }
 
 /// One execution of a Task and what became of it. Its `input` is a copy of the Task's, so it holds the prompt and the folder; `detail` is a message's
@@ -236,12 +333,28 @@ public struct TaskRun: Codable, Identifiable, Equatable {
     /// The user opened it (its tab was shown, or another Mac or the phone took it over). An opened run is never ended by a check.
     public var opened: Bool
     public var steps: [TaskRunStep]
-    /// Nothing in this slice.
+    /// The fields a Task's Run ended with; nothing for a Claude prompt Run.
     public var result: TaskValue?
+    // Slice 2a: a Task's own Run. All optional and left out when nil, so an automation's Run is written as slice 1 wrote it.
+    /// The Task as it was when the Run started, as the file wrote it: an edit doesn't change a Run that is going.
+    public var definition: TaskValue?
+    /// The folder the Task was found from, which its sub-tasks are found from too.
+    public var folder: String?
+    /// How long the Run may work, in minutes of awake time.
+    public var limitMinutes: Int?
+    /// Seconds the Run has worked while the Mac was awake, which the working limit counts.
+    public var awake: TimeInterval?
+    /// How many Runs deep it is: nil is a Run of its own, a child is one more than its parent.
+    public var depth: Int?
+    /// The Task file the copy was read from and a digest of its contents then: the grants of its Claude steps are the user's for that path, and Skip
+    /// covers the copy only if the user had seen those contents.
+    public var file: String?
+    public var digest: String?
 
     public init(id: UUID = UUID(), task: String = BuiltInTask.claudePrompt.name, input: [String: TaskValue] = [:], trigger: TaskRunTrigger,
                 state: RunState, detail: String? = nil, startedAt: Date? = nil, endedAt: Date? = nil, opened: Bool = false,
-                steps: [TaskRunStep] = []) {
+                steps: [TaskRunStep] = [], result: TaskValue? = nil, definition: TaskValue? = nil, folder: String? = nil,
+                limitMinutes: Int? = nil, depth: Int? = nil) {
         self.id = id
         self.task = task
         self.input = input
@@ -252,6 +365,11 @@ public struct TaskRun: Codable, Identifiable, Equatable {
         self.endedAt = endedAt
         self.opened = opened
         self.steps = steps
+        self.result = result
+        self.definition = definition
+        self.folder = folder
+        self.limitMinutes = limitMinutes
+        self.depth = depth
     }
 
     /// A Run with a session that may still be here (it started and nothing has ended it): never dropped from the list.
@@ -279,6 +397,15 @@ public struct TaskRun: Codable, Identifiable, Equatable {
     public var worked: TimeInterval? {
         get { paneIndex.flatMap { steps[$0].worked } }
         set { if let index = paneIndex { steps[index].worked = newValue } }
+    }
+
+    /// Whether the Run is written as version 1 wrote it: an automation's, with none of the fields slice 2a added.
+    public var isVersionOneShape: Bool {
+        trigger.automation != nil && trigger.origin == nil && trigger.session == nil && trigger.parent == nil && trigger.parentStep == nil
+            && result == nil && definition == nil && folder == nil && limitMinutes == nil && awake == nil && depth == nil && file == nil && digest == nil
+            && state != .failed && state != .stopped
+            && steps.allSatisfy { $0.state == nil && $0.outcome == nil && $0.result == nil && $0.reason == nil && $0.child == nil && $0.actor == nil
+                && $0.probability == nil && $0.startedAt == nil && $0.endedAt == nil }
     }
 
     /// The step whose conversation is this one, whichever step it is: how a conversation resumed from anywhere finds its Run.
@@ -309,20 +436,39 @@ public struct TaskRunList: Equatable {
         max(automation.anchor, newestSlot(of: automation.id) ?? .distantPast)
     }
 
+    /// A Run by its id.
+    public func run(_ id: UUID) -> TaskRun? { runs.first { $0.id == id } }
+
+    /// The Runs a Run's Task steps started, in the order they began.
+    public func children(of parent: UUID) -> [TaskRun] {
+        runs.filter { $0.trigger.parent == parent }.sorted { $0.trigger.slot < $1.trigger.slot }
+    }
+
+    /// The Run at the top of a Run's tree: the one with no parent.
+    public func root(of id: UUID) -> TaskRun? {
+        var current = run(id)
+        var seen: Set<UUID> = []
+        while let found = current, let parent = found.trigger.parent, seen.insert(found.id).inserted, let next = run(parent) { current = next }
+        return current
+    }
+
     /// Adds a Run to the front. A skipped or missed slot that follows one with the same state and reason is counted into it, so a Mac asleep through
     /// a day of 15-minute slots is a line, not a flood. Past `limit` the oldest Runs of that automation go, but never one that may still have a
     /// pane: a Run that started and has no end date is kept, because the overlap rule, the limits and the hidden tab all find it through this list.
+    /// The Runs that no automation started are kept by their Task in the same way: each Task's last `limit`.
     public mutating func record(_ run: TaskRun) {
         let automation = run.trigger.automation
-        if !run.state.ran, let at = runs.firstIndex(where: { $0.trigger.automation == automation }),
+        if !run.state.ran, let automation, let at = runs.firstIndex(where: { $0.trigger.automation == automation }),
            runs[at].state == run.state, runs[at].detail == run.detail {
             runs[at].count = (runs[at].count ?? 1) + (run.count ?? 1)
             runs[at].trigger.slot = max(runs[at].trigger.slot, run.trigger.slot)
             return
         }
         runs.insert(run, at: 0)
-        while runs.filter({ $0.trigger.automation == automation }).count > Self.limit,
-              let drop = runs.lastIndex(where: { $0.trigger.automation == automation && !$0.isKept }) {
+        func sameList(_ other: TaskRun) -> Bool {
+            automation != nil ? other.trigger.automation == automation : other.trigger.automation == nil && other.task == run.task
+        }
+        while runs.filter(sameList).count > Self.limit, let drop = runs.lastIndex(where: { sameList($0) && !$0.isKept }) {
             runs.remove(at: drop)
         }
     }
@@ -332,7 +478,10 @@ public struct TaskRunList: Equatable {
 /// (`ADR 0030`'s rule): a file that can't be read, or is from a newer build, fires nothing and is never written over.
 public enum TaskRunFile {
     public static let name = "runs.json"
-    public static let currentVersion = 1
+    /// Version 2 is slice 2a's: a Run may also be a Task's own (a copy of the Task, steps with states and results, a trigger that names no
+    /// automation). Every new field is optional, so an automation's Run is written as at version 1. Version 1 is read; an older build reads
+    /// version 2 as newer and writes nothing.
+    public static let currentVersion = 2
 
     public enum ReadResult: Equatable {
         case loaded([TaskRun])

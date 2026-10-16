@@ -16,11 +16,15 @@ final class TaskJev: System1, @unchecked Sendable {
     private let model: String
     private let endpoint: URL
     private let session: URLSession
+    /// The sentence a Choice's instructions start with: the web loop's by default, a Judge step's own for a Task (`TaskJudging`).
+    private let context: String
 
-    init(apiKey: @escaping @Sendable () async -> String?, model: String = SpokenRouter.pinnedModel, endpoint: URL = SpokenRouter.pinnedEndpoint, deadline: TimeInterval = SpokenRouter.timeout) {
+    init(apiKey: @escaping @Sendable () async -> String?, model: String = SpokenRouter.pinnedModel, endpoint: URL = SpokenRouter.pinnedEndpoint, deadline: TimeInterval = SpokenRouter.timeout,
+         context: String = Prompts.context) {
         self.apiKey = apiKey
         self.model = model
         self.endpoint = endpoint
+        self.context = context
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = deadline
         config.timeoutIntervalForResource = deadline
@@ -35,7 +39,7 @@ final class TaskJev: System1, @unchecked Sendable {
                 var seen = Set<String>()
                 let criteria = options.filter { seen.insert($0.label).inserted }.map { ($0.label, JSON.string($0.criterion)) }
                 return (q.key, .object([("type", .string("choice")),
-                                        ("instructions", .object([("context", .string(Prompts.context)), ("question", .string(q.text))])),
+                                        ("instructions", .object([("context", .string(context)), ("question", .string(q.text))])),
                                         ("criteria", .object(criteria))]))
             case .noul:
                 return (q.key, .object([("type", .string("noul")), ("instructions", .string(q.text)),

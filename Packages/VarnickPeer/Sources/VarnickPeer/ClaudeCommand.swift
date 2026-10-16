@@ -15,7 +15,7 @@ public enum ClaudeCommand {
     /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
     /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
     /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. The rules for the entries are in `docs/agents/where-it-breaks.md`.
-    public static func hookSettings(problems: Bool, allowedTools: [String] = []) -> String {
+    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
@@ -46,8 +46,9 @@ public enum ClaudeCommand {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         // Plain strings and arrays: encoding can't fail, and a silent fallback would drop every hook.
-        return String(decoding: try! encoder.encode(HookSettings(hooks: hooks, permissions: .init(allow: [NotifyTool.qualifiedName] + allowedTools))),
-                      as: UTF8.self)
+        // `task_result` is a Claude step's answer, so it is allowed with `notify` in the pane that lists it (and in Allowed tools only).
+        let allow = [NotifyTool.qualifiedName] + (taskResult ? [TaskResultTool.qualifiedName] : []) + allowedTools
+        return String(decoding: try! encoder.encode(HookSettings(hooks: hooks, permissions: .init(allow: allow))), as: UTF8.self)
     }
 
     private struct HookSettings: Encodable {
@@ -192,9 +193,9 @@ public enum ClaudeCommand {
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
-                                 dontAsk: Bool = false, allowedTools: [String] = []) -> [String] {
+                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
-            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools)]
+            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
