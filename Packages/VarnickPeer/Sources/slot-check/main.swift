@@ -442,7 +442,7 @@ try? FileManager.default.removeItem(at: toolsRoot)
 // MARK: Marking Home trusted in Claude Code's config (`ClaudeTrust`)
 
 let trustHome = "/Users/x/Library/Application Support/Varnick/Home"
-func marking(_ text: String) -> ClaudeTrust.Edit { ClaudeTrust.marked(trustHome, in: Data(text.utf8)) }
+func marking(_ text: String) -> ClaudeTrust.TrustEdit { ClaudeTrust.trustEdit(for: trustHome, in: Data(text.utf8)) }
 func changedText(_ text: String) -> String? {
     if case .changed(let data) = marking(text) { return String(decoding: data, as: UTF8.self) }
     return nil
@@ -478,7 +478,14 @@ let emptyEntry = "{\"projects\": {\"\(trustHome)\": {}}}"
 expect("an empty entry gets it without a comma", changedText(emptyEntry) == "{\"projects\": {\"\(trustHome)\": {\"hasTrustDialogAccepted\":true}}}", changedText(emptyEntry) ?? "nil")
 expect("an empty projects gets the entry without a comma", changedText("{\"projects\":{}}") == "{\"projects\":{\"\(trustHome)\":{\"hasTrustDialogAccepted\":true}}}")
 expect("a trusted folder needs no change", marking("{\"projects\": {\"\(trustHome)\": {\"hasTrustDialogAccepted\": true}}}") == .already)
-expect("a trusted parent counts", marking("{\"projects\": {\"/Users/x/Library\": {\"hasTrustDialogAccepted\": true}}}") == .already)
+expect("a trusted parent is not the folder's own entry, so Home still gets its own", changedText("{\"projects\": {\"/Users/x/Library\": {\"hasTrustDialogAccepted\": true}}}") != nil)
+let repeatedKeys: [(String, String)] = [("projects", "{\"projects\":{},\"projects\":{}}"), ("the folder", "{\"projects\":{\"\(trustHome)\":{},\"\(trustHome)\":{}}}"),
+    ("the trust key", "{\"projects\":{\"\(trustHome)\":{\"hasTrustDialogAccepted\":false,\"hasTrustDialogAccepted\":false}}}")]
+for (why, text) in repeatedKeys {
+    var repeated = false
+    if case .unexpected("a key is repeated") = marking(text) { repeated = true }
+    expect("a repeated key for \(why) is left alone", repeated)
+}
 let unexpectedShapes: [(String, String)] = [
     ("no projects", "{\"a\": 1}"), ("projects that isn't an object", "{\"projects\": []}"), ("text that isn't json", "oops"), ("an empty file", ""),
     ("a cut-off file", "{\"projects\": {\"/a\": {"), ("a trust value that isn't a boolean", "{\"projects\": {\"\(trustHome)\": {\"hasTrustDialogAccepted\": \"yes\"}}}"),
@@ -491,7 +498,7 @@ for (why, text) in unexpectedShapes {
 }
 let quoted = "/Users/x/it's \"odd\"\\dir"
 var quotedWorks = false
-if case .changed(let data) = ClaudeTrust.marked(quoted, in: Data("{\"projects\":{}}".utf8)) { quotedWorks = ClaudeTrust.isTrusted(quoted, in: data) == true }
+if case .changed(let data) = ClaudeTrust.trustEdit(for: quoted, in: Data("{\"projects\":{}}".utf8)) { quotedWorks = ClaudeTrust.isTrusted(quoted, in: data) == true }
 expect("a path with quotes and backslashes is escaped", quotedWorks)
 
 let trustRoot = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-trust-\(getpid())")
@@ -500,19 +507,65 @@ let trustFile = trustRoot.appendingPathComponent("claude.json")
 func attributes(_ url: URL) -> [FileAttributeKey: Any]? { try? FileManager.default.attributesOfItem(atPath: url.path) }
 try? Data(trustQuirks.utf8).write(to: trustFile)
 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: trustFile.path)
-expect("a file is marked", ClaudeTrust.mark(trustHome, file: trustFile) == .marked)
+expect("a file is marked", ClaudeTrust.writeTrust(for: trustHome, file: trustFile) == .trusted)
 expect("the file on disk is the original with the one entry added", isUntouched(trustQuirks, try? String(contentsOf: trustFile, encoding: .utf8), inserted: newEntry))
 expect("it keeps the file's permissions", (attributes(trustFile)?[.posixPermissions] as? NSNumber)?.intValue == 0o600)
-expect("no temporary file is left beside it", ((try? FileManager.default.contentsOfDirectory(atPath: trustRoot.path)) ?? []) == ["claude.json"])
-expect("a second mark finds it trusted and writes nothing", ClaudeTrust.mark(trustHome, file: trustFile) == .alreadyTrusted)
-expect("a missing file is skipped", ClaudeTrust.mark(trustHome, file: trustRoot.appendingPathComponent("none.json")) == .skipped("the file can't be read"))
+expect("no temporary file or lock is left beside it", ((try? FileManager.default.contentsOfDirectory(atPath: trustRoot.path)) ?? []) == ["claude.json"])
+expect("a second mark finds it trusted and writes nothing", ClaudeTrust.writeTrust(for: trustHome, file: trustFile) == .alreadyTrusted)
+expect("a missing file is skipped", ClaudeTrust.writeTrust(for: trustHome, file: trustRoot.appendingPathComponent("none.json")) == .skipped("the file can't be read"))
 expect("and not created", attributes(trustRoot.appendingPathComponent("none.json")) == nil)
 let linked = trustRoot.appendingPathComponent("link.json")
 try? FileManager.default.createSymbolicLink(at: linked, withDestinationURL: trustFile)
 try? Data(trustQuirks.utf8).write(to: trustFile)
-expect("a linked file is marked through the link", ClaudeTrust.mark(trustHome, file: linked) == .marked)
+expect("a linked file is marked through the link", ClaudeTrust.writeTrust(for: trustHome, file: linked) == .trusted)
 expect("and the link is still a link", (try? FileManager.default.destinationOfSymbolicLink(atPath: linked.path)) == trustFile.path)
+// Claude Code takes a lock directory beside the file while it saves; a held one is waited for, then the write is skipped.
+try? Data(trustQuirks.utf8).write(to: trustFile)
+try? FileManager.default.createDirectory(at: URL(fileURLWithPath: trustFile.path + ".lock"), withIntermediateDirectories: false)
+expect("a held lock stops the write", ClaudeTrust.writeTrust(for: trustHome, file: trustFile) == .skipped("Claude Code holds the file's lock"))
+expect("and leaves the file as it was", (try? String(contentsOf: trustFile, encoding: .utf8)) == trustQuirks)
+expect("and the other's lock stays", attributes(URL(fileURLWithPath: trustFile.path + ".lock")) != nil)
+try? FileManager.default.removeItem(atPath: trustFile.path + ".lock")
+
+// A folder in a git repo needs that repo's own entry; a trusted parent doesn't cover a nested repo, and a folder in no repo takes its ancestors'.
+let outer = trustRoot.appendingPathComponent("outer").path
+try? FileManager.default.createDirectory(atPath: outer + "/repo/.git", withIntermediateDirectories: true)
+try? FileManager.default.createDirectory(atPath: outer + "/repo/sub", withIntermediateDirectories: true)
+try? FileManager.default.createDirectory(atPath: outer + "/plain/deeper", withIntermediateDirectories: true)
+try? FileManager.default.createDirectory(atPath: outer + "/tree", withIntermediateDirectories: true)
+try? Data("gitdir: elsewhere\n".utf8).write(to: URL(fileURLWithPath: outer + "/tree/.git"))
+func trustConfig(_ keys: [String]) -> Data {
+    Data(("{\"projects\":{" + keys.map { "\"\($0)\":{\"hasTrustDialogAccepted\":true}" }.joined(separator: ",") + "}}").utf8)
+}
+expect("a trusted parent does not cover a nested repo", ClaudeTrust.isTrusted(outer + "/repo", in: trustConfig([outer])) == false)
+expect("nor a folder inside it", ClaudeTrust.isTrusted(outer + "/repo/sub", in: trustConfig([outer])) == false)
+expect("the repo's own entry covers it and its folders", ClaudeTrust.isTrusted(outer + "/repo/sub", in: trustConfig([outer + "/repo"])) == true)
+expect("a worktree's .git file marks a repo too", ClaudeTrust.isTrusted(outer + "/tree", in: trustConfig([outer])) == false)
+expect("a folder in no repo takes a trusted ancestor", ClaudeTrust.isTrusted(outer + "/plain/deeper", in: trustConfig([outer + "/plain"])) == true)
+expect("and is untrusted when none is", ClaudeTrust.isTrusted(outer + "/plain/deeper", in: trustConfig(["/elsewhere"])) == false)
+let plainLink = trustRoot.appendingPathComponent("link-to-plain").path
+try? FileManager.default.createSymbolicLink(atPath: plainLink, withDestinationPath: outer + "/plain")
+expect("a symlink to a trusted folder is looked through", ClaudeTrust.isTrusted(plainLink, in: trustConfig([outer + "/plain"])) == true)
+
 try? FileManager.default.removeItem(at: trustRoot)
+
+// MARK: The old Default folder, given to the automations that had none
+
+let moveFile = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-move-\(getpid()).json")
+var folderAutomation = current
+folderAutomation.folder = toolsFolder
+var noFolderAutomation = current
+noFolderAutomation.id = UUID()
+noFolderAutomation.folder = nil
+try? AutomationFile.write([folderAutomation, noFolderAutomation], to: moveFile)
+expect("an automation with no folder is given the old Default folder", AutomationFile.giveFolder("/old/default", toThoseWithout: moveFile) == .moved(1))
+let moveRead = AutomationFile.read(at: moveFile).automations
+expect("the others keep theirs", moveRead.first { $0.id == folderAutomation.id }?.folder == toolsFolder && moveRead.first { $0.id == noFolderAutomation.id }?.folder == "/old/default")
+expect("and a second move finds nothing to do", AutomationFile.giveFolder("/old/default", toThoseWithout: moveFile) == .nothingToMove)
+expect("no file is nothing to do", AutomationFile.giveFolder("/old/default", toThoseWithout: moveFile.appendingPathExtension("none")) == .nothingToMove)
+try? Data("not json".utf8).write(to: moveFile)
+expect("a file this build can't read is kept as it is", AutomationFile.giveFolder("/old/default", toThoseWithout: moveFile) == .kept("the automations file isn't one this build writes"))
+try? FileManager.default.removeItem(at: moveFile)
 
 if failures > 0 {
     FileHandle.standardError.write(Data("error: check-slots: \(failures) of \(cases) checks failed\n".utf8))

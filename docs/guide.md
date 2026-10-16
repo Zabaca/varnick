@@ -56,8 +56,8 @@ To build it yourself instead, see [`building.md`](building.md).
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
 - **A session with no `#project` starts in Home,** a folder of Varnick's own, `~/Library/Application Support/Varnick/Home`, made the
   first time it is needed. It is not your home folder, and there is no setting for it. A session started from nowhere in particular
-  doesn't land in a repo. When Varnick makes Home it also tells Claude Code to trust it (one key in `~/.claude.json`, the only thing
-  Varnick ever writes there), so Claude doesn't stop to ask. Resumed sessions keep their own folder.
+  doesn't land in a repo. Varnick also marks Home trusted in Claude Code, so Claude doesn't stop to ask
+  ([privacy and security](privacy-and-security.md#home-is-marked-trusted-in-claude-code)). Resumed sessions keep their own folder.
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the

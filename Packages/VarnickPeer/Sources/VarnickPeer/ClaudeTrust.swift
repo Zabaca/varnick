@@ -1,16 +1,10 @@
 import Foundation
 
-/// Whether Claude Code has been told to trust a folder, read from its config file. A hidden run (an automation's) has nobody to answer Claude
-/// Code's "trust this folder?" question, so a run in a folder it hasn't accepted would sit at it forever.
-///
-/// The file is `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when that is set): `projects` maps an absolute folder path to its
-/// settings, and `hasTrustDialogAccepted` is a boolean among them. Claude Code counts a trusted folder's subfolders as trusted too, so
-/// the folder's ancestors are looked at as well. The file holds other private data (the account's state): only that one key is looked at,
-/// and nothing from the file is ever logged.
-///
-/// Varnick writes the file in one place, `mark(_:)`, and for one folder only: its own `Home`, which it makes. Claude Code's documented way
-/// to trust a folder ahead of time is that key. Every other folder is only read.
+// Claude Code's "trust this folder?" answer, kept in its config file: `projects[<folder>].hasTrustDialogAccepted`. A hidden run has nobody to
+// answer it. Nothing from the file is ever logged. The one write, for Home alone, is described in docs/agents/where-it-breaks.md (Sessions and tabs).
+
 public enum ClaudeTrust {
+    /// `~/.claude.json`, or under `$CLAUDE_CONFIG_DIR` when that is set (unverified that Claude Code moves the file there).
     public static var configFile: URL {
         let base = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -25,22 +19,19 @@ public enum ClaudeTrust {
         return isTrusted(folder, in: data)
     }
 
+    /// As Claude Code decides it: a folder in a git repo needs that repo's own entry, one in no repo takes a trusted ancestor's. Symlinks are tried both ways.
     public static func isTrusted(_ folder: String, in config: Data) -> Bool? {
-        guard let root = try? JSONSerialization.jsonObject(with: config) as? [String: Any],
-              let projects = root["projects"] as? [String: Any] else { return nil }
-        var paths = [folder]
-        let resolved = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
-        if resolved != folder { paths.append(resolved) }
-        for start in paths {
-            var url = URL(fileURLWithPath: start)
-            while true {
-                if (projects[url.path] as? [String: Any])?["hasTrustDialogAccepted"] as? Bool == true { return true }
-                let parent = url.deletingLastPathComponent()
-                if parent.path == url.path { break }
-                url = parent
-            }
+        guard let projects = projects(in: config) else { return nil }
+        return pathForms(folder).contains { form in
+            if let root = repoRoot(of: form) { return pathForms(root).contains { projects[$0]?.trusted == true } }
+            return ancestors(of: form).contains { projects[$0]?.trusted == true }
         }
-        return false
+    }
+
+    /// Whether the folder's own entry says trusted, whatever its parents say (project allow rules need the exact folder).
+    public static func isTrustedItself(_ folder: String, in config: Data) -> Bool? {
+        guard let projects = projects(in: config) else { return nil }
+        return pathForms(folder).contains { projects[$0]?.trusted == true }
     }
 
     /// What to tell the user when the folder is known not to be trusted; nil when it is, or when that can't be told.
@@ -49,66 +40,126 @@ public enum ClaudeTrust {
         return "Claude Code hasn't trusted \((folder as NSString).abbreviatingWithTildeInPath) yet, so a run there would stop at its \"trust this folder?\" question with nobody to answer. Open a session in that folder once and accept it."
     }
 
+    private static func projects(in config: Data) -> [String: Entry]? {
+        guard let root = try? JSONSerialization.jsonObject(with: config) as? [String: Any], let found = root["projects"] as? [String: Any] else { return nil }
+        return found.mapValues { Entry(trusted: ($0 as? [String: Any])?["hasTrustDialogAccepted"] as? Bool == true) }
+    }
+
+    private struct Entry { var trusted: Bool }
+
+    /// The folder as given, as `realpath` resolves it, and as Foundation does (which strips a leading `/private`): Claude Code may key on any.
+    private static func pathForms(_ folder: String) -> [String] {
+        var forms = [folder]
+        if let real = realpath(folder, nil) { forms.append(String(cString: real)); free(real) }
+        forms.append(URL(fileURLWithPath: folder).resolvingSymlinksInPath().path)
+        return forms.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+    }
+
+    private static func ancestors(of folder: String) -> [String] {
+        var found: [String] = [], url = URL(fileURLWithPath: folder)
+        while true {
+            found.append(url.path)
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path { return found }
+            url = parent
+        }
+    }
+
+    /// The nearest folder at or above this one that has a `.git` (a directory, or a file in a worktree).
+    private static func repoRoot(of folder: String) -> String? {
+        ancestors(of: folder).first { FileManager.default.fileExists(atPath: $0 + "/.git") }
+    }
+
     // MARK: Writing, for Home alone
 
-    public enum Marking: Equatable {
-        case marked
+    public enum Written: Equatable {
+        case trusted
         case alreadyTrusted
         /// Nothing was written. The reason is a fixed phrase, never anything from the file.
         case skipped(String)
     }
 
-    /// Sets `projects[folder].hasTrustDialogAccepted` to true in the config file, changing nothing else in it. Claude processes rewrite the file
-    /// often, so the window is kept small: one read, one temporary file beside it, a check that the file is as it was read, and a rename. A
-    /// file that is missing, unreadable or not the expected shape is left alone.
-    public static func mark(_ folder: String, file: URL? = nil) -> Marking {
-        let fm = FileManager.default
+    /// Sets the folder's own `hasTrustDialogAccepted` to true. It holds Claude Code's lock on the file while it reads, edits and renames.
+    public static func writeTrust(for folder: String, file: URL? = nil) -> Written {
         let target = (file ?? configFile).resolvingSymlinksInPath()
+        guard let first = try? Data(contentsOf: target) else { return .skipped("the file can't be read") }
+        if case .already = trustEdit(for: folder, in: first) { return .alreadyTrusted }
+        let lock = target.path + ".lock"
+        var held = false
+        for _ in 0..<20 {
+            if mkdir(lock, 0o755) == 0 { held = true; break }
+            guard errno == EEXIST else { return .skipped("the file's lock can't be made") }
+            usleep(50_000)
+        }
+        guard held else { return .skipped("Claude Code holds the file's lock") }
+        defer { rmdir(lock) }
         for _ in 0..<3 {
-            guard let before = try? fm.attributesOfItem(atPath: target.path), let data = try? Data(contentsOf: target) else {
+            guard let before = try? FileManager.default.attributesOfItem(atPath: target.path), let data = try? Data(contentsOf: target) else {
                 return .skipped("the file can't be read")
             }
             let changed: Data
-            switch marked(folder, in: data) {
+            switch trustEdit(for: folder, in: data) {
             case .already: return .alreadyTrusted
             case .unexpected(let why): return .skipped(why)
             case .changed(let new): changed = new
             }
             let temporary = target.deletingLastPathComponent().appendingPathComponent(".\(target.lastPathComponent).varnick-\(UUID().uuidString)")
-            var attributes: [FileAttributeKey: Any] = [:]
-            if let permissions = before[.posixPermissions] { attributes[.posixPermissions] = permissions }
-            guard fm.createFile(atPath: temporary.path, contents: changed, attributes: attributes) else { return .skipped("the new copy can't be written") }
-            if let after = try? fm.attributesOfItem(atPath: target.path),
+            let permissions = (before[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
+            guard writeNew(changed, to: temporary.path, permissions: permissions) else { return .skipped("the new copy can't be written") }
+            if let after = try? FileManager.default.attributesOfItem(atPath: target.path),
                (after[.modificationDate] as? Date) == (before[.modificationDate] as? Date), (after[.size] as? NSNumber) == (before[.size] as? NSNumber) {
-                if rename(temporary.path, target.path) == 0 { return .marked }
-                try? fm.removeItem(at: temporary)
+                if rename(temporary.path, target.path) == 0 { return .trusted }
+                unlink(temporary.path)
                 return .skipped("the file can't be replaced")
             }
-            try? fm.removeItem(at: temporary)
+            unlink(temporary.path)
         }
         return .skipped("the file kept changing")
     }
 
-    public enum Edit: Equatable {
+    /// A new file made with its permissions from the start, written and flushed; gone again if any step fails.
+    private static func writeNew(_ data: Data, to path: String, permissions: UInt16) -> Bool {
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(permissions))
+        guard fd >= 0 else { return false }
+        let wrote = data.withUnsafeBytes { buffer -> Bool in
+            var offset = 0
+            while offset < buffer.count {
+                let n = write(fd, buffer.baseAddress! + offset, buffer.count - offset)
+                if n <= 0 { return false }
+                offset += n
+            }
+            return true
+        }
+        let flushed = wrote && fsync(fd) == 0
+        close(fd)
+        if !flushed { unlink(path) }
+        return flushed
+    }
+
+    public enum TrustEdit: Equatable {
         case already
         case changed(Data)
         case unexpected(String)
     }
 
-    /// The config with the folder's `hasTrustDialogAccepted` set to true and every other byte as it was: the one value is replaced, or the one
-    /// member inserted just inside its object. Not a parse and a print, which would reorder and reformat the whole file.
-    public static func marked(_ folder: String, in data: Data) -> Edit {
-        if isTrusted(folder, in: data) == true { return .already }
+    /// The config with the folder's own value true and every other byte as it was (the value replaced, or one member inserted). Pure.
+    public static func trustEdit(for folder: String, in data: Data) -> TrustEdit {
+        if isTrustedItself(folder, in: data) == true { return .already }
         let bytes = [UInt8](data)
-        let shape = Edit.unexpected("the file isn't the shape expected")
-        guard let top = members(of: bytes, at: skipSpace(bytes, 0)),
-              let projects = top.members.last(where: { $0.key == "projects" }), bytes.indices.contains(projects.valueStart), bytes[projects.valueStart] == 0x7B,
-              let inside = members(of: bytes, at: projects.valueStart) else { return shape }
+        let shape = TrustEdit.unexpected("the file isn't the shape expected")
+        guard let top = members(of: bytes, at: skipSpace(bytes, 0)) else { return shape }
+        let found = top.members.filter { $0.key == "projects" }
+        guard found.count == 1, let projects = found.first, bytes.indices.contains(projects.valueStart), bytes[projects.valueStart] == UInt8(ascii: "{"),
+              let inside = members(of: bytes, at: projects.valueStart) else { return found.count > 1 ? .unexpected("a key is repeated") : shape }
         var result = bytes
         let key = "hasTrustDialogAccepted"
-        if let entry = inside.members.last(where: { $0.key == folder }) {
-            guard bytes[entry.valueStart] == 0x7B, let own = members(of: bytes, at: entry.valueStart) else { return shape }
-            if let trust = own.members.last(where: { $0.key == key }) {
+        let entries = inside.members.filter { $0.key == folder }
+        if entries.count > 1 { return .unexpected("a key is repeated") }
+        if let entry = entries.first {
+            guard bytes[entry.valueStart] == UInt8(ascii: "{"), let own = members(of: bytes, at: entry.valueStart) else { return shape }
+            let trusts = own.members.filter { $0.key == key }
+            if trusts.count > 1 { return .unexpected("a key is repeated") }
+            if let trust = trusts.first {
                 guard String(decoding: bytes[trust.valueStart..<trust.valueEnd], as: UTF8.self) == "false" else { return shape }
                 result.replaceSubrange(trust.valueStart..<trust.valueEnd, with: Array("true".utf8))
             } else {
@@ -117,8 +168,8 @@ public enum ClaudeTrust {
         } else {
             result.insert(contentsOf: Array("\(literal(folder)):{\"\(key)\":true}\(inside.members.isEmpty ? "" : ",")".utf8), at: projects.valueStart + 1)
         }
-        // Whatever was done must read back as the folder trusted, and as valid JSON.
-        guard isTrusted(folder, in: Data(result)) == true else { return shape }
+        // Whatever was done must read back as that folder trusted by its own entry.
+        guard isTrustedItself(folder, in: Data(result)) == true else { return shape }
         return .changed(Data(result))
     }
 
@@ -130,24 +181,28 @@ public enum ClaudeTrust {
         var valueEnd: Int
     }
 
-    /// The members of the object whose `{` is at `open`, with where each value is; nil if it isn't an object or isn't well formed.
-    static func members(of b: [UInt8], at open: Int) -> (members: [Member], close: Int)? {
-        guard b.indices.contains(open), b[open] == 0x7B else { return nil }
+    private static let quote = UInt8(ascii: "\""), openBrace = UInt8(ascii: "{"), closeBrace = UInt8(ascii: "}"), comma = UInt8(ascii: ","), colon = UInt8(ascii: ":")
+    private static let openBracket = UInt8(ascii: "["), closeBracket = UInt8(ascii: "]"), backslash = UInt8(ascii: "\\")
+    private static let spaces: [UInt8] = [UInt8(ascii: " "), UInt8(ascii: "\n"), UInt8(ascii: "\r"), UInt8(ascii: "\t")]
+
+    /// The members of the object whose `{` is at `start`, with where each value is; nil if it isn't an object or isn't well formed.
+    static func members(of b: [UInt8], at start: Int) -> (members: [Member], close: Int)? {
+        guard b.indices.contains(start), b[start] == openBrace else { return nil }
         var found: [Member] = []
-        var i = skipSpace(b, open + 1)
-        if i < b.count, b[i] == 0x7D { return (found, i) }
+        var i = skipSpace(b, start + 1)
+        if i < b.count, b[i] == closeBrace { return (found, i) }
         while i < b.count {
-            guard b[i] == 0x22, let keyEnd = stringEnd(b, i),
+            guard b[i] == quote, let keyEnd = stringEnd(b, i),
                   let key = (try? JSONSerialization.jsonObject(with: Data(b[i..<keyEnd]), options: .fragmentsAllowed)) as? String else { return nil }
             i = skipSpace(b, keyEnd)
-            guard i < b.count, b[i] == 0x3A else { return nil }
+            guard i < b.count, b[i] == colon else { return nil }
             i = skipSpace(b, i + 1)
             guard let end = valueEnd(b, i) else { return nil }
             found.append(Member(key: key, valueStart: i, valueEnd: end))
             i = skipSpace(b, end)
             guard i < b.count else { return nil }
-            if b[i] == 0x7D { return (found, i) }
-            guard b[i] == 0x2C else { return nil }
+            if b[i] == closeBrace { return (found, i) }
+            guard b[i] == comma else { return nil }
             i = skipSpace(b, i + 1)
         }
         return nil
@@ -155,7 +210,7 @@ public enum ClaudeTrust {
 
     static func skipSpace(_ b: [UInt8], _ start: Int) -> Int {
         var i = start
-        while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 }
+        while i < b.count, spaces.contains(b[i]) { i += 1 }
         return i
     }
 
@@ -163,8 +218,8 @@ public enum ClaudeTrust {
     static func stringEnd(_ b: [UInt8], _ start: Int) -> Int? {
         var i = start + 1
         while i < b.count {
-            if b[i] == 0x5C { i += 2; continue }
-            if b[i] == 0x22 { return i + 1 }
+            if b[i] == backslash { i += 2; continue }
+            if b[i] == quote { return i + 1 }
             i += 1
         }
         return nil
@@ -173,28 +228,23 @@ public enum ClaudeTrust {
     /// The index after the value that starts at `start`.
     static func valueEnd(_ b: [UInt8], _ start: Int) -> Int? {
         guard start < b.count else { return nil }
-        switch b[start] {
-        case 0x22:
-            return stringEnd(b, start)
-        case 0x7B, 0x5B:
+        if b[start] == quote { return stringEnd(b, start) }
+        if b[start] == openBrace || b[start] == openBracket {
             var depth = 0, i = start
             while i < b.count {
-                switch b[i] {
-                case 0x22: guard let end = stringEnd(b, i) else { return nil }; i = end; continue
-                case 0x7B, 0x5B: depth += 1
-                case 0x7D, 0x5D:
+                if b[i] == quote { guard let end = stringEnd(b, i) else { return nil }; i = end; continue }
+                if b[i] == openBrace || b[i] == openBracket { depth += 1 }
+                if b[i] == closeBrace || b[i] == closeBracket {
                     depth -= 1
                     if depth == 0 { return i + 1 }
-                default: break
                 }
                 i += 1
             }
             return nil
-        default:
-            var i = start
-            while i < b.count, ![0x2C, 0x7D, 0x5D, 0x20, 0x0A, 0x0D, 0x09].contains(b[i]) { i += 1 }
-            return i > start ? i : nil
         }
+        var i = start
+        while i < b.count, ![comma, closeBrace, closeBracket].contains(b[i]), !spaces.contains(b[i]) { i += 1 }
+        return i > start ? i : nil
     }
 
     /// A JSON string literal for the text. The slash is not escaped, as Claude Code writes paths.

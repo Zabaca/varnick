@@ -211,7 +211,7 @@ final class AutomationAccess {
                 "editable_by_sessions": AutomationTools.editRefusal(for: automation) == nil,
             ]
         }
-        let document: [String: Any] = ["time_zone": zone.identifier, "automations": rows]
+        let document: [String: Any] = ["time_zone": zone.identifier, "home_folder": HomeFolder.path, "automations": rows]
         let data = (try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         let intro = rows.isEmpty ? "This Mac has no automations." : "This Mac's \(rows.count) automation\(rows.count == 1 ? "" : "s"). A null folder is Home, Varnick's own folder for sessions that belong to no project."
         return intro + "\n" + String(decoding: data, as: UTF8.self)

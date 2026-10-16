@@ -518,7 +518,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Where the session would start.
-    var claudeFolder: String { claudeProject?.path ?? HomeFolder.made() }
+    var claudeFolder: String { claudeProject?.path ?? HomeFolder.madeAndTrusted() }
     /// The same for code that only reads it, which must not make Home.
     private var claudeFolderForDisplay: String { claudeProject?.path ?? HomeFolder.path }
 
@@ -1205,7 +1205,7 @@ final class LauncherModel: ObservableObject {
             return tab.focus(pane)
         }
         claudeError = nil
-        var record = Self.newRecord(prompt: "", directory: HomeFolder.made())
+        var record = Self.newRecord(prompt: "", directory: HomeFolder.madeAndTrusted())
         record.url = ""
         record.task = true
         addTab(PaneNode(session: makeSession(record, resuming: false, query: "")))
@@ -1964,7 +1964,7 @@ final class LauncherModel: ObservableObject {
     func newTerminalTab() {
         claudeError = nil
         let directory = showsTerminal ? activeSession?.record.directory : nil
-        var record = Self.newRecord(prompt: "", directory: directory ?? HomeFolder.made())
+        var record = Self.newRecord(prompt: "", directory: directory ?? HomeFolder.madeAndTrusted())
         record.shell = true
         addTab(PaneNode(session: makeSession(record, resuming: false, query: "")))
     }
@@ -3334,7 +3334,7 @@ final class LauncherModel: ObservableObject {
             origin = tab.sessions.first(where: \.runsInZmx)?.record.origin
             folder = folder ?? beside.record.directory
         }
-        let target = folder ?? HomeFolder.made()
+        let target = folder ?? HomeFolder.madeAndTrusted()
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(here)") }
         if start.isWebOrApp, let split { return hostSplitPage(start, id: id, folder: target, in: split, origin: origin, here: here) }
         var record = SessionRecord(id: id, prompt: start.isTerminal ? "" : start.prompt, title: "", directory: target, startedAt: Date(), lastUsed: Date())

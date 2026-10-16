@@ -444,10 +444,9 @@ never on your screen, needs no permission, and brings nothing to the front.
 
 ### Home is marked trusted in Claude Code
 
-When Varnick makes `Home` (`~/Library/Application Support/Varnick/Home`, where a session with no project starts), it sets that one folder's
-`hasTrustDialogAccepted` in Claude Code's own `~/.claude.json`, so Claude doesn't ask to trust a folder Varnick just made. It reads the
-file, changes that one value and leaves every other byte as it was; nothing else in it is looked at, and none of it is logged. It never does this for
-any other folder.
+When Varnick makes `Home` (`~/Library/Application Support/Varnick/Home`), it sets that one folder's trust in Claude Code's own
+`~/.claude.json`. It is the only thing Varnick writes there, it changes that one value and no other byte, and it never does this for
+any other folder. How is in `docs/agents/where-it-breaks.md`.
 
 ### Automations act while you are away
 

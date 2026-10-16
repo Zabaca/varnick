@@ -12,7 +12,7 @@ status: accepted
 - **What it holds:**
   - a name;
   - a prompt;
-  - a folder (a **Project**, or the **Default folder**);
+  - a folder (a **Project**, or **Home**; amended 2026-10-15, relayed by the coordinator: the Default folder setting is gone, and an automation with no folder runs in Home);
   - an optional **Agent**;
   - a host: this Mac, or a headless host from Settings › Peers;
   - a cadence;
@@ -362,7 +362,7 @@ The set is read at each start, as Screen and Panel access's are, so a pane gains
 | name | required, one line, cut to 80 characters |
 | prompt | required, given to Claude as written |
 | cadence | required: a kind (every N minutes, every N hours, daily, weekdays or weekly) with its numbers, as the presets have them. Anything else is refused, and the reply lists the presets |
-| folder | an existing folder on this Mac. Absent is the calling session's own folder: "this repo every morning" means the session's folder, and the Default folder is a Settings choice the session can't see. The editor already shows a folder that isn't a project |
+| folder | an existing folder on this Mac. Absent is the calling session's own folder: "this repo every morning" means the session's folder, and an automation with no folder runs in Home (amended 2026-10-15, relayed by the coordinator: the Default folder setting is gone). The editor already shows a folder that isn't a project |
 | agent | an agent of that folder; another is refused, and the reply lists them |
 | permissions | absent follows Varnick's setting; else Ask or Allowed tools only. Skip is refused, and so is any edit of an automation set to Skip |
 | allowed tools | a list of Claude Code rules, one line each. A session may set any rule, a broad one such as `Bash` included (the user's decision, 2026-10-15, relayed by the coordinator), so with Skip off a run can get more than a typed prompt gets; the mark names the rules |

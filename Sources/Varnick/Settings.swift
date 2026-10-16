@@ -417,8 +417,6 @@ final class Settings: ObservableObject {
     }
 
     private init() {
-        // The Default folder setting is gone: new sessions start in `HomeFolder`. A value an earlier build stored is dropped.
-        defaults.removeObject(forKey: "claudeDirectory")
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         panelAccess = defaults.bool(forKey: Self.panelAccessKey)
