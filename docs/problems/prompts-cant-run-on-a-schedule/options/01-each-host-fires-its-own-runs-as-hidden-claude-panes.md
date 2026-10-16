@@ -314,9 +314,312 @@ If the refusal brings up a dialog, Allowed tools only is left out and Ask and Sk
 - **The switch off:** nothing fires, and an unopened run tab shows in the strip as an ordinary tab.
 - **Keep sessions running off:** a due run is recorded "couldn't start", with the reason.
 
-### Slice 2: the headless host
+### Slice 2: the headless host, protocol 29
 
-Its file and the protocol 29 requests, the systemd timer and the relay's firing step, the label for the saving Mac, the Mac holding remote runs, the run flag in `tabs`, and the phone's Runs. ADR 0009 is amended then.
+Defined 2026-10-15 against main at 9e66872, after slices 1 and 3 and slice 1 of `work-cant-be-saved-or-chained` option 01 (ADR 0041). The user decided that this slice is built on that shape: an automation is a trigger (a cadence, a Task and its input) in `automations.json` at version 2, and its Runs, with their steps, are in a runs file of their own. Protocol 29 carries Tasks and Runs as they are now. Four questions are for the user, below.
+
+**Goal.** An automation can be kept on the headless host and fired there with every Mac asleep. Its run is a Claude pane in that host's zmx, labelled for the Mac that saved it. That Mac, while it runs, holds the run as an unseen tab and raises its notices; the phone gets the push when the user is away. Every Mac edits the host's list from Settings › Automations, the Runs tab lists the host's runs beside this Mac's, and a run nobody opened is hidden from every Mac's lists and listed under Runs on the phone.
+
+**In it:**
+1. **The host's two files** and the protocol 29 requests that read and change them.
+2. **The firing step:** `varnick-peer tick`, run once a minute by a systemd user timer that the installer puts in with a flag of its own.
+3. **The run on the host:** started as a `start` is, labelled for the Mac that saved the automation, with its permissions stored on the record.
+4. **The run mark in `tabs`,** on both kinds of host, so a run nobody opened is hidden on other Macs and listed under Runs on the phone.
+5. **The saving Mac's unseen view** of each run, adopted at its minute check.
+6. **Settings › Automations** with a section per headless host, and the Runs tab with the hosts' runs.
+7. **Documents:** ADR 0009 and ADR 0040 amended, `CONTEXT.md`, where-it-breaks, the guide and the privacy page.
+
+**Not in it:**
+- **The automation tools on the headless host** (question 2): they stay this Mac's.
+- **Any Task but Claude prompt there** (below).
+- **Search of a headless run's conversation:** no headless session is searched from a Mac (below).
+- **A notice that outlives a headless run's view,** and a notice for a run ended at its limit: both wait for the Run's own notice, which the engine slice of `work-cant-be-saved-or-chained` builds.
+- **The phone starting or editing automations,** and a Settings button that installs the timer.
+
+#### Settled
+
+**The host's files.**
+- **`automations.json` and `runs.json` in the relay's state folder,** in the same formats as a Mac's (`AutomationFile` at version 2, `TaskRunFile` at version 1, from the shared package).
+  - They are read under the shared state lock and written under the exclusive one, whole by rename, as `devices.json` is.
+  - Only the relay writes them: its timer's run and the protocol 29 requests.
+  - They follow the files' rules: unreadable or newer stops every check and every change there, is never written over, and Settings says so on that host's section.
+- **A third file, `tick.json`,** holds when the timer last ran. Its two uses:
+  - it gives a run's awake working time, as the Mac's minute check keeps it in memory (a gap over 150 s, a reboot or a stopped timer, adds nothing);
+  - it tells Settings whether the timer fires.
+- **Each automation there names the Mac that last saved it,** a new optional field, set by the host from the request's sender and never taken from the body. That Mac's id labels its runs, as the zone is the last saver's. Nil on a Mac.
+- **A run's session record** gains four optional fields, as a Mac's `SessionRecord` has them:
+  - the automation (for life);
+  - unopened (until opened);
+  - Allowed tools only;
+  - the allowed tools.
+
+  So a restart of the session passes them again. An older relay reads the record as an ordinary session.
+
+**What fires them: the option's timer holds, with one change.**
+- **A user `.timer`** (every minute, to the second, not persistent: the slot function catches up by itself) **starts a `oneshot` `.service`** that runs `varnick-peer tick`.
+- **The change: the service has `KillMode=process`, as the Phone page's unit does.** A run's zmx daemon is created by the relay that the service runs, so it lives in the service's cgroup. Any other mode would end every run when the tick exits. The page's unit has the same line for the sessions its relay starts.
+- **Every zmx command sets its socket folder itself,** so a tick's zmx and an ssh request's are the same zmx.
+- **Unverified, and checked first** (Checks, below):
+  - that the timer fires with linger on and nobody logged in;
+  - that a session a tick started outlives the tick and the ticks after it;
+  - what the journal says about the processes left behind at each start.
+
+  If a session dies with its tick, each run's start goes into a transient scope of its own (`systemd-run --user --scope`) instead.
+- **Installed by the installer with a flag of its own,** `--automations` and `--no-automations`, as `--problems` is.
+  - The far half writes both units, enables the timer and reports it.
+  - It warns when linger is off, as it does for the page.
+  - An Upgrade keeps what is there, and `--uninstall` removes both units.
+- **ADR 0009 is amended:** systemd's timer is resident beside the page's unit, and the relay starts sessions unasked, but only for an automation the user saved.
+
+**The tick,** one pass:
+1. Nothing saved: it exits at once.
+2. It reconciles the records with zmx, as every request does.
+3. Either file unreadable or newer: it logs one line and exits.
+4. **A run session no Run names becomes ordinary** (its unopened mark goes), as `releaseUnnamedRuns` does at a Mac's launch.
+5. **It tends each Run that is going**, with the Mac's rules:
+   - its state, detail, conversation and working time come from zmx and the pane's turn file;
+   - it counts as **opened** once its control label no longer names the Mac it was started for (a take over);
+   - a session that is gone ends the Run, done or couldn't start;
+   - an unopened one is **ended** past its working limit, after 24 hours of waiting, or 10 minutes after Done or a failed turn: its session is killed, its record marked ended and the Run dated.
+
+   One decision function in the shared package says which, so `make check-slots` covers it.
+6. **It judges the slots** with `AutomationSlot.check`, from the newer of the last slot and the newest Run's slot. It records missed slots, and a skipped one while a run is going.
+7. **It starts what is due**, by the claim below.
+8. **It writes the Runs, then the last slot, then `tick.json`.**
+
+- **The lock** is taken for each read and each write, never across a launch or a zmx wait.
+- **Two ticks never overlap:** systemd doesn't start a `oneshot` that is still running.
+- **The log** names the step and the kind of outcome, never a name, a prompt, a folder or a title.
+
+**Starting a run there, by the clock or by Run now.**
+- **One claim under the exclusive lock** (as `claimResume` decides a resume):
+  - if no Run of the automation is going, it records the Run as running, with its one Claude step;
+  - in the same write it saves the session record as starting, marked with the automation and unopened, its origin the saving Mac, its tab named after the automation.
+
+  So the timer and a Mac's Run now can't both start one, and a crash after the claim leaves a Run the anchor counts.
+- **Then `launch`, outside the lock,** as `start` does. Its control and origin are the saving Mac, its MCP config lists `notify` alone, as every pane there does, and these come from the record:
+  - Skip permissions;
+  - `--permission-mode dontAsk`;
+  - the allowed tools in `--settings`.
+- **A start that fails** makes the Run "couldn't start" with the reply's reason, and the record is marked ended.
+- **Refused before it starts, as on a Mac:**
+  - a folder that isn't one there (none means the host's default folder);
+  - an agent that folder doesn't have;
+  - a folder Claude Code hasn't trusted;
+  - an automation no Mac has saved.
+- **The pane's title in `tabs` is the automation's name,** so the Mac's notice and the phone's notification say "Morning summary".
+- **Kept out of the host's own lists until opened:**
+  - a record that ended unopened never reaches the host's Recent, as a Mac's run never reaches Recent;
+  - an unopened run's record is never started again by a Mac's restored pane (`start` with `resume`), so a run lost to a reboot stays ended.
+- **A conversation that was a run's, resumed through `resume`,** takes the run step's permissions, as `applyRunFields` does on a Mac.
+
+**Hiding a run tab from the phone and other Macs** (slice 1 left them showing):
+- **The mark.** A host's `tabs` lists a tab whose pane is an unopened run with a mark, the automation's id (optional). A Mac's listing marks its own run tabs the same way, from the saved records.
+- **The phone and the page server.** The page server still reads every tab, so it sees a run's turn and pushes its notices as now. Only the Home page splits them: marked tabs go under **Runs** on that host's Home, not under Tabs.
+- **Other Macs** drop marked tabs from what their lists read (the session list, the board's cards, the remembered tabs and the marks) while their own Automations switch is on, and keep them in a list of their own for their views and for adopting. With the switch off they show them as ordinary tabs, so nothing runs out of sight.
+- **The mark goes when the run is opened:** shown on the saving Mac (which tells the host), taken over anywhere, or released by Delete.
+
+**The saving Mac's view** (question 1, recommended):
+- **Adopted at the minute check.** Once a minute and after a wake, while Automations is on, each Mac asks each headless host on protocol 29 for its `tabs`. A marked tab whose control names this Mac, and that no tab here holds, opens here unseen:
+  - as a tab of that host's, not shown (`openHostTab`, which opens a paired machine's tab without showing it);
+  - its records marked with the automation and unopened, so the hidden-tab rule applies as it stands;
+  - its panes started at once, so each attaches as any session this Mac controls there does.
+- **From then on it is a Mac run tab,** and slice 1's rules hold:
+  - the notifier reads its turn through the host's status;
+  - the host's page server routes by this Mac's presence;
+  - a restart restores it hidden;
+  - its session ending on the host closes it without reaching Recent.
+- **A tab the host no longer marks** (taken over elsewhere, or released) becomes ordinary here, as a run taken over on a Mac does.
+- **Showing it, Automations going off, and Delete** all open it, and each sends the host `runOpened` for the tab.
+
+**Settings and the Runs tab.**
+- **A section per headless host,** below This Mac, read when Settings opens and after each change. Each row has:
+  - its switch, next run, last outcome, Run now, Edit and Delete, as this Mac's rows have;
+  - the host's file problem, or that its file is newer;
+  - whether its timer has run in the last three minutes ("Nothing fires on it until its timer is installed": the installer with `--automations`).
+- **The editor takes the host for a new automation:** This Mac, or a headless host on protocol 29. For a headless host:
+  - the folders are its `projects` and the agents its `agents`;
+  - "Varnick's setting" is that host's Skip permissions (question 3);
+  - the warning drops the macOS grants, which the host doesn't have.
+
+  An automation's host doesn't change once it is saved.
+- **Any listed Mac may edit a headless automation;** the last to save it labels its later runs.
+- **The Runs tab** lists the hosts' Runs beside this Mac's, newest first, "on <host>". Opening one:
+  - **Going:** its unseen view shows, or, on another Mac, the host's tab opens on its card (Controlled on that Mac, Take over).
+  - **Ended:** its conversation is resumed on the host (`resume`).
+
+**The protocol 29 requests,** answered by a headless host to a listed Mac only, never to a device or the host's own page server. A Mac's relay hands them to its app, which says they aren't its to answer.
+
+| Request | Carries | Answers |
+|---|---|---|
+| `automations` | nothing | the host's automations and Runs |
+| `saveAutomation` | a whole automation (any Task and input) | the list after it, or every problem |
+| `deleteAutomation` | the automation's id | the list after it |
+| `runAutomation` (Run now) | the automation's id | the list after it, and the tab of the run |
+| `runOpened` | a tab's id | nothing |
+
+- **The `automations` reply** is one value. It holds:
+  - the automations file's version and the runs file's;
+  - the automations and their Runs, as the files hold them;
+  - either file's problem;
+  - how long ago the timer last ran;
+  - the host's Skip permissions.
+
+  Its reader applies the files' rule over the wire: a version newer than this build's is read as "newer" with no list, never as a reply that fails to decode. A Mac saves to a host only when the host's automations file is at this build's version.
+- **A save is checked on the host,** which alone can see its folders and agents. Every problem is named, and nothing is saved.
+  - **A new automation:** its slots start from now, and its sender is its saver.
+  - **An edit:** the editor's fields go onto the host's copy, as the editor's Save does on a Mac. The last slot is kept unless the cadence or the zone changed or it was switched on, and the saver becomes the sender.
+  - One function in the shared package does it, so `make check-slots` covers it.
+- **The `tabs` change:** an optional run mark on a tab, read by the Macs and the phone (above).
+- **Delete** turns its unopened run sessions into ordinary tabs and drops its Runs, in one write of both files.
+
+**Room for the engine's Runs on protocol 29, without another bump:**
+- **Runs travel whole:** the Run with its steps, input and typed result, as the runs file holds it, inside a value that carries the file's version.
+  - The engine's additions that are optional fields, as every saved field must be, need nothing.
+  - Any other change is a version of the runs file, which the other side reads as newer.
+- **The mark is on the tab, not on a pane,** so a Run of several panes is one mark. Its automation is optional, so a Run started by hand or by a session is a mark with none.
+- **`runOpened` names a tab, never a pane,** so it opens every pane of a Run at once.
+- **A save carries any Task's name and input,** and the host checks the Task by name, so a new Task is a refusal or an acceptance there, not a new shape.
+
+**"On this site" can't run on the headless host.** Its browser is the Website pane, which only a Mac's Varnick has.
+- The host refuses a save naming any Task but Claude prompt: "On this site needs a Mac: its browser runs only in Varnick on a Mac", and for any other Task that this host runs Claude prompt only.
+- The editor has no Task picker yet. The engine's own slice for the headless host keeps to Claude, Notify and Task steps there.
+
+**What every Mac and the headless host must update together.**
+- **Protocol 29 is one commit for all of them.** A 28 and a 29 build exchange only hello, Upgrade and Restart. So the steps are:
+  - every Mac restarts on the build (Upgrade all);
+  - the headless host is reinstalled from the same commit (its row's Upgrade);
+  - each Phone page, whose server holds the protocol's number, comes with its host's install or launch snapshot.
+- **Once, by hand:** the installer with `--automations` puts the timer on the host. Later Upgrades keep it.
+- **No file version changes.** `automations.json` stays at 2, `runs.json` at 1, and `sessions.json` and the host's records only gain optional fields.
+
+**Session search, and why it is untouched.**
+- **A run on a Mac** is a transcript in this Mac's Claude Code projects, read like any other. While unopened, search lists its conversation with no tab, and ↩ resumes it with `notify` alone. Never checked, so it is in the hand test.
+- **A headless run is not searched,** and neither is any headless session: a headless host answers `rows` with nothing. That stays so here.
+
+#### Checks
+
+**First, the throwaway check on the headless host**, by the user or, with their go-ahead, the builder (never the real install root or `/tmp/zmx-<uid>`):
+1. Make a throwaway user timer and `oneshot` service with `KillMode=process`, every minute. Its script, in a throwaway folder:
+   - appends the time and the account's login sessions to a file;
+   - on its first run, makes a zmx session with the relay's own zmx, a short throwaway absolute `ZMX_DIR` and a pty, as Varnick does, running a long `sleep`, and detaches.
+2. With linger on, end every login (or reboot), wait five minutes or more, then log in and read:
+   - is there a line each minute with no login?
+   - is the session still running after its tick and the next ones?
+   - what does the service's journal say at each start?
+3. While logged in there, run `make check-slots`' binary from the installed source once, so the zone and daylight-saving cases are known to hold in Linux's Foundation.
+4. Remove the units, the session and the folder.
+
+The answers go in where-it-breaks, Peers. Host names and figures stay in this problem's scratch folder.
+
+**Then the build's own checks:**
+- **`make check-slots`** gains cases for:
+  - the `automations` value: same versions, and a newer automations or runs version read as newer with empty lists;
+  - the save: a new automation, an edit keeping the last slot, a changed cadence, zone or switch resetting it, the saver;
+  - the save's problems, other Tasks refused by name included;
+  - the tend decision: the working limit across ticks and a gap, the 24 hours, the 10 minutes, opened by a take over, a session gone;
+  - the run mark round trip.
+- **The relay builds** for macOS from the package (inferred to build there). The host's Upgrade is its Linux build, judged by the installer's markers.
+- **`bun test`** in the Phone page: the Runs split of Home, and the protocol number.
+- **`make build`.**
+
+**By hand,** after the user restarts every Mac on the build, upgrades the headless host and installs its timer, with Automations on:
+1. **Settings:** the host's section shows, with its timer running.
+2. **Headless, Mac awake:** an automation on the host ("say hello, then notify me with the time", every 15 minutes, in one of its projects), then Run now.
+   - Nothing opens here.
+   - The Message notice comes on this Mac named after the automation, and no push.
+   - The Runs tab lists it on the host, and opening it shows it live.
+3. **Headless, Mac asleep:** the next slot pushes to the phone, and the tap lands on the run's pane.
+4. **Headless, every Mac asleep:** a slot fires on time (the Runs tab shows it on time once a Mac wakes).
+5. **Hidden:** while it is unopened:
+   - another Mac's session list and board don't show it;
+   - the phone lists it under Runs, not Tabs;
+   - another Mac with Automations off shows it as an ordinary tab.
+6. **Ending:** 10 minutes after Done its session is gone on the host and this Mac's view with it, and opening it from the Runs tab resumes it on the host.
+7. **Working limit:** a few minutes on a long prompt stops it, marked in the Runs tab.
+8. **Overlap:** a prompt that asks a question waits with Needs you, and the next slot is skipped.
+9. **Take over from the phone:** the run is an ordinary tab everywhere, and the tick never ends it.
+10. **A second Mac edits it:** its next run is labelled for that Mac, which holds the view.
+11. **Delete with a run going:** the run becomes an ordinary tab on the host.
+12. **Reboot the host with a run going:**
+    - the run reads ended, and nothing starts it again;
+    - a slot that passed during the reboot runs once at the timer's next run, if under 12 hours old.
+13. **Automations off on this Mac:** its views become ordinary tabs, and the host fires on (question 4).
+14. **Three runs going at once:** each view attaches.
+15. **Search,** on this Mac: a local run's prompt word finds its conversation, and ↩ resumes it with `/mcp` listing `notify` alone.
+
+#### Where it touches, by symbol
+
+- **The shared package:**
+  - `PeerProtocol.version`, `PeerOp`, `PeerRequest` and `PeerReply`;
+  - `PeerTab` (the mark);
+  - `Automation` (the saver);
+  - a new file for the `automations` value, the save, its problems and the tend decision;
+  - the slot-check target.
+- **The relay:**
+  - a new file for the two files under the lock, the claim, the tick and the five answers (sibling: the devices file under the lock);
+  - `HeadlessPeerHost.forward`, `tabs`, `pane`, `recent` and `resumeConversation`;
+  - `HeadlessSession`;
+  - `launch` (dontAsk and the allowed tools);
+  - `HeadlessLifecycle.resumeDecision`;
+  - the entry point's `tick`;
+  - `PeerRelay.run`'s Macs-only list and its forwarded requests.
+- **The app:**
+  - `PeerManager` (the five requests) and `PeerManager.handle`;
+  - a new file for the hosts' automations, the adoption and the remote half of opening;
+  - one-line hooks in `AutomationRunner.start`, `runOpened`, `releaseHiddenRuns` and `openRun`;
+  - `updatePeerTabs` (marked tabs out of `peerTabs`);
+  - `PeerOpenTabs.list` (this Mac's mark);
+  - `AutomationsSettingsView` and its editor;
+  - `RunsBoard.refresh`;
+  - the Automations switch's detail.
+- **The Phone page:** its protocol number, `shapeHome`, the Home view and its tests.
+- **The installer's two halves:** the flag, the units, the markers and the `supports:` word.
+
+#### Open questions for slice 2, recommendation first
+
+1. **Does the saving Mac attach to a headless run?** (Open question 1 below.)
+   - **Recommended: yes.** It holds the unseen view above, attached like any session it controls on the host. That needs no change to the page server's routing or to the notices, since every Mac-controlled session there already works this way.
+   - The cost is one ssh channel per unopened run going, on the connection the panes share. OpenSSH's default is ten sessions a connection; ADR 0008's spike ran 14 on Tailscale SSH.
+   - **The other way:** follow only. The page server would route a run by the saving Mac's presence with no client attached, and the Mac would raise a notice for a pane it doesn't hold. That is a change to the push rule and a notice with no pane.
+2. **The automation tools.**
+   - **Recommended:** Settings only in this slice, with the four tools still this Mac's, and a `host` argument in a later slice on these same requests, with no bump.
+     - The engine slice adds `task` and `input` to the same tools and files.
+     - A host's folders and agents can only be checked there.
+     - The tools' answer would have to wait on ssh.
+   - **The other way:** the tools take a host now.
+3. **What "Varnick's setting" means for a run on the headless host.**
+   - **Recommended:** that host's own Skip permissions (its config, off unless set), read at each run's start and stored on the run, and shown in the editor. A session nobody asked for there follows that setting already.
+   - **The other way:** the saving Mac's Skip permissions at its save, stored on the automation as if overridden.
+4. **The Automations switch and the headless host.**
+   - **Recommended:** the switch is each Mac's own. A headless host fires its automations on its timer whatever any Mac's switch says; an automation's own switch, from any Mac, or removing the timer stops it. Turning a Mac's switch off opens that Mac's views of the host's runs, and the switch's detail says the host's automations go on.
+   - **The other way:** turning the saving Mac's switch off also switches off the automations it saved on the host, losing their own on and off.
+
+#### Verified and inferred, for slice 2
+
+- **Verified at 9e66872:**
+  - the automation record as a trigger and the Run with its steps, in the shared package with their files' rules;
+  - the Run's trigger naming an automation as a required field;
+  - the relay's `launch` passing no Allowed tools only or allowed tools;
+  - the Macs-only list of the relay;
+  - a headless host's `rows` answering nothing;
+  - every zmx command setting its socket folder;
+  - the page's unit having `KillMode=process` for the sessions its relay starts, and the installer's linger marker;
+  - opening a paired machine's tab without showing it;
+  - a host pane on a card attaching when its label names this Mac, after waiting at most a second for its view;
+  - the push for a Mac with no client;
+  - the phone's notification titled by the pane;
+  - the sessions-exited shortcut for any hidden run tab, a host's included, and `runClosed` passing over a Run it doesn't hold;
+  - one place taking in a peer's `tabs` for the lists, the open sessions and the views;
+  - the editor's Save merge being in the view;
+  - the wire's dates written as Swift's default.
+- **Inferred, unverified:**
+  - the timer with linger and no login;
+  - a `oneshot` with `KillMode=process` leaving its runs alone;
+  - Linux's Foundation keeping zones and daylight saving as `make check-slots` does;
+  - an unseen host pane started at once attaching at a default size;
+  - the relay building on macOS;
+  - a phone tap on a run's push finding a tab listed under Runs.
 
 ### Slice 3: sessions make, edit and switch automations (this Mac only)
 
@@ -458,5 +761,5 @@ It never calls a tool the set lists. With Varnick running on the user's Mac, tha
 
 ### Open questions, recommendation first
 
-1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** For slice 2. Recommendation: attach. It is how every Mac-controlled session there already works, and it needs no change to the routing.
+1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** For slice 2, whose question 1 it now is, with what attaching costs. Recommendation: attach. It is how every Mac-controlled session there already works, and it needs no change to the routing.
 2. **Should a run ended at its working limit raise a notice?** The pane is gone, so it needs one of two things: a notice the notifier keeps for a run rather than a pane, or a way to end the turn and leave the pane. Recommendation: decide after slice 1's hand test shows how often limits are hit. Until then it is marked in the run list only.
