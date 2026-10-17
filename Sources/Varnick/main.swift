@@ -225,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = Self.editMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = FoldMark.menuBarImage(listening: false)
+        statusItem.button?.image = FoldMark.menuBarImage(.off)
         // A bare executable has no bundle icon; AppKit shows this wherever it shows the app's icon.
         NSApp.applicationIconImage = FoldMark.appIcon()
         let menu = NSMenu()
@@ -478,10 +478,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         show()
     }
 
-    /// The icon shows at a glance that Varnick is listening; the menu item says what a click
+    /// The one place the menu bar icon is drawn from, with its description and tooltip.
+    private func showIcon(listening: Bool) {
+        let look: FoldMark.MenuLook = listening ? .listening : .off
+        statusItem.button?.image = FoldMark.menuBarImage(look)
+        statusItem.button?.toolTip = look == .off ? nil : look.description
+    }
+
+    /// The icon shows at a glance whether Varnick is off or listening; the menu item says what a click
     /// does, or why listening isn't running.
     private func showListening(_ state: Listener.State) {
-        statusItem.button?.image = FoldMark.menuBarImage(listening: state.isListening)
+        showIcon(listening: state.isListening)
         let available: Bool
         if case .unavailable = state { available = false } else { available = true }
         let keySuffix = available ? Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? "" : ""

@@ -285,7 +285,7 @@ final class SessionNotifier: ObservableObject {
 }
 
 /// The dot on the menu bar icon while any notice stands: orange if one is Needs you or an error, else the system's blue. An overlay on the
-/// status button, so the icon keeps its two images (search, and Listening's waveform).
+/// status button, so the icon keeps its own images (off, listening and voice mode: `FoldMark.MenuLook`).
 final class NoticeDot: NSView {
     var urgent = false {
         didSet { if urgent != oldValue { needsDisplay = true } }
