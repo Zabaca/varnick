@@ -41,11 +41,11 @@ export function closeAction(code) {
 export const keys = {
   esc: "\x1b",
   tab: "\t",
-  backtab: "\x1b[Z",
   up: "\x1b[A",
   down: "\x1b[B",
   left: "\x1b[D",
   right: "\x1b[C",
+  enter: "\r",
 };
 
 /** What the sticky Ctrl makes of one typed character: its control code, or null when it makes nothing (it then stays on). */
