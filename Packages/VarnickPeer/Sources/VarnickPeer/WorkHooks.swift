@@ -7,7 +7,7 @@ import Foundation
 /// A hook finds the pane folder from `VARNICK_SESSION_FILE`, as the turn hooks do. A JSON key is matched only after `{` or `,` with its
 /// quote raw, so text inside a string being written (whose quotes are escaped) can't pass for a key. A subagent's call has `agent_id`;
 /// it names a file only if it is letters, digits, dashes and underscores.
-enum WorkHooks {
+public enum WorkHooks {
     /// Before Write, Edit, MultiEdit and NotebookEdit: a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing
     /// problem, links whoever writes it to that problem. It never replaces an option record of its own, nor one it inherits for the same
     /// problem. Always exits 0, prints nothing.
@@ -56,7 +56,7 @@ enum WorkHooks {
     /// pane's markers out. The last accepted marker wins.
     static let markMatcher = "Bash"
 
-    static var mark: String {
+    public static var mark: String {
         quiet(entry + #"""
         case "$inp" in *"VARNICK-WORK|${d##*/}|"*) ;; *) exit 0;; esac
         """# + "\n" + helpers + #"""

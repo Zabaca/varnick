@@ -2,9 +2,13 @@
 # /work: checks its arguments against the repository's problem files and prints the marker line that Varnick's hook after Bash turns
 # into the caller's work record (ADR 0020). It writes no record itself: only the hook input carries a subagent's id. For an option on a
 # branch other than main it also ties the branch in git config (docs/agents/issue-tracker.md).
+#
+# The hook runs after this command has ended, so the command cannot see its own result. It takes two: the first prints the marker and, as
+# its last line, the second, `work.sh confirm <nonce> <kind> [<value>]`, which says whether a hook took the marker. The hook deletes the
+# marker's file (`.work-mark.<nonce>`) when it takes the marker, so a file still there means no hook did.
 
 usage() {
-  echo "usage: work.sh problem <slug> | option <slug>/<NN> | none | (nothing: show the records)" >&2
+  echo "usage: work.sh problem <slug> | option <slug>/<NN> | none | confirm <nonce> <kind> [<value>] | (nothing: show the records)" >&2
   exit 1
 }
 
@@ -23,6 +27,46 @@ fi
 
 kind=$1
 value=$2
+
+if [ "$kind" = confirm ]; then
+  nonce=$2 ckind=$3 cvalue=$4
+  case "$nonce" in ""|*[!0-9a-f]*) usage ;; esac
+  case "$ckind" in problem|option) [ -n "$cvalue" ] || usage ;; none) cvalue= ;; *) usage ;; esac
+  [ -d "$folder" ] || { echo "Not in a Varnick pane: there is no record to confirm." >&2; exit 1; }
+  tied=
+  if [ "$ckind" = option ]; then
+    branch=$(git symbolic-ref --short -q HEAD 2>/dev/null)
+    case "$branch" in
+      ""|main|master) ;;
+      *) if [ "$(git config "branch.$branch.varnick-option" 2>/dev/null)" = "$cvalue" ]; then
+           tied=" The branch $branch is tied to the option anyway, which keeps the option in Building."
+         else
+           tied=" The branch tie failed."
+         fi ;;
+    esac
+  fi
+  if [ -f "$folder/.work-mark.$nonce" ]; then
+    rm -f "$folder/.work-mark.$nonce"
+    echo "Not linked: no hook took the marker, so nothing was recorded. This session's claude was started without Varnick's work hooks: before they existed, with Settings > Experimental > Problems board off, or by a build whose marker differs. Restart the session to get them.$tied" >&2
+    exit 1
+  fi
+  # The hook took the marker, so a record or a log line must name the link.
+  named=
+  for f in "$folder"/work "$folder"/work.*; do
+    [ -f "$f" ] && [ "$(head -n 1 "$f")" = "${ckind}${cvalue:+ $cvalue}" ] && named=1
+  done
+  if [ -z "$named" ] && [ -f "$folder/work-log" ]; then
+    tail -n 50 "$folder/work-log" | awk -F'\t' -v k="$ckind" -v v="${cvalue:--}" '$4 == k && $5 == v { found = 1 } END { exit !found }' && named=1
+  fi
+  [ -n "$named" ] || { echo "Not linked: the marker was taken, but no record or log line names the link. Run /work again.$tied" >&2; exit 1; }
+  case "$ckind" in
+    none) echo "Work link cleared." ;;
+    problem) echo "Linked to problem $cvalue." ;;
+    option) echo "Linked to option $cvalue.$tied" ;;
+  esac
+  exit 0
+fi
+
 case "$kind" in
   none) value= ;;
   problem|option) [ -n "$value" ] || usage ;;
@@ -69,19 +113,22 @@ if [ "$kind" = option ]; then
 fi
 
 if [ ! -d "$folder" ]; then
-  echo "Not in a Varnick pane, so no record is written.${tied:+ ($tied)}"
-  exit 0
+  echo "Not in a Varnick pane, so no record is written.${tied:+ ($tied)}" >&2
+  exit 1
 fi
 
-case "$kind" in
-  none) echo "Work link cleared." ;;
-  problem) echo "Linked to problem $slug." ;;
-  option) echo "Linked to option $value ($tied)." ;;
-esac
-echo "Varnick writes the record after this command; a session started before the hooks existed records nothing until restarted."
 # The marker carries the pane id and a one-shot nonce: the hook accepts it once, by deleting the nonce's file, so a marker printed again
 # (a transcript read back, a log) links nothing, and another pane's marker is ignored.
 find "$folder" -maxdepth 1 -name '.work-mark.*' -mmin +60 -exec rm -f {} + 2>/dev/null
 nonce=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 : > "$folder/.work-mark.$nonce" || { echo "Could not write to the pane folder." >&2; exit 1; }
+self="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+case "$kind" in
+  none) what="clearing the work link" ;;
+  problem) what="the link to problem $slug" ;;
+  option) what="the link to option $value ($tied)" ;;
+esac
+# Nothing is claimed here: the last line, run next, finds out whether Varnick's hook recorded the link.
+echo "Asking Varnick to record $what. It is not linked until the next command says so."
 printf 'VARNICK-WORK|%s|%s|%s|%s|%s|\n' "${folder##*/}" "$nonce" "$kind" "$value" "${repo:-/}"
+printf "sh '%s' confirm %s %s%s\n" "$self" "$nonce" "$kind" "${value:+ $value}"
