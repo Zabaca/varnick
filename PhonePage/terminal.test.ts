@@ -6,7 +6,7 @@ import { buildRequest, relayEnvironment } from "./relay";
 import {
   attachEnvironment, clampGrid, closeCode, decideExit, decideOpen, recheckControl, takenReason, endText, firstOutput, fitReason, isSessionName, parseClient, parseOpen, refusal,
 } from "./terminal";
-import { closeAction, ctrlCode, dragLines, keys, livedLongEnough, reconnectDelay, takenController } from "./page/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, layoutChanged, layoutSettleMs, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "./page/rules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
@@ -270,6 +270,52 @@ describe("the page's rules", () => {
     // Before the terminal is measured there is no row height: nothing scrolls, and nothing is carried.
     expect(dragLines(40, 0)).toEqual({ lines: 0, rest: 0 });
     expect(dragLines(40, NaN)).toEqual({ lines: 0, rest: 0 });
+  });
+
+  test("the grid a refit asks for", () => {
+    const current = { cols: 80, rows: 30 };
+    expect(gridFor({ cols: 100, rows: 40 }, current, false)).toEqual({ cols: 100, rows: 40 });
+    // A box that measures zero (hidden, or mid-rotation) proposes nothing, or NaN: the grid is left alone.
+    expect(gridFor(undefined, current, false)).toBeNull();
+    expect(gridFor({ cols: 0, rows: 0 }, current, false)).toBeNull();
+    expect(gridFor({ cols: NaN, rows: 10 }, current, false)).toBeNull();
+    // The keyboard never takes rows away, but a taller box still gives them.
+    expect(gridFor({ cols: 80, rows: 12 }, current, true)).toEqual({ cols: 80, rows: 30 });
+    expect(gridFor({ cols: 60, rows: 12 }, current, true)).toEqual({ cols: 60, rows: 30 });
+    expect(gridFor({ cols: 80, rows: 12 }, current, false)).toEqual({ cols: 80, rows: 12 });
+    expect(gridFor({ cols: 80, rows: 40 }, current, true)).toEqual({ cols: 80, rows: 40 });
+  });
+
+  test("a socket is replaced on return only when it can't be trusted", () => {
+    const CONNECTING = 0, OPEN = 1, CLOSING = 2, CLOSED = 3;
+    expect(reattachOnReturn(null)).toBe(false);
+    expect(reattachOnReturn(undefined)).toBe(false);
+    // An open socket is kept however long the page was away: attaching again clears the scrollback.
+    expect(reattachOnReturn(OPEN)).toBe(false);
+    expect(reattachOnReturn(CONNECTING)).toBe(false);
+    expect(reattachOnReturn(CLOSING)).toBe(true);
+    expect(reattachOnReturn(CLOSED)).toBe(true);
+  });
+
+  test("only a change of width counts as a layout change", () => {
+    const portrait = { window: 412, box: 408 };
+    expect(layoutChanged(portrait, { window: 915, box: 911 })).toBe(true);
+    expect(layoutChanged(portrait, { window: 412, box: 300 })).toBe(true);
+    expect(layoutChanged(portrait, { window: 300, box: 408 })).toBe(true);
+    // The keyboard changes the height alone, and the widths stay: no rebuild.
+    expect(layoutChanged(portrait, { ...portrait })).toBe(false);
+    // A box that measures zero (hidden) or a measurement not taken says nothing.
+    expect(layoutChanged(portrait, { window: 412, box: 0 })).toBe(false);
+    expect(layoutChanged({ window: 412, box: 0 }, { window: 412, box: 408 })).toBe(false);
+    expect(layoutChanged(null, portrait)).toBe(false);
+    expect(layoutChanged(portrait, null)).toBe(false);
+    expect(layoutSettleMs).toBe(400);
+  });
+
+  test("the screen is repainted as the layout settles, soonest first", () => {
+    expect(redrawDelays[0]).toBe(0);
+    expect([...redrawDelays].sort((a, b) => a - b)).toEqual(redrawDelays);
+    expect(redrawDelays.length).toBeGreaterThan(1);
   });
 
   test("the key bar's keys", () => {

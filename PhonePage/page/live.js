@@ -89,6 +89,11 @@ export function createLive({ host, sizer, mount }) {
       if (last.cols > 0) place();
       else draw();
     },
+    /** After a return to the page or a change of layout: the last frame again from scratch, which also works out the scale from the box as it measures now. */
+    redraw() {
+      if (disposed || !last) return;
+      draw();
+    },
     dispose() {
       disposed = true;
       term.dispose();

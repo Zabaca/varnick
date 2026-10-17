@@ -63,3 +63,44 @@ export function dragLines(pixels, rowHeight) {
   const lines = Math.trunc(pixels / rowHeight);
   return { lines, rest: pixels - lines * rowHeight };
 }
+
+/**
+ * Milliseconds after a layout event (a resize, a rotation, a fold, coming back to the page) when the screen is fitted and drawn again.
+ * Android finishes such a change over several frames, and a box measured in the middle of one is stale or zero, so a single pass can end
+ * at the wrong size; the later passes catch the settled one. The first is on the next task, after the page's own height is set.
+ */
+export const redrawDelays = [0, 150, 600];
+
+/** Milliseconds of quiet after the last layout event before the screen is rebuilt: a rotation or fold sends several, and one rebuild follows them all. */
+export const layoutSettleMs = 400;
+
+/**
+ * Whether the layout changed in width between two measurements, `{window, box}` (the window's inner width and the screen's own box
+ * width; null when none was taken). Height is left out on purpose: the keyboard opening and closing changes only the height, and must
+ * never rebuild the screen. A width of zero (a hidden box) says nothing.
+ */
+export function layoutChanged(before, after) {
+  if (!before || !after) return false;
+  const differs = (a, b) => a > 0 && b > 0 && a !== b;
+  return differs(before.window, after.window) || differs(before.box, after.box);
+}
+
+/**
+ * The grid the terminal should have: `size` is what the fit addon proposed (undefined while the box measures zero), `current` the
+ * terminal's own grid. Null leaves it alone. With the keyboard up the grid never loses rows (it keeps its height and shows its bottom
+ * rows), but may gain them.
+ */
+export function gridFor(size, current, keyboardUp) {
+  if (!size || !(size.cols > 0) || !(size.rows > 0)) return null;
+  const rows = keyboardUp && size.rows < current.rows ? current.rows : size.rows;
+  return { cols: size.cols, rows };
+}
+
+/**
+ * Whether the terminal's socket is replaced when the page is shown again (the host then sends the whole screen): only when it is closing
+ * or closed without the page having heard (a frozen page, or one restored from the back/forward cache). An open socket is kept, since
+ * attaching again clears the scrollback. `readyState` is WebSocket's (0 connecting, 1 open, 2 closing, 3 closed); null is no socket.
+ */
+export function reattachOnReturn(readyState) {
+  return typeof readyState === "number" && readyState >= 2;
+}

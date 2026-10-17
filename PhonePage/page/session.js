@@ -10,7 +10,7 @@ import { Terminal } from "/vendor/xterm.mjs";
 import { FitAddon } from "/vendor/addon-fit.mjs";
 import { createLive } from "/live.js";
 import { parseFrame } from "/liverules.js";
-import { closeAction, ctrlCode, dragLines, keys, livedLongEnough, reconnectDelay, takenController } from "/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, layoutChanged, layoutSettleMs, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "/rules.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,7 +38,15 @@ function showView(s, view) {
   $("live").hidden = view !== "other";
   $("terminal-view").hidden = view !== "terminal";
   $("end").hidden = view !== "terminal";
+  $("redraw").hidden = view !== "terminal" && view !== "other";
   if (view !== "other") stopLive(s);
+  s.layout = measureLayout(view);
+}
+
+/** The widths `layoutChanged` compares: the window's and the shown screen's box. Null over any other view. */
+function measureLayout(view) {
+  const box = view === "terminal" ? $("term") : view === "other" ? $("live") : null;
+  return box ? { window: innerWidth, box: box.clientWidth } : null;
 }
 
 function showCard(s, view, text, { take = false, retry = false } = {}) {
@@ -249,11 +257,11 @@ async function settle(s, refusal) {
   scheduleReconnect(s);
 }
 
-function ensureTerminal(s) {
+function ensureTerminal(s, grid = {}) {
   showView(s, "terminal");
   if (s.term) return;
   const term = new Terminal({
-    fontSize: 13, cursorBlink: true, scrollback: 2000, theme: { background: "#111" },
+    ...grid, fontSize: 13, cursorBlink: true, scrollback: 2000, theme: { background: "#111" },
     // A link a program printed (OSC 8) opens only as http(s): never a javascript:, data: or file: address.
     linkHandler: {
       allowNonHttpProtocols: false,
@@ -273,7 +281,11 @@ function ensureTerminal(s) {
   term.onData((data) => input(s, data));
   term.onBinary((data) => send(s, { t: "bin", d: data }));
   term.onResize(({ cols, rows }) => send(s, { t: "resize", cols, rows }));
-  s.observer = new ResizeObserver(() => refit(s));
+  // A refit that ends at the same grid still repaints: the renderer is not told when only the box changed.
+  s.observer = new ResizeObserver(() => {
+    if (!refit(s)) repaintRows(s);
+    layoutEvent(s);
+  });
   s.observer.observe($("term"));
 }
 
@@ -296,12 +308,102 @@ const keyboardUp = () => {
  * session redraw at the new height while xterm.js moved lines in and out of its scrollback, and the two disagreed.
  */
 function refit(s) {
+  if (!s.term) return false;
   const size = s.fit.proposeDimensions();
-  if (!size || !(size.cols > 0) || !(size.rows > 0)) return;
   // Asked first, every time, so it has seen the page's full height before the keyboard ever comes up.
-  const keyboard = keyboardUp();
-  const rows = size.rows < s.term.rows && keyboard ? s.term.rows : size.rows;
-  if (size.cols !== s.term.cols || rows !== s.term.rows) s.term.resize(size.cols, rows);
+  const grid = gridFor(size, s.term, keyboardUp());
+  if (!grid || (grid.cols === s.term.cols && grid.rows === s.term.rows)) return false;
+  s.term.resize(grid.cols, grid.rows);
+  return true;
+}
+
+function repaintRows(s) {
+  if (s.term) s.term.refresh(0, s.term.rows - 1);
+}
+
+/**
+ * The screen fitted to its box as it measures now and drawn again, whichever view is up. Called after anything that can have changed the
+ * box or left the renderer behind (`scheduleRepaint`), never from a loop.
+ */
+function repaint(s) {
+  if (s.closed || !visible()) return;
+  if (s.view === "terminal" && s.term) {
+    refit(s);
+    repaintRows(s);
+  } else if (s.view === "other") {
+    s.lv.view?.redraw();
+  }
+}
+
+/**
+ * Repaints now and again as the layout settles (`redrawDelays`): a rotation, a split-screen or fold change and a return to the page
+ * each take several frames on Android, and the box measures zero or stale in the middle of one. A new call replaces the earlier passes.
+ */
+function scheduleRepaint(s) {
+  for (const id of s.repaints) clearTimeout(id);
+  s.repaints = redrawDelays.map((delay) => setTimeout(() => repaint(s), delay));
+}
+
+/**
+ * A layout event: the window or the screen's box resized, or the phone rotated. After `layoutSettleMs` of quiet the width is compared with
+ * the last one taken, and a change in it (or a rotation) rebuilds the screen as the Redraw button does; a height-only change, which is the
+ * keyboard, does not. Every source shares the one timer, so events in a row give one rebuild.
+ */
+function layoutEvent(s, rotated = false) {
+  if (rotated) s.rotated = true;
+  clearTimeout(s.layoutTimer);
+  s.layoutTimer = setTimeout(() => settleLayout(s), layoutSettleMs);
+}
+
+function settleLayout(s) {
+  s.layoutTimer = null;
+  // Hidden: the widths are compared when the page is shown again (`comeBack`), with the baseline untouched.
+  if (s.closed || !visible()) return;
+  const rotated = s.rotated;
+  s.rotated = false;
+  if (!rotated && !layoutChanged(s.layout, measureLayout(s.view))) return;
+  for (const id of s.repaints) clearTimeout(id);
+  redrawNow(s);
+}
+
+/**
+ * The Redraw button, the strongest local recovery: the renderer is thrown away and made again, fitted, and the host sends the screen
+ * again (the terminal attaches afresh, the live screen's channel opens afresh). Nothing is typed and nothing about control changes.
+ * A change of width runs it by itself (`layoutEvent`).
+ */
+function redrawNow(s) {
+  if (s.closed) return;
+  if (s.view === "terminal") {
+    // The new terminal keeps the old one's grid and focus, so the keyboard stays up and nothing resizes before the host's screen arrives.
+    const { cols, rows } = s.term;
+    const focused = s.term.textarea === document.activeElement;
+    s.observer?.disconnect();
+    s.term.dispose();
+    $("term").replaceChildren();
+    s.term = null;
+    s.fit = null;
+    ensureTerminal(s, { cols, rows });
+    refit(s);
+    if (focused) s.term.focus();
+    reattach(s);
+  } else if (s.view === "other") {
+    stopLive(s);
+    startWatch(s);
+    liveSub(s);
+    // The new channel starts without the "too large" notice, which its first frame sets again if it still holds.
+    showNotice(s);
+  }
+}
+
+/** Drops the terminal's socket and attaches again, asking the status first as any reconnect does: the host sends the whole screen. */
+function reattach(s) {
+  clearTimeout(s.timer);
+  s.timer = null;
+  const ws = s.ws;
+  s.ws = null;
+  if (ws) try { ws.close(1000); } catch { /* closed already */ }
+  s.tries = 0;
+  if (s.view !== "gone") connect(s, false);
 }
 
 function openSocket(s, take) {
@@ -382,7 +484,7 @@ export function openSession({ name, title, host, done, take = false, tab = null 
   const s = {
     name, title: title || "Claude session", host: host || "", done, tab,
     lv: newLive(),
-    view: "", ws: null, term: null, fit: null, observer: null, timer: null, tries: 0, generation: 0, ctrlOn: false, closed: false,
+    view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], layout: null, layoutTimer: null, rotated: false, tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
     mine: false, note: "", error: "", openedAt: 0,
   };
@@ -411,6 +513,8 @@ export function releaseSession() {
   current = null;
   s.closed = true;
   clearTimeout(s.timer);
+  for (const id of s.repaints) clearTimeout(id);
+  clearTimeout(s.layoutTimer);
   stopLive(s);
   if (s.ws) {
     const ws = s.ws;
@@ -479,6 +583,7 @@ $("retry").addEventListener("click", () => {
   connect(s, false);
 });
 $("end").addEventListener("click", () => { if (current) endSession(current); });
+$("redraw").addEventListener("click", () => { if (current) redrawNow(current); });
 
 // A key press must not blur xterm's input, or the phone's keyboard would drop.
 for (const button of document.querySelectorAll("#keys button")) {
@@ -577,8 +682,29 @@ document.addEventListener("visibilitychange", () => {
     pauseWatch(s);
     return;
   }
-  // Back from another app: reconnect at once, asking the status first, unless the socket is still up or the session is over.
-  s.tries = 0;
-  if (!s.ws && s.view !== "gone") connect(s, false);
+  comeBack(s);
 });
 
+/**
+ * The page is shown again (from another app, or restored from the back/forward cache): the terminal's socket is replaced if it can't be
+ * trusted (`reattachOnReturn`), else the screen is fitted and drawn again, since the layout can have changed while away and a renderer
+ * that was not painting does not catch up by itself.
+ */
+function comeBack(s) {
+  s.tries = 0;
+  if (s.ws && reattachOnReturn(s.ws.readyState)) {
+    reattach(s);
+  } else if (!s.ws && s.view !== "gone") {
+    // Back from another app: reconnect at once, asking the status first, unless the socket is still up or the session is over.
+    connect(s, false);
+  }
+  scheduleRepaint(s);
+  // The width changed while the page was hidden: the full redraw, once.
+  if (layoutChanged(s.layout, measureLayout(s.view))) layoutEvent(s);
+}
+
+// A page restored from the back/forward cache may show no visibilitychange; and a rotation, a split-screen or a fold change moves the
+// box without the terminal's own box necessarily changing size.
+window.addEventListener("pageshow", (event) => { if (event.persisted && current && visible()) comeBack(current); });
+window.addEventListener("resize", () => { if (current) { scheduleRepaint(current); layoutEvent(current); } });
+window.addEventListener("orientationchange", () => { if (current) { scheduleRepaint(current); layoutEvent(current, true); } });

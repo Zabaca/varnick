@@ -184,6 +184,10 @@ on Android the foot of the home page offers an Install button (or use Chrome's m
 Screen. If the phone can't reach the host (Tailscale is off on it, or the host is asleep), the app says so instead of showing the
 browser's error page; Try again loads the page once the host answers. The app keeps nothing of your sessions on the phone.
 
+A session's screen draws itself again by itself when the phone rotates, the window is resized (split screen, a fold) or you come back to the app. If it
+is still blank or half drawn, **Redraw**, beside End in the session's header, throws the screen away, fits it to the phone and has the host send it again (a
+terminal you control attaches again; a screen you are watching opens again). It types nothing and changes nothing about who controls the session.
+
 The page can also notify the phone. At the foot of the home page, Notifications has a switch (Turn on asks the phone's permission, from
 that tap; on an iPhone it needs the page added to the Home Screen first). Each host is its own app and its own switch. With it on, the phone
 gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, stops on an API error

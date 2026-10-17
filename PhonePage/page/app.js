@@ -304,9 +304,15 @@ function fitViewport() {
 window.visualViewport?.addEventListener("resize", fitViewport);
 window.visualViewport?.addEventListener("scroll", fitViewport);
 window.addEventListener("scroll", fitViewport);
+// A rotation, a fold or a return from another app does not always send a visualViewport event the page sees (a hidden page misses it),
+// so the height is set again whenever the page is resized or shown. A viewport pinched in still skips it, here as in the events above.
+window.addEventListener("resize", fitViewport);
+window.addEventListener("orientationchange", fitViewport);
+window.addEventListener("pageshow", fitViewport);
 
 refreshButton.addEventListener("click", () => { notice(null); load(); });
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") fitViewport();
   if (document.visibilityState === "visible" && !$("home").hidden) load();
 });
 window.addEventListener("hashchange", route);
