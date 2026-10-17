@@ -302,3 +302,7 @@ What the build does with it:
 ### Build order
 
 After option 02 (shipped). The throwaway check comes first, then the shared tool and hook, protocol 28 and the Mac, then the page server and the page.
+
+## Comments
+
+**2026-10-17, at the user's ask.** The four notice switches, "sends me a message" among them, moved from Settings › Claude to their own Settings › Notifications section, which also links to Settings › Peers (where option 02's per-device line is). Where this option says Settings › Claude, read Settings › Notifications.

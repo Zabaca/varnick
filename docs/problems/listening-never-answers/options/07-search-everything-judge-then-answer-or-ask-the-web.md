@@ -610,3 +610,7 @@ When Jev isn't used or fails, the Text generation model answers the same questio
   2. **A TypeSafe status is logged.** Every Jev caller (route, judge, the panel's filter, the screen pick, the task call) throws `JevStatus` and logs "HTTP 402" in place of `URLError -1011`; the number alone, never the body or the key.
   3. **The marker is offered whenever the web is on and the request doesn't stay local,** a kept session included. This replaces "never when a session was kept" in the Solution and the summary; a request that names a project or is `own` still never reaches the web. The prompt says a session whose prompts only ask the request's own question doesn't hold the answer, and the model decides (ADR 0037).
   - **Unmeasured:** how often the writer now escalates with a session that does hold the answer (the second eval's one in four), and Gemma's judging against Jev's scores. The hand test is a shop-hours question with Jev failing, on Claude and then on Gemma.
+
+## Comments
+
+**2026-10-17, at the user's ask.** The pipeline this option describes (search everything, judge, then answer or ask the web) is no longer what Hey Varnick does by default: the voice session of option 09 is. This pipeline runs only while Settings › Experimental › Answer with Varnick's own steps (Jev) is on, off by default, and Answer from the web (and Point at the screen) are listed there, not in Settings › Listening. See ADR 0042's amendment.

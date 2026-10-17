@@ -159,3 +159,7 @@ Then no notice is raised. Launchy is an accessory app, so "frontmost" means the 
 - The table above is shared with `phone-page-is-only-a-browser-tab` option 02, whose page server keeps a copy for the phone. A change to one is a change to both.
 - Asked for by the user on 2026-10-08, relayed by the coordinator, after a research pass on cmux. The table's first four rows, the focused-pane rule and the switches per category follow cmux (problem, What cmux does). The failed word answers cmux's open complaint about errors.
 - A teammate's permission prompt is Claude Code's `worker_permission_prompt` notification. Whether it also fires the lead session's `PermissionRequest` hook is unknown. If it doesn't, it raises nothing here.
+
+## Comments
+
+**2026-10-17, at the user's ask.** The switches no longer sit in Settings › Claude: they are the Notifications section of Settings (a peer of Claude, Search and the rest), with the same switches, texts and keys. Where this option says Settings › Claude for them, read Settings › Notifications.

@@ -25,8 +25,11 @@ struct VoiceSearchRequestHead: Decodable {
 enum VoiceSearchMCP {
     static let search = "search"
 
-    static let tools: [[String: Any]] = [searchTool]
-    static let names: Set<String> = [search]
+    /// `end_voice_mode` (option 10 of `listening-never-answers`): in the same set, beside `search`.
+    static let endVoiceMode = "end_voice_mode"
+
+    static let tools: [[String: Any]] = [searchTool, endVoiceModeTool]
+    static let names: Set<String> = [search, endVoiceMode]
 
     static func requestLine(pane: String, tool: String, arguments: [String: Any]?) -> String {
         let encoder = JSONEncoder()
@@ -38,6 +41,15 @@ enum VoiceSearchMCP {
         let request = VoiceSearchRequest(search: VoiceSearchRequest.version, pane: pane, tool: tool, args: args)
         return (try? encoder.encode(request)).map { String(decoding: $0, as: UTF8.self) } ?? ""
     }
+
+    private static let endVoiceModeTool: [String: Any] = [
+        "name": endVoiceMode,
+        "description": "Ends voice mode on the user's Mac, once your reply to this request has been spoken. In voice mode every line the microphone hears is sent "
+            + "to you without a wake phrase, so some lines are not meant for you (a video, a call, someone else in the room). Call it when the user says they "
+            + "are done, or when the line was not meant for you, and then reply in a few words at most, or with nothing when it was not meant for you. "
+            + "It changes nothing else, and does nothing when voice mode is not on.",
+        "inputSchema": ["type": "object", "properties": [String: Any]()] as [String: Any],
+    ]
 
     private static let searchTool: [String: Any] = [
         "name": search,

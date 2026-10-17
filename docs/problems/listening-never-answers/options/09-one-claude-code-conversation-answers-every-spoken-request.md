@@ -338,3 +338,7 @@ It goes on every spoken request, not only the first, for two reasons: the time m
   - every latency;
   - the deadlines;
   - the effort.
+
+## Comments
+
+**2026-10-17, at the user's ask: the voice session is now the default.** Hey Varnick goes to the voice session unless Settings › Experimental › Answer with Varnick's own steps (Jev) is on, off by default. The Voice session switch this option describes in Settings › Experimental is gone (its saved value is never read, so a Mac that never turned the new switch on gets the voice session); the description and the Show button are at Hey Varnick in Settings › Listening, with the needs it lacks beside it. A refused request still says which need is unmet and never falls back to the pipeline. Point at the screen and Answer from the web moved under the new switch. Where this option says "With the switch on" or "off by default", read "unless Varnick's own steps are on". See ADR 0042's amendment.

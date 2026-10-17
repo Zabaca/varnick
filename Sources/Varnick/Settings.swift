@@ -78,7 +78,7 @@ struct KeyCombo: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case toggleLauncher, pinLauncher, toggleListening, settings, outline, resources
+    case toggleLauncher, pinLauncher, toggleListening, toggleVoiceMode, settings, outline, resources
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
@@ -89,9 +89,12 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 
     /// Registered system-wide, so never matched against keys pressed in the panel.
-    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
+    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening || self == .toggleVoiceMode }
 
     var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
+
+    /// A default added after users bound keys: it takes no key a user already gave another action (`Settings.combo`).
+    var yieldsDefaultToUserKeys: Bool { isSwap || self == .toggleVoiceMode }
 
     /// Not offered now: the Outline's shortcut while its switch is off, and the stop-task shortcut while Tasks is. A hidden action keeps its
     /// binding but takes no key and counts in no conflict, so binding its keys to another action leaves it as it was.
@@ -102,6 +105,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleLauncher: "Show / hide Varnick (anywhere)"
         case .pinLauncher: "Pin Varnick (keep open when focus leaves)"
         case .toggleListening: "Start / stop Listening (anywhere)"
+        case .toggleVoiceMode: "Start / end Voice mode (anywhere)"
         case .settings: "Settings"
         case .outline: "Show / hide outline"
         case .resources: "Show / hide Resources"
@@ -142,7 +146,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: String {
         switch self {
-        case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline, .resources: "Varnick"
+        case .toggleLauncher, .pinLauncher, .toggleListening, .toggleVoiceMode, .settings, .outline, .resources: "Varnick"
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
              .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
@@ -157,6 +161,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleLauncher: KeyCombo(keyCode: kVK_Space, .control)
         case .pinLauncher: KeyCombo(keyCode: kVK_Space, [.control, .shift])
         case .toggleListening: KeyCombo(keyCode: kVK_ANSI_L, [.control, .option])
+        case .toggleVoiceMode: KeyCombo(keyCode: kVK_ANSI_V, [.control, .option])
         case .settings: KeyCombo(keyCode: kVK_ANSI_Comma, .command)
         case .outline: KeyCombo(keyCode: kVK_ANSI_Y, [.command, .shift])
         case .resources: KeyCombo(keyCode: kVK_ANSI_M, [.command, .shift])
@@ -244,17 +249,18 @@ final class Settings: ObservableObject {
     /// fires and every run tab not yet opened shows as an ordinary tab. The file is kept either way.
     @Published var automationsOn: Bool { didSet { defaults.set(automationsOn, forKey: Self.automationsOnKey) } }
     static let automationsOnKey = "automationsOn"
-    /// Experimental (Settings › Experimental): the voice session (option 09 of `listening-never-answers`). Every Hey Varnick request goes to one hidden
-    /// Claude Code session in Home, run with permissions skipped; the route, the judge, the Text generation writer and Answer from the web are not used.
-    /// Off by default, for every install; absent reads as off. Its needs (Hey Varnick, Keep sessions running, Claude Code logged in) are shown beside it.
-    @Published var voiceSessionOn: Bool { didSet { defaults.set(voiceSessionOn, forKey: Self.voiceSessionOnKey) } }
-    static let voiceSessionOnKey = "voiceSessionOn"
+    /// Experimental: "Answer with Varnick's own steps (Jev)", off by default and absent reads off. Off, the voice session answers Hey Varnick; on, the
+    /// older pipeline does and the voice session is off. It replaced `voiceSessionOn`, never read now: ADR 0042's amendment says why.
+    @Published var ownStepsOn: Bool { didSet { defaults.set(ownStepsOn, forKey: Self.ownStepsOnKey) } }
+    static let ownStepsOnKey = "ownStepsOn"
+    /// Whether the voice session answers spoken requests: the default, and the opposite of `ownStepsOn`.
+    var voiceSessionOn: Bool { !ownStepsOn }
     /// Searched for git repos to start a session in (`#name`); `~` allowed.
     @Published var projectFolders: [String] { didSet { defaults.set(projectFolders, forKey: "projectFolders") } }
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
     /// What the tab strip does with tabs that don't fit (Settings › Claude); absent reads as Shrink.
     @Published var tabOverflow: TabOverflow { didSet { defaults.set(tabOverflow.rawValue, forKey: "tabOverflow") } }
-    /// Settings › Claude, "Notify me when a session…" (`SessionNotifier`): a dialog, question, plan or MCP request waits on me; a turn is done;
+    /// Settings › Notifications, "Notify me when a session…" (`SessionNotifier`): a dialog, question, plan or MCP request waits on me; a turn is done;
     /// a turn stops on an error. Each is on unless switched off.
     @Published var notifyNeedsMe: Bool { didSet { defaults.set(notifyNeedsMe, forKey: "notifyNeedsMe") } }
     @Published var notifyDone: Bool { didSet { defaults.set(notifyDone, forKey: "notifyDone") } }
@@ -354,8 +360,8 @@ final class Settings: ObservableObject {
         activeRelevanceFilter == .typesafe ? typesafeKey : nil
     }
 
-    /// Whether a spoken request may go to the screen: the switch, Hey Varnick and the gate, and not the voice session, which has the screen tools
-    /// itself. When false the decide questions have no screen in them, and the switch acts as off.
+    /// Whether a spoken request may go to the screen: the switch, Hey Varnick and the gate, and only with Varnick's own steps on (the voice session
+    /// has the screen tools itself). When false the decide questions have no screen in them, and the switch acts as off.
     var screenPointingOn: Bool {
         pointAtScreen && heyVarnick && typesafeGateKey != nil && !voiceSessionOn
     }
@@ -432,7 +438,9 @@ final class Settings: ObservableObject {
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
         tasksOn = defaults.bool(forKey: Self.tasksOnKey)
         automationsOn = defaults.bool(forKey: Self.automationsOnKey)
-        voiceSessionOn = defaults.bool(forKey: Self.voiceSessionOnKey)
+        ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
+        // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
+        defaults.removeObject(forKey: "voiceSessionOn")
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -578,7 +586,7 @@ final class Settings: ObservableObject {
     func combo(_ action: ShortcutAction) -> KeyCombo? {
         if let override = overrides[action] { return override }
         // A default added after users bound keys leaves a key they already gave another action to it.
-        if action.isSwap, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
+        if action.yieldsDefaultToUserKeys, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
         return action.defaultCombo
     }
 
@@ -751,6 +759,7 @@ struct SettingsView: View {
                                 }
                                 .labelsHidden().pickerStyle(.segmented).frame(width: 260)
                             }
+                            case .notifications:
                             SectionLabel(text: "Notify me when a session…")
                             SettingRow(title: "Needs me",
                                        detail: "Claude waits on a permission dialog, a question, a plan to approve or an MCP server's request. The menu bar icon gets an orange dot, a sound plays and the menu lists the session; choosing it opens the pane. Never for the pane you are looking at, or for a session another Mac controls.") {
@@ -768,6 +777,10 @@ struct SettingsView: View {
                                        detail: "The session tells you something itself, through its notify tool or Claude Code's own push notification (\"notify me when the tests pass\"). The louder sound and the orange dot; at most one alert a minute for a session, and the menu line shows the message's title. A turn that ends right after a message adds no second notice.") {
                                 Toggle("", isOn: $settings.notifyMessages).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            Button("Phones and other devices that get these: Settings › Peers") { sectionID = SettingsSection.peers.rawValue }
+                                .buttonStyle(.link)
+                                .font(.system(size: 12))
+                                .padding(.horizontal, 14).padding(.vertical, 6)
                             case .automations:
                             AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
                             case .tasks:
@@ -791,59 +804,29 @@ struct SettingsView: View {
                             }
                             case .listening:
                             SettingRow(title: "Hey Varnick",
-                                       detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or when you used a project. Varnick searches History, Bookmarks and your sessions together, answers out loud from what helps, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe, with today's date and time and a list of your projects (each one's name, other names, a one-line description from its README and its last three session titles, paired Macs' by name and titles), to decide what you mean: the time, something Varnick can't do, the screen, which project and which time, and which words to search for. They are sent again, with today's date and where this week started, with the titles, sites and descriptions of the top 20 pages and the title, folder name, when and prompts of up to 3 sessions, to judge which help. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads, with today's date, go to Anthropic to write the answer. With the filter on TypeSafe but no key or no answer, or off, the request and today's date go there too, with up to 20 pages and 3 sessions (title, site or folder, when, and a description or prompts cut to 300 characters), to judge which help. With the filter On this Mac, they never do. With an ElevenLabs voice chosen below, the answers Varnick speaks go to ElevenLabs.") {
-                                if Listener.shared.state.isUnavailable {
-                                    Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
-                                } else if let need = textGenerationNeed {
-                                    modelsLink(need)
-                                } else if textGenerationFallsBack {
-                                    modelsLink("Using this Mac's model")
+                                       detail: settings.ownStepsOn ? "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. It is answering with Varnick's own steps (Settings › Experimental), not through the voice session, which is off; what that sends is described there."
+                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. \"Hey Varnick\" also starts Voice mode, and so does its shortcut (Settings › Shortcuts, which also ends it): until it ends, every line the microphone hears goes to the session as a request, with no wake phrase, a TV or another voice in the room included. It ends when you press the shortcut or choose End Voice mode in the menu bar, a minute after Varnick last finished speaking with nothing said, when another app starts using the microphone (a call), when Claude decides you are done or the line wasn't meant for it, or when the session needs your OK, fails or takes so long that Varnick stops waiting. A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if Listener.shared.state.isUnavailable {
+                                        Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
+                                    } else if settings.ownStepsOn {
+                                        if let need = textGenerationNeed {
+                                            modelsLink(need)
+                                        } else if textGenerationFallsBack {
+                                            modelsLink("Using this Mac's model")
+                                        }
+                                    } else if settings.heyVarnick, let need = voiceSessionNeed {
+                                        // Hey Varnick says the same when it is asked; it never falls back to the other steps.
+                                        Text(need).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
+                                    }
+                                    if !settings.ownStepsOn { VoiceSessionShowButton(host: launcher.voiceSession) }
                                 }
                                 Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || textGenerationNeed != nil))
+                                    .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || (settings.ownStepsOn && textGenerationNeed != nil)))
                             }
                             SettingRow(title: "Save audio",
                                        detail: "While Listening is on, saves what the microphone and the Mac's audio hear, other people on calls included, as audio files on this Mac only, so you can test voice recognition on real calls. Each time Listening starts (and after a change of microphone or output) it writes two files, one for the mic and one for the Mac's audio, into \(SavedAudio.displayPath)/<day>/, starting new ones every 15 minutes. Nothing is sent anywhere, and nothing is deleted automatically: remove the files yourself. Turning it on or off takes effect the next time Listening starts or restarts.") {
                                 Toggle("", isOn: $settings.saveAudio).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
-                            SettingRow(title: "Point at the screen",
-                                       detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {
-                                // Above the permissions in one column, at its natural width: beside them the note would get no width.
-                                VStack(alignment: .trailing, spacing: 6) {
-                                    if settings.voiceSessionOn {
-                                        Text("Not used while Voice session is on").font(.system(size: 12)).foregroundStyle(.orange)
-                                    }
-                                    if !settings.heyVarnick {
-                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                    } else if !typesafeGateOpen {
-                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
-                                            .buttonStyle(.link)
-                                            .font(.system(size: 12))
-                                    }
-                                    ScreenPermissionsView(askRestart: askRestart)
-                                }
-                                .fixedSize()
-                                Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !typesafeGateOpen))
-                            }
-                            SettingRow(title: "Answer from the web",
-                                       detail: "What your pages, bookmarks and Claude sessions can't answer, such as when a shop opens, is answered from the web by your own Claude Code, on your plan, and Varnick says where the answer came from. The words you say go to Anthropic with today's date and time, and Claude's search words go to Anthropic's search provider. Nothing of your history, bookmarks, sessions or screen goes. Each answer counts toward your plan's usage limits. A request that names one of your project folders, or is only a time (\"what did I do last week\"), is never asked of the web: Varnick tells you it found no sessions then.") {
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    if settings.voiceSessionOn {
-                                        Text("Not used while Voice session is on").font(.system(size: 12)).foregroundStyle(.orange)
-                                    }
-                                    if !settings.heyVarnick {
-                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                    } else if !typesafeGateOpen {
-                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
-                                            .buttonStyle(.link)
-                                            .font(.system(size: 12))
-                                    } else if !claudeCode.loginPassed {
-                                        Text("Needs Claude Code: open a Claude pane and log in").font(.system(size: 12)).foregroundStyle(.orange)
-                                    }
-                                }
-                                Toggle("", isOn: $settings.answerFromWeb).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.answerFromWeb && (!settings.heyVarnick || !typesafeGateOpen || !claudeCode.loginPassed))
                             }
                             SettingRow(title: "Voice",
                                        detail: "What Varnick speaks in. An ElevenLabs voice sends every line Varnick speaks to ElevenLabs, answers included, which can repeat words of your request and name your pages, sessions and folders; the voices installed on this Mac send nothing.") {
@@ -1068,16 +1051,47 @@ struct SettingsView: View {
                                        detail: "Prompts Varnick starts as Claude sessions on a cadence, in a folder you choose, with nothing opened on your screen: Settings › Automations makes them, and the session board's Runs tab lists what each run did and opens it. A run is a Claude session like one you type, a hidden tab until you open it, and it tells you as any session does (Done, Needs you, a message). Only while Varnick runs on this Mac; a slot that passed while the Mac slept or Varnick was quit runs once at the next wake or launch if it is under 12 hours old. Each run draws on your Claude subscription. A run follows Skip permissions unless its automation says otherwise, never gets Screen access or Panel access tools, and on this Mac can reach the screen through Varnick's permissions like any session's shell (SECURITY.md). With it on, every Claude session you start or restart after that can also list, make, edit and switch your automations through four Varnick tools, with no approval step: Claude Code asks before each call unless Skip permissions is on, and what a session did shows on the automation as a mark until you have seen it. A session can't set Skip, delete one or run one now; a run's own session never has them. Turning it off stops every run from starting and shows the tabs of runs you haven't opened. Needs Keep sessions running. The switch is this Mac's own: a headless host in Settings › Peers fires its automations on its own timer whatever it says, and turning it off here only shows this Mac's views of those runs as ordinary tabs. Experimental.") {
                                 Toggle("", isOn: $settings.automationsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                            SettingRow(title: "Voice session",
-                                       detail: "Every Hey Varnick request goes to a Claude Code session of yours in Home, out of sight until you open it, instead of Varnick's own steps. It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript as before, and its sessions are found by search like any session's. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Point at the screen, Answer from the web and the relevance filter's part in a spoken request aren't used while it's on. Needs Hey Varnick, Keep sessions running and Claude Code logged in. Experimental.") {
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    if let need = voiceSessionNeed {
-                                        Text(need).font(.system(size: 12)).foregroundStyle(.orange)
-                                    }
-                                    VoiceSessionShowButton(host: launcher.voiceSession)
+                            SettingRow(title: "Answer with Varnick's own steps (Jev)",
+                                       detail: "Hey Varnick answers with Varnick's own steps instead of the Claude Code voice session (Settings › Listening). While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or when you used a project. Varnick searches History, Bookmarks and your sessions together, answers out loud from what helps, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe, with today's date and time and a list of your projects (each one's name, other names, a one-line description from its README and its last three session titles, paired Macs' by name and titles), to decide what you mean: the time, something Varnick can't do, the screen, which project and which time, and which words to search for. They are sent again, with today's date and where this week started, with the titles, sites and descriptions of the top 20 pages and the title, folder name, when and prompts of up to 3 sessions, to judge which help. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads, with today's date, go to Anthropic to write the answer. With the filter on TypeSafe but no key or no answer, or off, the request and today's date go there too, with up to 20 pages and 3 sessions (title, site or folder, when, and a description or prompts cut to 300 characters), to judge which help. With the filter On this Mac, they never do. With an ElevenLabs voice chosen in Settings › Listening, the answers Varnick speaks go to ElevenLabs. Experimental.") {
+                                if settings.ownStepsOn, !settings.heyVarnick {
+                                    Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
                                 }
-                                Toggle("", isOn: $settings.voiceSessionOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.voiceSessionOn && voiceSessionNeed != nil)
+                                Toggle("", isOn: $settings.ownStepsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            if settings.ownStepsOn {
+                            SettingRow(title: "Point at the screen",
+                                       detail: "Ask \"Hey Varnick, where's the Allow button\" and Varnick draws an arrow on it. It reads the window's elements and, if they lack it, a picture of the window, both on this Mac; the picture is never saved or sent. Needs the relevance filter on TypeSafe with a key: your words, the window's title and its visible short text go there, and so may short text typed in a field Varnick can't place. With Varnick's panel open, it is read too, so its session, project, Mac and page names go. A rebuild may need both permissions again. Every session and shell in Varnick's panes gets them too, kept running in zmx or not: see SECURITY.md.") {
+                                // Above the permissions in one column, at its natural width: beside them the note would get no width.
+                                VStack(alignment: .trailing, spacing: 6) {
+                                    if !settings.heyVarnick {
+                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+                                    } else if !typesafeGateOpen {
+                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    }
+                                    ScreenPermissionsView(askRestart: askRestart)
+                                }
+                                .fixedSize()
+                                Toggle("", isOn: $settings.pointAtScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.pointAtScreen && (!settings.heyVarnick || !typesafeGateOpen))
+                            }
+                            SettingRow(title: "Answer from the web",
+                                       detail: "What your pages, bookmarks and Claude sessions can't answer, such as when a shop opens, is answered from the web by your own Claude Code, on your plan, and Varnick says where the answer came from. The words you say go to Anthropic with today's date and time, and Claude's search words go to Anthropic's search provider. Nothing of your history, bookmarks, sessions or screen goes. Each answer counts toward your plan's usage limits. A request that names one of your project folders, or is only a time (\"what did I do last week\"), is never asked of the web: Varnick tells you it found no sessions then.") {
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if !settings.heyVarnick {
+                                        Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
+                                    } else if !typesafeGateOpen {
+                                        Button("Needs the filter on TypeSafe: Settings › Search") { sectionID = SettingsSection.search.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    } else if !claudeCode.loginPassed {
+                                        Text("Needs Claude Code: open a Claude pane and log in").font(.system(size: 12)).foregroundStyle(.orange)
+                                    }
+                                }
+                                Toggle("", isOn: $settings.answerFromWeb).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.answerFromWeb && (!settings.heyVarnick || !typesafeGateOpen || !claudeCode.loginPassed))
+                            }
                             }
                             }
                         }
@@ -1093,9 +1107,9 @@ struct SettingsView: View {
         }
         .controlSize(.small)
         // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is
-        // chosen. Listening shows it for Answer from the web too, whichever Text generation is on.
-        .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue)") {
-            guard section == .listening || (section == .experimental && settings.voiceSessionOn) || (settings.textGenerationRunOn == .claude && section == .models) else { return }
+        // chosen; so does Experimental while Varnick's own steps are on (Answer from the web needs it). Listening needs it for the voice session.
+        .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue) \(settings.ownStepsOn)") {
+            guard section == .listening || (section == .experimental && settings.ownStepsOn) || (settings.textGenerationRunOn == .claude && section == .models) else { return }
             await claudeCode.prepareForUse()
         }
     }
@@ -1138,11 +1152,9 @@ struct SettingsView: View {
         }
     }
 
-    /// What Text generation lacks before it can run: Claude Code found and logged in or this Mac's model installed, this Mac's model
+    /// What Text generation lacks before Varnick's own steps can answer: Claude Code found and logged in or this Mac's model installed, this Mac's model
     /// installed, or a server that passed its Check.
     private var textGenerationNeed: String? {
-        // The voice session answers spoken requests with the user's Claude Code, whatever Text generation says (option 09 of `listening-never-answers`).
-        if settings.voiceSessionOn { return claudeCode.loginPassed ? nil : "Needs Claude Code" }
         switch settings.textGenerationRunOn {
         case .claude:
             if claudeCode.loginPassed || textGenerator.isReady { return nil }
@@ -1155,21 +1167,20 @@ struct SettingsView: View {
         }
     }
 
-    /// What the voice session lacks before it can be turned on: Hey Varnick, Keep sessions running, and Claude Code found and logged in.
+    /// What the voice session lacks before it can answer, shown beside Hey Varnick: what `VoiceSessionHost.preflight` refuses on after Hey Varnick, in its order.
     private var voiceSessionNeed: String? {
-        if !settings.heyVarnick { return "Needs Hey Varnick" }
         if !settings.keepSessionsRunning { return "Needs Keep sessions running" }
         if !Zmx.isAvailable { return "Needs zmx: build with make" }
-        if !claudeCode.loginPassed { return "Needs Claude Code: open a Claude pane and log in" }
         if ClaudeTrust.skipPermissionsAccepted() == false {
             return "Needs skip-permissions mode accepted: run claude --dangerously-skip-permissions once in a pane and accept"
         }
+        if !claudeCode.loginPassed { return "Needs Claude Code: open a Claude pane and log in" }
         return nil
     }
 
     /// Claude Code failed and this Mac's model answers meanwhile: said beside Hey Varnick, as Search embeddings says it.
     private var textGenerationFallsBack: Bool {
-        !settings.voiceSessionOn && settings.textGenerationRunOn == .claude && claudeCode.isResting && textGenerator.isReady
+        settings.ownStepsOn && settings.textGenerationRunOn == .claude && claudeCode.isResting && textGenerator.isReady
     }
 
     /// This Mac's model: the download and the installed state, as the On this Mac choice and Claude Code's fallback both show them.
@@ -1294,13 +1305,14 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
+    case claude, notifications, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {
         case .claude: "sparkles"
+        case .notifications: "bell"
         case .automations: "clock.arrow.circlepath"
         case .tasks: "checklist"
         case .apps: CustomApp.defaultIcon

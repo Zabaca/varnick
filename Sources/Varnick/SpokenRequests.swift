@@ -6,8 +6,20 @@ import VarnickPeer
 /// Hey Varnick (ADR 0015): while Listening is on, a mic phrase that starts with the wake phrase becomes a spoken request, which
 /// Varnick answers aloud. Nothing is selected or opened, and the one thing shown is the arrow of a request about the screen
 /// (ADR 0019). What may be logged is in where-it-breaks.md, Listening and spoken requests.
+///
+/// Voice mode (ADR 0044) is a state on top of it: every final mic line is a request, with no wake phrase. It is the wait after the wake phrase
+/// alone, a minute long and entered again after each answer (`enterMinute`); `.answering` drops mic results, so the minute never runs meanwhile.
 @MainActor
-final class SpokenRequests {
+final class SpokenRequests: ObservableObject {
+    /// What the menu bar icon shows of voice mode.
+    enum ModeLook: Equatable {
+        case off
+        /// On, and it is the user's turn: the minute is counting (or a request is being said).
+        case waiting
+        /// On, and Varnick has the request: nothing is counting.
+        case busy
+    }
+
     /// How long after the wake phrase alone the request may begin.
     static let wakeWait: TimeInterval = 8
     /// How soon after a result's end the next one still belongs to the request.
@@ -19,10 +31,12 @@ final class SpokenRequests {
     static let hold: TimeInterval = 0.5
     /// How long after speech begins its first volatile result shows up, which the wait for a request after the wake phrase alone
     /// allows past its deadline. The hold does not cover it: a request already collecting is put off by the volatile result itself.
-    static let volatileLatency: TimeInterval = 1.0
+    static let volatileLatency = VoiceMode.volatileLatency
     /// How recently volatile speech must have been heard for a final result to be still to come (finals arrive 1 to 2 s after the
     /// speech). Not tied to `hold`: it was `hold + 1.5`, which was 2.5 s, and stays 2.5 s.
-    static let speechSettle: TimeInterval = 2.5
+    static let speechSettle = VoiceMode.speechSettle
+    /// The sound that marks leaving voice mode, a second short system sound distinct from Tink, the wake sound that marks entering it.
+    static let leavingSound = "Pop"
 
     private struct Request {
         var text: String
@@ -57,7 +71,9 @@ final class SpokenRequests {
     }
 
     private let model: LauncherModel
-    private var phase = Phase.idle
+    private var phase = Phase.idle {
+        didSet { showLook() }
+    }
     /// Always set while a request is collecting or answering.
     private var speculation: Speculation?
     private var holding: Task<Void, Never>?
@@ -65,16 +81,41 @@ final class SpokenRequests {
     /// Bumped when a request starts or is cancelled, so a finished one doesn't undo the next.
     private var epoch = 0
     /// The latest volatile result: speech that may be the rest of the request.
-    private var lastVolatile: (start: Date, arrived: Date)?
+    private var lastVolatile: VoiceMode.Speech?
     private var subs: [AnyCancellable] = []
+
+    // MARK: Voice mode's state (in memory, off at each launch)
+
+    /// What the menu bar icon shows of voice mode.
+    @Published private(set) var look = ModeLook.off
+    /// Whether voice mode is on, or about to be once Listening runs (the key was pressed with Listening off).
+    private(set) var modeOn = false
+    private var modePending = false
+    /// Whether the key started Listening for it, so that voice mode stops Listening when it ends and leaves it as it found it.
+    private var modeStartedListening = false
+    /// How many requests this stretch of voice mode carried, for the log.
+    private var modeRequests = 0
+    /// The call watch while voice mode is on.
+    private var callWatch: Task<Void, Never>?
+    /// Whether another process held the microphone when the wake phrase was heard: read off the main actor, and waited for before a request enters voice mode.
+    private var entryCheck: Task<[String], Never>?
+    /// The key's start while it reads the microphone: a second press cancels it.
+    private var starting: Task<Void, Never>?
+    /// What Varnick said lately, to tell its own voice coming back from the user's line (`VoiceMode.isEcho`).
+    private var recentSaid: [(text: String, at: Date)] = []
+    /// Claude called `end_voice_mode` in the turn of the request in flight: voice mode ends once its answer has been spoken.
+    private var endAfterAnswer = false
+    /// A request of voice mode's has been taken by the voice session, so the end tool means this Mac's voice mode and not the phone's.
+    private var requestBegan = false
 
     init(model: LauncherModel) {
         self.model = model
         Listener.shared.onMicPhrase = { [weak self] phrase in self?.hear(phrase) }
-        // Turning the switch off, or stopping Listening, stops a request under way and Varnick's voice.
+        // Turning the switch off, or stopping Listening, stops a request under way and Varnick's voice, and ends voice mode.
         subs = [
-            Settings.shared.$heyVarnick.dropFirst().sink { [weak self] on in if !on { self?.cancel() } },
-            Listener.shared.$state.dropFirst().sink { [weak self] state in if !state.isOn { self?.cancel() } },
+            Settings.shared.$heyVarnick.dropFirst().sink { [weak self] on in if !on { self?.switchedOff() } },
+            Settings.shared.$ownStepsOn.dropFirst().sink { [weak self] on in if on { self?.switchedOff() } },
+            Listener.shared.$state.dropFirst().sink { [weak self] state in self?.listeningChanged(state) },
             Settings.shared.$pointAtScreen.dropFirst().sink { on in if !on { ArrowOverlay.shared.hide() } },
         ]
     }
@@ -86,7 +127,9 @@ final class SpokenRequests {
     private func hear(_ phrase: MicPhrase) {
         guard enabled else { return }
         let now = Date()
-        if !phrase.isFinal { lastVolatile = (phrase.start, now) }
+        if !phrase.isFinal { lastVolatile = VoiceMode.Speech(start: phrase.start, arrived: now) }
+        // Voice mode waits for the next line in `.waiting`; an idle phase with it on is one that lost its wait.
+        if modeOn, case .idle = phase { enterMinute() }
         switch phase {
         case .answering:
             return
@@ -97,18 +140,37 @@ final class SpokenRequests {
             // The request is sent after the hold and the answer's writing, usually time enough to open the connection to ElevenLabs.
             // A cold connection can still be opening then; the 1.5 s deadline counts from when the line's request is sent.
             Speaker.shared.warmUp()
+            // With the voice session answering, the wake phrase also turns voice mode on, unless another app holds the microphone (a call). The
+            // request waits for that reading (`answerByVoiceSession`); the wake phrase alone waits for it here.
+            let entering = Settings.shared.voiceSessionOn
+            entryCheck = entering ? Task { await CallWatch.othersHoldingMicrophoneNow() } : nil
             if rest.isEmpty {
                 wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
+                if entering, let check = entryCheck { enterAfterWakeAlone(check) }
             } else {
                 collect(rest, from: phrase, arrived: now)
             }
         case .waiting(let until):
             if phrase.start > until {
-                holding?.cancel()
-                phase = .idle
+                // The wait ran out before this speech began: for voice mode that is its minute.
+                if modeOn { endVoiceMode(.minute) } else {
+                    holding?.cancel()
+                    phase = .idle
+                }
                 return hear(phrase)
             }
             guard phrase.isFinal else { return }
+            if modeOn {
+                // Every line is a request: the wake phrase, if it has one, is dropped, and a line with nothing left goes nowhere (the minute runs on).
+                // Varnick's own voice coming back from a slow output is not a line either.
+                guard let text = VoiceMode.requestText(of: phrase.text, afterWake: SpokenText.request(in: phrase.text)) else { return }
+                recentSaid.removeAll { now.timeIntervalSince($0.at) > VoiceMode.echoWindow }
+                if VoiceMode.isEcho(text, of: recentSaid.map(\.text)) {
+                    NSLog("Varnick: voice mode left out a line that matched Varnick's own words")
+                    return
+                }
+                return collect(text, from: phrase, arrived: now)
+            }
             // Saying the wake phrase again before the request is no harm.
             let rest = SpokenText.request(in: phrase.text) ?? phrase.text
             if SpokenText.cleaned(rest).isEmpty {
@@ -134,14 +196,15 @@ final class SpokenRequests {
         }
     }
 
-    /// The wake phrase came alone: the request may begin until `deadline`. When it doesn't, Varnick says what it can do.
-    private func wait(until deadline: Date) {
+    /// The wake phrase came alone: the request may begin until `deadline`. When it doesn't, Varnick says what it can do. In voice mode this is its
+    /// minute, which began at `since` and is over by `VoiceMode.minuteOver`.
+    private func wait(until deadline: Date, since: Date? = nil) {
         phase = .waiting(until: deadline)
         holding?.cancel()
         holding = Task { [weak self] in
             // Speech that began just before the deadline is only heard as volatile text a moment later.
             try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow) + Self.volatileLatency))
-            while !Task.isCancelled, let self, self.speechUnderway(until: deadline) {
+            while !Task.isCancelled, let self, !self.waitOver(until: deadline, since: since) {
                 try? await Task.sleep(for: .seconds(Self.speechSettle))
             }
             guard !Task.isCancelled else { return }
@@ -149,15 +212,18 @@ final class SpokenRequests {
         }
     }
 
-    /// Speech that began before the deadline and was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
-    /// late), so the wait is not over and the final still counts as the request.
-    private func speechUnderway(until deadline: Date) -> Bool {
-        guard let volatile = lastVolatile else { return false }
-        return volatile.start <= deadline && Date().timeIntervalSince(volatile.arrived) < Self.speechSettle
+    /// Not over while speech that began before the deadline was heard a moment ago: its final result is yet to come (finals arrive 1 to 2 s
+    /// late), and still counts as the request.
+    private func waitOver(until deadline: Date, since: Date?) -> Bool {
+        if let since { return VoiceMode.minuteOver(since: since, volatile: lastVolatile, now: Date()) }
+        return !VoiceMode.speechUnderway(until: deadline, volatile: lastVolatile, now: Date())
     }
 
     private func waitRanOut() {
         guard case .waiting = phase else { return }
+        entryCheck = nil
+        // Voice mode's wait is its minute: it ends, and nothing is said.
+        if modeOn { return endVoiceMode(.minute) }
         phase = .answering
         epoch += 1
         let epoch = epoch
@@ -248,14 +314,24 @@ final class SpokenRequests {
         epoch += 1
         let epoch = epoch
         working = Task { [weak self] in
+            var outcome = VoiceMode.Outcome.failed
             if voice {
-                await self?.answerByVoiceSession(request)
+                outcome = await self?.answerByVoiceSession(request) ?? .failed
             } else if let speculated {
                 await self?.answer(request, speculated: speculated)
             }
             guard let self, self.epoch == epoch else { return }
             self.speculation = nil
-            self.phase = .idle
+            // Voice mode: its minute begins now, when Varnick's last line has finished playing, unless the request ended it.
+            guard voice, self.modeOn else {
+                self.phase = .idle
+                return
+            }
+            if VoiceMode.ends(after: outcome, endTool: self.endAfterAnswer) {
+                self.endVoiceMode(VoiceMode.ending(after: outcome, endTool: self.endAfterAnswer))
+            } else {
+                self.enterMinute()
+            }
         }
     }
 
@@ -264,10 +340,180 @@ final class SpokenRequests {
         holding?.cancel()
         working?.cancel()
         stopSpeculating()
+        entryCheck = nil
         epoch += 1
         phase = .idle
         Speaker.shared.stop()
         ArrowOverlay.shared.hide()
+    }
+
+    // MARK: Voice mode
+
+    private func showLook() {
+        let now: ModeLook
+        if !modeOn {
+            now = .off
+        } else if case .answering = phase {
+            now = .busy
+        } else {
+            now = .waiting
+        }
+        if look != now { look = now }
+    }
+
+    /// Voice mode is on, or will be once Listening runs: the menu item says End.
+    var voiceModeActive: Bool { modeOn || modePending }
+
+    /// Why voice mode can't start now, short, for the menu item; nil when it can. A call is checked apart (`CallWatch`).
+    var cannotStartVoiceMode: String? {
+        if Listener.shared.state.isUnavailable { return "needs macOS 26" }
+        return model.voiceSession.preflight(model)?.menuNote
+    }
+
+    /// The key or the menu: starts voice mode (starting Listening first when it is off, and stopping it again when voice mode ends), or ends it,
+    /// whatever Varnick is doing. Where it can't start it gives the refusal sound, and the menu item says why.
+    func toggleVoiceMode(from source: VoiceMode.Ending) {
+        if modeOn { return endVoiceMode(source) }
+        // A second press while the start reads the microphone, or waits for Listening, cancels it.
+        if starting != nil || modePending {
+            starting?.cancel()
+            starting = nil
+            return cancelPending()
+        }
+        guard cannotStartVoiceMode == nil else { return NSSound.beep() }
+        starting = Task { [weak self] in
+            guard let self else { return }
+            let ids = await CallWatch.othersHoldingMicrophoneNow()
+            guard !Task.isCancelled else { return }
+            self.starting = nil
+            guard ids.isEmpty else {
+                CallWatch.log(ids, when: "wouldn't start")
+                return NSSound.beep()
+            }
+            guard !self.modeOn, !self.modePending, self.cannotStartVoiceMode == nil else { return }
+            if Listener.shared.state.isListening {
+                self.enterVoiceMode(playSound: true)
+            } else {
+                self.modePending = true
+                self.modeStartedListening = !Listener.shared.state.isOn
+                Listener.shared.start()
+            }
+        }
+    }
+
+    /// Listening changed: once it runs, a start waiting for it begins, if it still can; once it stops, voice mode and any request go with it.
+    private func listeningChanged(_ state: Listener.State) {
+        if state.isListening, modePending {
+            if cannotStartVoiceMode == nil {
+                modePending = false
+                enterVoiceMode(playSound: true)
+            } else {
+                NSSound.beep()
+                cancelPending()
+            }
+        } else if !state.isOn {
+            // Listening failed or was stopped before it ran.
+            if modePending { NSSound.beep() }
+            switchedOff()
+        }
+    }
+
+    /// A start that was waiting for Listening is given up, and Listening stopped if the key started it.
+    private func cancelPending() {
+        modePending = false
+        guard modeStartedListening else { return }
+        modeStartedListening = false
+        if Listener.shared.state.isOn { Listener.shared.stop() }
+    }
+
+    /// Listening stopped, Hey Varnick was turned off, or the pipeline was chosen: a start waiting or under way is given up, a request under way and
+    /// Varnick's voice stop, and voice mode ends.
+    private func switchedOff() {
+        starting?.cancel()
+        starting = nil
+        cancelPending()
+        if modeOn { endVoiceMode(.switchedOff) } else { cancel() }
+    }
+
+    /// Voice mode is on from here: every final mic line is a request until it ends. `playSound` is false for the wake phrase, which played Tink itself.
+    private func enterVoiceMode(playSound: Bool) {
+        guard !modeOn else { return }
+        modeOn = true
+        modePending = false
+        modeRequests = 0
+        endAfterAnswer = false
+        requestBegan = false
+        if playSound { NSSound(named: "Tink")?.play() }
+        Transcript.append(.varnick, "Voice mode on.")
+        NSLog("Varnick: voice mode on")
+        // A call that starts ends it at once and stops its voice; the first reading is this one.
+        callWatch?.cancel()
+        callWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                let ids = await CallWatch.othersHoldingMicrophoneNow()
+                if !ids.isEmpty {
+                    guard !Task.isCancelled else { return }
+                    CallWatch.log(ids, when: "ended")
+                    self?.endVoiceMode(.call)
+                    return
+                }
+                try? await Task.sleep(for: CallWatch.every)
+            }
+        }
+        // Between requests it waits for the first line; while one is being said or answered, its minute begins when its answer has been spoken.
+        switch phase {
+        case .idle: enterMinute()
+        case .waiting: enterMinute()
+        case .collecting, .answering: break
+        }
+        showLook()
+    }
+
+    /// Ends voice mode: a request under way and Varnick's voice stop (the session's turn goes on), a leaving sound plays, "Voice mode off." goes to
+    /// the transcript, and Listening stops again when the key started it. The log says how and how many requests, never a line's words.
+    func endVoiceMode(_ how: VoiceMode.Ending) {
+        guard modeOn else { return }
+        modeOn = false
+        callWatch?.cancel()
+        callWatch = nil
+        NSLog("Varnick: voice mode ended (\(how.rawValue)) after \(modeRequests) requests")
+        modeRequests = 0
+        endAfterAnswer = false
+        requestBegan = false
+        cancel()
+        NSSound(named: Self.leavingSound)?.play()
+        Transcript.append(.varnick, "Voice mode off.")
+        if modeStartedListening {
+            modeStartedListening = false
+            if Listener.shared.state.isOn { Listener.shared.stop() }
+        }
+        showLook()
+    }
+
+    /// The minute begins at `since`, the end of Varnick's last line or of the user's last line: the next line is a request until it is over.
+    private func enterMinute(since: Date = Date()) {
+        wait(until: VoiceMode.deadline(since: since), since: since)
+    }
+
+    /// The wake phrase came alone with the voice session answering: voice mode begins, with its minute, once no other app is found holding the microphone.
+    /// Otherwise the wait goes on as it was and Varnick says what it can do.
+    private func enterAfterWakeAlone(_ check: Task<[String], Never>) {
+        let epoch = epoch
+        Task { [weak self] in
+            let ids = await check.value
+            if !ids.isEmpty { CallWatch.log(ids, when: "wasn't entered") }
+            guard let self, ids.isEmpty, !self.modeOn, self.epoch == epoch, case .waiting = self.phase,
+                  self.model.voiceSession.preflight(self.model) == nil else { return }
+            self.enterVoiceMode(playSound: false)
+        }
+    }
+
+    /// `end_voice_mode`, called by the voice session in the turn of the request in flight: this Mac's voice mode ends once the answer has been spoken.
+    /// False when there is none, so the phone's Voice mode, which shares the session, is never touched.
+    func endVoiceModeAfterAnswer() -> Bool {
+        guard modeOn, requestBegan else { return false }
+        endAfterAnswer = true
+        return true
     }
 
     /// Says the answer to `request`, now that `hold` has ended, from `speculated` (running still, or done). The answer is written
@@ -385,7 +631,20 @@ final class SpokenRequests {
     /// session's request goes through them, each when the one before it ends (`Speaker.queue`): "Let me check." when the session has taken it,
     /// "Looking that up." when Claude goes to the web, then the answer, cleaned and cut to two sentences. Nothing of the request, the answer or what
     /// Claude does is logged: the timing line holds durations and kinds.
-    private func answerByVoiceSession(_ request: Request) async {
+    /// A request with the wake phrase turns voice mode on first, unless a call holds the microphone or the session can't answer; it returns how it ended.
+    private func answerByVoiceSession(_ request: Request) async -> VoiceMode.Outcome {
+        let inMode = modeOn
+        if !modeOn, let check = entryCheck {
+            let ids = await check.value
+            guard !Task.isCancelled else { return .failed }
+            if !ids.isEmpty { CallWatch.log(ids, when: "wasn't entered") }
+            if ids.isEmpty, !modeOn, model.voiceSession.preflight(model) == nil { enterVoiceMode(playSound: false) }
+        }
+        entryCheck = nil
+        if modeOn { modeRequests += 1 }
+        endAfterAnswer = false
+        requestBegan = false
+        defer { requestBegan = false }
         let began = Date()
         let voice = Speaker.shared.queue()
         var lines: [(kind: String, said: Date)] = []
@@ -401,12 +660,16 @@ final class SpokenRequests {
         var looked = false
         var ending = "-"
         var endedAfter: TimeInterval?
-        for await update in model.voiceSession.ask(request.text, device: .mac) {
+        var outcome = VoiceMode.Outcome.failed
+        for await update in model.voiceSession.ask(request.text, device: .mac, voiceMode: inMode) {
             switch update {
             case .began(let why):
                 how = why.map { "started, \($0.rawValue)" } ?? "reused"
+                // From here the session has this request, so its end tool means this Mac's voice mode.
+                requestBegan = true
             case .refused(let refusal):
                 ending = "refused, \(refusal.logKind)"
+                outcome = refusal == .busy ? .busy : .refused
                 say("failed", refusal.spoken)
             case .event(let event):
                 switch event {
@@ -418,26 +681,31 @@ final class SpokenRequests {
                     say("looking that up", VoiceLines.lookingUp)
                 case .needsYou:
                     ending = "needs you"
+                    outcome = .needsYou
                     say("needs you", VoiceLines.needsYou)
                 case .answered(let text):
                     ending = "answered"
-                    let saying = VoiceReply.speakable(text) ?? VoiceLines.noAnswer
-                    say("answer", saying)
+                    outcome = .answered
+                    // After `end_voice_mode` an answer that cleans to nothing is silent: the leaving sound is enough.
+                    if let saying = VoiceReply.speakable(text) { say("answer", saying) } else if !endAfterAnswer { say("answer", VoiceLines.noAnswer) }
                 case .noAnswer:
                     ending = "no answer"
-                    say("answer", VoiceLines.noAnswer)
+                    outcome = .noAnswer
+                    if !endAfterAnswer { say("answer", VoiceLines.noAnswer) }
                 case .failed(let failure):
                     ending = "failed, \(failure.logKind)"
+                    outcome = .failed
                     say("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
                 case .deadline:
                     ending = "deadline"
+                    outcome = .deadline
                     say("slow", VoiceLines.slow)
                 }
                 if ending != "-", endedAfter == nil { endedAfter = Date().timeIntervalSince(began) }
             }
         }
-        // Cancelled (Hey Varnick off, Listening stopped): the voice stops with it, and the session's turn goes on.
-        guard !Task.isCancelled else { return }
+        // Cancelled (Hey Varnick off, Listening stopped, voice mode ended): the voice stops with it, and the session's turn goes on.
+        guard !Task.isCancelled else { return .failed }
         let speeches = await voice.finished()
         func afterSpeech(_ date: Date?) -> String { date.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-" }
         let spoken = lines.enumerated().map { index, line in
@@ -445,9 +713,10 @@ final class SpokenRequests {
         }.joined(separator: ", ")
         NSLog("Varnick: spoken request timing (voice session): said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
               + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
-              + "held \(began.timeIntervalSince(request.lastArrived).secondsText), session \(how), "
+              + "held \(began.timeIntervalSince(request.lastArrived).secondsText), session \(how), voice mode \(inMode ? "on" : "off"), "
               + "taken after \(tookAfter?.secondsText ?? "-"), web \(looked ? "seen" : "not seen"), "
               + "ended \(ending) after \(endedAfter?.secondsText ?? "-"), lines: \(spoken), voice \(speeches.last?.by ?? "-")")
+        return outcome
     }
 
     /// The route, search, judge and kept count of the timing line: durations, kinds and counts, never a word, a project's name or a row.
@@ -518,6 +787,8 @@ final class SpokenRequests {
     /// What Varnick said goes into today's transcript, beside the request already there as a `[mic]` line. A default nobody was
     /// asked about (ADR 0015): deleting this call leaves the answer out.
     private func record(_ saying: String) {
+        recentSaid.append((saying, Date()))
+        if recentSaid.count > 5 { recentSaid.removeFirst() }
         Transcript.append(.varnick, saying)
     }
 }
@@ -533,7 +804,10 @@ enum VoiceLines {
     static let slow = "That's taking a while. I'll let you know when it's done."
     static let wakeAlone = "Ask me something."
     static let off = "The voice session is off."
+    static let needsHeyVarnick = "Turn on Hey Varnick on the Mac."
     static let needsKeepSessions = "The voice session needs Keep sessions running."
+    static let needsZmx = "The voice session needs zmx, which isn't installed."
+    static let notLoggedIn = "Claude Code isn't logged in. Open a Claude pane and log in."
     static let busy = "I'm still on your last request."
     static let needsSkipAccepted = "Run claude with the dangerously skip permissions flag once in a pane, accept its warning, and ask again."
 }
@@ -543,11 +817,29 @@ extension VoiceSessionHost.Refusal {
     var spoken: String {
         switch self {
         case .off: VoiceLines.off
+        case .needsHeyVarnick: VoiceLines.needsHeyVarnick
         case .needsKeepSessions: VoiceLines.needsKeepSessions
+        case .needsZmx: VoiceLines.needsZmx
         case .busy: VoiceLines.busy
         case .needsSkipAccepted: VoiceLines.needsSkipAccepted
         case .notSent: VoiceLines.notTaken
-        case .couldntStart, .notLoggedIn: VoiceLines.failed
+        case .notLoggedIn: VoiceLines.notLoggedIn
+        case .couldntStart: VoiceLines.failed
+        }
+    }
+}
+
+extension VoiceSessionHost.Refusal {
+    /// Why voice mode can't start, short, after its menu item.
+    var menuNote: String {
+        switch self {
+        case .off: "needs the voice session; Answer with Varnick's own steps is on"
+        case .needsHeyVarnick: "needs Hey Varnick on"
+        case .needsKeepSessions: "needs Keep sessions running"
+        case .needsZmx: "needs zmx"
+        case .needsSkipAccepted: "accept Claude Code's skip-permissions warning once"
+        case .notLoggedIn: "Claude Code isn't logged in"
+        case .busy, .couldntStart, .notSent: "the voice session isn't available"
         }
     }
 }
@@ -557,7 +849,9 @@ extension VoiceSessionHost.Refusal {
     var logKind: String {
         switch self {
         case .off: "off"
+        case .needsHeyVarnick: "needs hey varnick"
         case .needsKeepSessions: "needs keep sessions"
+        case .needsZmx: "needs zmx"
         case .needsSkipAccepted: "needs skip accepted"
         case .notLoggedIn: "not logged in"
         case .busy: "busy"

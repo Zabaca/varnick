@@ -54,3 +54,7 @@ Option 01's notices, rules and Settings switches stand unchanged. Option 02's ba
 
 - Everything option 01 and option 02 leave out.
 - Making the checkout build a bundle: runs-only-from-a-checkout's to decide.
+
+## Comments
+
+**2026-10-17, at the user's ask.** The notice switches moved from Settings › Claude to their own Settings › Notifications section. Where this option says Settings › Claude, read Settings › Notifications.

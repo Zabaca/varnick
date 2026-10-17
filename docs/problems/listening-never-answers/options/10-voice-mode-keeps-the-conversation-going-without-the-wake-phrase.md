@@ -2,7 +2,7 @@
 problem: listening-never-answers
 title: Voice mode on a Mac, started by Hey Varnick or a key, sends every line the mic hears to the voice session until a minute after Varnick last spoke
 summary: Listening stays the always-on transcription it is. Voice mode is a state on top of it. "Hey Varnick" or a new global key (⌃⌥V to start with) turns it on. While it is on, every finished mic line is a request to the voice session with no wake phrase needed, and a leading "Hey Varnick" is dropped. It ends on the same key, on End Voice mode in the menu bar's menu, 60 s after Varnick last finished speaking with no new line from the user, when another app takes the microphone (a call), or when Claude calls an end tool because the user is done. The minute doesn't run while Varnick works or speaks. A sound marks entering and leaving, and the transcript gets "Voice mode on." and "Voice mode off." lines. The menu bar's Fold gets three states that read at a glance: off, listening and voice mode. This is for the voice session on a Mac only. Today's pipeline, now experimental, keeps one request per wake, and the phone's Voice mode keeps its Start and End. No protocol change.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -26,24 +26,26 @@ status: accepted
   - the key again, or End Voice mode in the menu bar's menu (under Start Listening);
   - the minute running out;
   - another app taking the microphone (a call, below);
-  - Claude calling `end_voice_mode` (question (a));
+  - Claude calling `end_voice_mode` (question (a), decided: the tool);
   - "Claude needs your OK in Varnick.", or a refusal or failure line, once said (question (e)): the next line would start a new session or fail the same way;
   - Listening stopping, Hey Varnick turned off, or the pipeline chosen.
 
   Ending stops Varnick's voice if it is speaking and ends the spoken request; the session's turn goes on, as 09's cancel has it. A leaving sound plays, a second short system sound distinct from Tink. "Voice mode off." goes to the transcript, as entering writes "Voice mode on.", so the file shows which `[mic]` lines went to Claude.
 
-**What the user sees.** Today the icon barely changes when Listening starts: the Fold's right half moves up by 1.5 pt (Further Notes). This option gives the icon three states, all small variants of the Fold (question (c)):
+**What the user sees.** Today the icon barely changes when Listening starts: the Fold's right half moves up by 1.5 pt (Further Notes). This option gives the icon three states, all small variants of the Fold, which stays the logo (question (c), decided: colour):
 
-| State | A: weight (recommended) | B: colour |
-|---|---|---|
-| Off | the Fold at rest, halves apart, as an outline | today's: solid, halves apart |
-| Listening | solid, halves lined up (today's listening cut) | solid, lined up, with a short bar under the V |
-| Voice mode, waiting for the user | a solid rounded tile with the lined-up Fold cut out of it | the lined-up Fold and bar in red |
-| Voice mode, Varnick working or speaking | the cut-out right half steps between apart and lined up, about twice a second | the red pulses |
+| State | Icon |
+|---|---|
+| Off | today's: solid, halves apart |
+| Listening | solid, halves lined up (today's listening cut), with a short bar under the V |
+| Voice mode, waiting for the user | the lined-up Fold and bar in red |
+| Voice mode, Varnick working or speaking | the red pulses |
 
-- **A** is template images throughout, so the menu bar colours them for light, dark and highlighted, and colour stays the notice dot's alone. **B** keeps today's off look exactly, but its red image isn't a template: it doesn't invert when the menu opens, needs checking on light, dark and tinted menu bars, and sits beside the orange notice dot and macOS's own orange microphone indicator.
+- Off keeps today's look exactly. The listening mark must be clearly visible at 16 pt, which the 1.5 pt step alone is not.
+- The red image isn't a template: it doesn't invert when the menu opens, needs checking on light, dark and tinted menu bars, and sits beside the orange notice dot and macOS's own orange microphone indicator. The off and listening images stay templates, so the menu bar colours them.
+- The marks stay legible beside the notice dot: the bar and the dot are kept apart, and the hand test checks the dot standing over each state.
 - The steady voice-mode state means "your turn, the minute is counting". The moving one means "Varnick has it, nothing is counting".
-- The notice dot keeps its place and colours. In A, the tile is notched around the dot while a notice stands, so the dot stays a mark of its own.
+- The notice dot keeps its place and colours.
 - The icon's accessibility description and tooltip name the state ("Varnick, listening", "Varnick, in voice mode").
 - The menu gets Start Voice mode or End Voice mode with the key's label. When voice mode can't start, the item is disabled and says why.
 
@@ -235,3 +237,11 @@ Nothing is drawn on the screen: the icon, the sounds and the voice say it.
   - **(c) Menu bar: A (weight) or B (colour)?** Recommended: A. A Scratch prototype of both is quick if the user wants to see them first.
   - **(d) The key with Listening off?** Recommended: it starts Listening, and voice mode's end stops it again, only when voice mode was what started it. Other choices: it beeps and does nothing, or it starts Listening and leaves it on.
   - **(e) Does needs-your-OK, or a failure, end voice mode?** Recommended: yes, after its line. The user has to go to the screen, or the next line would fail the same way. Busy and the deadline keep it on.
+- **Decided by the user, 2026-10-17** (relayed by the coordinator). Each was recommendation first; where the answer differs, the option above is written to the answer.
+  - **(a) A spoken end?** Claude ends it through `end_voice_mode`, prompted by the hint (the recommendation). No fixed phrase, so ADR 0037 is not amended.
+  - **(b) Guards against overheard audio?** The minute, the icon, the sounds, ending on a call, and Claude's tool (the recommendation). No cap on length; the audio-time rule is not built.
+  - **(c) Menu bar?** Variant B, colour (the recommendation was A, weight): today's off icon, a clearly visible listening mark, and voice mode in red. The marks stay legible next to the notice dot. The Fold V stays the logo; these are variants only, and the master and the site's mark are untouched.
+  - **(d) The key with Listening off?** It turns Listening on, and turns it off again when voice mode ends, only when voice mode started it (the recommendation).
+  - **(e) Needs your OK, or a failure?** Voice mode ends after the line (the recommendation).
+  - **Also stands (the recommendations):** it applies only to the voice session, not the pipeline (now "Answer with Varnick's own steps", key `ownStepsOn`), and the phone's Voice mode keeps its own Start and End.
+- **Changed by the review of the build, 2026-10-17:** the deadline ends voice mode too (it first kept it on), because a stray line meeting the still-working session would have ended it; and a working turn whose request was given up on (the deadline, or voice mode ending mid-request) is busy to the next request and never replaced. A line with nothing left after its wake phrase goes nowhere and does not start the minute over. The call watch leaves out Varnick's helpers and the system's speech services and logs the bundle ids it counts. The tail after Varnick's voice grows by the output's latency, and a line that closely matches what Varnick just said is dropped.

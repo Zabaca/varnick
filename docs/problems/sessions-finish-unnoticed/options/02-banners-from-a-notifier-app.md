@@ -117,3 +117,7 @@ The rest assumes the second outcome, which is the expected one.
 
 - **Why a separate app.** `osascript`'s `display notification` is the one other way a bare executable posts today. It posts as Script Editor, a click opens Script Editor, and nothing can be withdrawn.
 - **If the check finds the bare binary can post,** this option becomes option 03's in-process posting without waiting for an app bundle. Then it costs about a day and a half on top of option 01, not three.
+
+## Comments
+
+**2026-10-17, at the user's ask.** The notice switches moved from Settings › Claude to their own Settings › Notifications section. Where this option says Settings › Claude shows the system's answer beside the switches, it would show it in Notifications.

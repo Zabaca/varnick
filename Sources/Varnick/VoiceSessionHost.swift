@@ -22,6 +22,9 @@ final class VoiceSessionHost: ObservableObject {
     var requestInFlight: Bool { inFlight != nil }
     /// Panes whose last turn's answer a surface took, so that turn raises no Done (`suppressesDone`). A new turn clears it.
     private var answered: Set<UUID> = []
+    /// Panes whose request was given up on, by the deadline or a cancel, while their turn went on, and when: a turn still working is then busy
+    /// to the next request and never replaced (`VoiceSession.decide`), so a stray line can't end it and the notice it promised still comes.
+    private var abandoned: [UUID: Date] = [:]
     /// Whether an unopened voice session exists, for Settings' Show button.
     @Published private(set) var going = false
 
@@ -43,8 +46,12 @@ final class VoiceSessionHost: ObservableObject {
     /// Why nothing was sent.
     enum Refusal: Error, Equatable {
         case off
-        /// Keep sessions running is off or zmx is missing.
+        /// Hey Varnick is off: the voice session runs with permissions skipped, so it answers only where the user has turned Hey Varnick on.
+        case needsHeyVarnick
+        /// Keep sessions running is off.
         case needsKeepSessions
+        /// zmx is missing.
+        case needsZmx
         /// Claude Code's one-time warning for skip-permissions mode isn't accepted: a hidden session would stop at it.
         case needsSkipAccepted
         /// Claude Code isn't logged in: the session would stop at its login.
@@ -65,9 +72,9 @@ final class VoiceSessionHost: ObservableObject {
         guard ticker == nil else { return }
         self.model = model
         if !Settings.shared.voiceSessionOn { endUnopened() }
-        switchWatch = Settings.shared.$voiceSessionOn.removeDuplicates().dropFirst().sink { [weak self] on in
+        switchWatch = Settings.shared.$ownStepsOn.removeDuplicates().dropFirst().sink { [weak self] _ in
             // The publisher sends before the value is stored, so this waits a turn.
-            DispatchQueue.main.async { if !on { self?.endUnopened() } }
+            DispatchQueue.main.async { if !Settings.shared.voiceSessionOn { self?.endUnopened() } }
         }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
@@ -98,11 +105,13 @@ final class VoiceSessionHost: ObservableObject {
 
     // MARK: A request
 
-    /// What stops a request before anything is sent: the switch, Keep sessions running, Claude Code's one-time warning for skip-permissions mode (a hidden
+    /// What stops a request before anything is sent: the switch, Hey Varnick, Keep sessions running, zmx, Claude Code's one-time warning for skip-permissions mode (a hidden
     /// session would stop at it) and its login. Nil when nothing does. A surface with a long way to a request (the phone's upload) asks it first.
     func preflight(_ model: LauncherModel) -> Refusal? {
         guard Settings.shared.voiceSessionOn else { return .off }
-        guard Zmx.isEnabled else { return .needsKeepSessions }
+        guard Settings.shared.heyVarnick else { return .needsHeyVarnick }
+        guard Settings.shared.keepSessionsRunning else { return .needsKeepSessions }
+        guard Zmx.isAvailable else { return .needsZmx }
         guard ClaudeTrust.skipPermissionsAccepted() != false else { return .needsSkipAccepted }
         guard model.textGeneration.claude.loginPassed else { return .notLoggedIn }
         return nil
@@ -111,18 +120,20 @@ final class VoiceSessionHost: ObservableObject {
     /// Types a request into the voice session, or starts one with it as the first prompt, and tells what happens. The stream ends when the request
     /// does: answered, waiting on the user, failed, or past the deadline (the turn goes on). Cancelling its reader ends the request and not the turn.
     ///
-    /// `moment`, `zone` and `units` are the asker's, for the voice hint: this Mac's own for Hey Varnick, the phone's for Voice mode.
-    func ask(_ request: String, device: VoiceHint.Device, moment: Date = Date(), zone: TimeZone = .current, units: VoiceHint.Units? = nil) -> AsyncStream<Update> {
+    /// `moment`, `zone` and `units` are the asker's, for the voice hint: this Mac's own for Hey Varnick, the phone's for Voice mode. `voiceMode` is
+    /// whether this Mac's voice mode was on when the line was heard (option 10 of `listening-never-answers`), which the hint says.
+    func ask(_ request: String, device: VoiceHint.Device, moment: Date = Date(), zone: TimeZone = .current, units: VoiceHint.Units? = nil,
+             voiceMode: Bool = false) -> AsyncStream<Update> {
         AsyncStream { continuation in
             let task = Task { [weak self] in
-                await self?.run(request, device: device, moment: moment, zone: zone, units: units, continuation)
+                await self?.run(request, device: device, moment: moment, zone: zone, units: units, voiceMode: voiceMode, continuation)
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?,
+    private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?, voiceMode: Bool,
                      _ out: AsyncStream<Update>.Continuation) async {
         guard let model else { out.yield(.refused(.off)); return }
         if let refusal = preflight(model) { out.yield(.refused(refusal)); return }
@@ -135,9 +146,10 @@ final class VoiceSessionHost: ObservableObject {
         }
         if let pane = current, !pane.readsOwnTurn { pane.checkTurn() }
         let heldNow = current.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
-        let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now)
+        let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now,
+                                           abandonedAt: current.flatMap { abandoned[$0.id] })
         let hint = VoiceHint.text(device: device, now: moment, timeZone: zone,
-                                  units: units ?? .host)
+                                  units: units ?? .host, voiceMode: voiceMode)
         let line = VoicePaste.line(hint: hint, request: request)
         let id: UUID
         let sent: Date
@@ -152,6 +164,7 @@ final class VoiceSessionHost: ObservableObject {
             why = nil
             inFlight = id
             answered.remove(id)
+            abandoned[id] = nil
             VoiceSession.clearMarkers(for: id)
             sent = Date()
             let pasted = await Task.detached(priority: .userInitiated) { Zmx.paste(line, into: id) }.value
@@ -174,8 +187,10 @@ final class VoiceSessionHost: ObservableObject {
                 for old in panes where old.id != id && !isOpened(old) { endPane(old) }
             }
         }
+        var givenUp = false
         defer {
             if inFlight == id { inFlight = nil }
+            if givenUp { abandoned[id] = Date() }
             refreshGoing()
         }
         requestPane = id
@@ -187,13 +202,16 @@ final class VoiceSessionHost: ObservableObject {
         while !Task.isCancelled && !watch.finished {
             try? await Task.sleep(for: Self.pollEvery)
             // The switch was turned off meanwhile (which ends the session): the request ends quietly, with no failure line.
-            guard !Task.isCancelled, Settings.shared.voiceSessionOn else { return }
+            guard !Task.isCancelled else { givenUp = true; return }
+            guard Settings.shared.voiceSessionOn else { return }
             for event in watch.observe(observation(of: id, sent: sent, taken: watch.takenAt)) {
                 if case .answered = event { answered.insert(id) }
+                if case .deadline = event { givenUp = true }
                 if case .failed(.notTaken) = event { notTaken = true }
                 out.yield(.event(event))
             }
         }
+        if Task.isCancelled, !watch.finished { givenUp = true }
         // A session that did not take the request is stuck (a dialog, a login): an unopened one is ended, and the next request starts fresh.
         if notTaken, let pane = model.claudePane(id), !isOpened(pane) { endPane(pane) }
     }
@@ -274,6 +292,7 @@ final class VoiceSessionHost: ObservableObject {
             if VoiceSession.idleEnded(turn: pane.turn, startedAt: pane.record.startedAt, opened: false, now: now) { endPane(pane) }
         }
         answered = answered.filter { id in panes.contains { $0.id == id } }
+        abandoned = abandoned.filter { id, _ in panes.contains { $0.id == id } }
         refreshGoing()
     }
 
@@ -287,6 +306,7 @@ final class VoiceSessionHost: ObservableObject {
     private func endPane(_ pane: ClaudeSession) {
         let id = pane.id
         answered.remove(id)
+        abandoned[id] = nil
         pane.endSession()
         Task.detached(priority: .utility) {
             if let why = Zmx.endConfirmed(id) { NSLog("Varnick: a voice session's zmx session wasn't confirmed gone: \(why)") }
@@ -302,7 +322,7 @@ final class VoiceSessionHost: ObservableObject {
     }
 }
 
-/// Settings › Experimental's Show button, beside the switch while a voice session is going.
+/// The Show button beside Hey Varnick (Settings › Listening) while an unopened voice session is going.
 struct VoiceSessionShowButton: View {
     @ObservedObject var host: VoiceSessionHost
 
