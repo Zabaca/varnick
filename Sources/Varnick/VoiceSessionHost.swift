@@ -65,7 +65,7 @@ final class VoiceSessionHost: ObservableObject {
         guard ticker == nil else { return }
         self.model = model
         if !Settings.shared.voiceSessionOn { endUnopened() }
-        switchWatch = Settings.shared.$voiceSessionOn.removeDuplicates().dropFirst().sink { [weak self] on in
+        switchWatch = Settings.shared.$ownStepsOn.map { !$0 }.removeDuplicates().dropFirst().sink { [weak self] on in
             // The publisher sends before the value is stored, so this waits a turn.
             DispatchQueue.main.async { if !on { self?.endUnopened() } }
         }
@@ -302,7 +302,7 @@ final class VoiceSessionHost: ObservableObject {
     }
 }
 
-/// Settings › Experimental's Show button, beside the switch while a voice session is going.
+/// The Show button beside Hey Varnick (Settings › Listening) while an unopened voice session is going.
 struct VoiceSessionShowButton: View {
     @ObservedObject var host: VoiceSessionHost
 

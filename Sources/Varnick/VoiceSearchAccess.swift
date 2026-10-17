@@ -23,7 +23,7 @@ enum VoiceSearchRefusal: Error {
         switch self {
         case .unreadable: "Varnick couldn't read the request"
         case .versionDiffers: ScreenRefusal.restartThisSession
-        case .off: "Voice session is off in Varnick's Settings › Experimental"
+        case .off: "The voice session is off while Answer with Varnick's own steps is on in Varnick's Settings › Experimental"
         case .starting: "Varnick is still starting"
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
         case .notVoice: "Only Varnick's voice session may use this tool"

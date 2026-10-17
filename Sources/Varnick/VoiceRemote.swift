@@ -69,7 +69,7 @@ final class VoiceRemote {
     /// uploaded or transcribed.
     private func refusal(_ model: LauncherModel) -> String? {
         if let why = model.voiceSession.preflight(model) {
-            return why == .off ? why.spoken + " Turn it on in Settings › Experimental on this Mac." : why.spoken
+            return why == .off ? why.spoken + " Turn off Answer with Varnick's own steps in Settings › Experimental on this Mac." : why.spoken
         }
         if ledger.busy() || model.voiceSession.requestInFlight { return VoiceLines.busy }
         return nil
