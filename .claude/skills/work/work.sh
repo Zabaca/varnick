@@ -2,9 +2,12 @@
 # /work: checks its arguments against the repository's problem files and prints the marker line that Varnick's hook after Bash turns
 # into the caller's work record (ADR 0020). It writes no record itself: only the hook input carries a subagent's id. For an option on a
 # branch other than main it also ties the branch in git config (docs/agents/issue-tracker.md).
+#
+# The hook runs after this command ends, so /work takes two commands: the first prints the marker and, as its last line, `work.sh confirm
+# <nonce> <kind> [<value>]` (docs/agents/where-it-breaks.md, the work-link hooks, says why and what a failure of the second means).
 
 usage() {
-  echo "usage: work.sh problem <slug> | option <slug>/<NN> | none | (nothing: show the records)" >&2
+  echo "usage: work.sh problem <slug> | option <slug>/<NN> | none | confirm <nonce> <kind> [<value>] | (nothing: show the records)" >&2
   exit 1
 }
 
@@ -23,6 +26,49 @@ fi
 
 kind=$1
 value=$2
+
+# The branch to tie an option to: none on main, master or a detached HEAD.
+branch=$(git symbolic-ref --short -q HEAD 2>/dev/null)
+case "$branch" in ""|main|master) tieable= ;; *) tieable=$branch ;; esac
+
+# A command outside a Varnick pane records nothing. A pane started by a build older than the rename has LAUNCHY_SESSION_FILE instead.
+notpane() {
+  echo "Not in a Varnick pane (VARNICK_SESSION_FILE is not set), so $1.${LAUNCHY_SESSION_FILE:+ LAUNCHY_SESSION_FILE is set: this pane was started by an older build, and the session needs a restart.}${2:+ $2}" >&2
+  exit 1
+}
+
+if [ "$kind" = confirm ]; then
+  nonce=$2 ckind=$3 cvalue=$4
+  case "$nonce" in ""|*[!0-9a-f]*) usage ;; esac
+  case "$ckind" in problem|option) [ -n "$cvalue" ] || usage ;; none) cvalue= ;; *) usage ;; esac
+  [ -d "$folder" ] || notpane "there is no record to confirm"
+  tie= anyway=
+  if [ "$ckind" = option ] && [ -n "$tieable" ]; then
+    if [ "$(git config "branch.$tieable.varnick-option" 2>/dev/null)" = "$cvalue" ]; then
+      tie="The branch $tieable is tied to the option" anyway=" anyway"
+    else
+      tie="The branch tie failed"
+    fi
+  fi
+  if [ -f "$folder/.work-mark.$nonce" ]; then
+    rm -f "$folder/.work-mark.$nonce"
+    echo "Not linked: no hook took the marker, so nothing was recorded. This session's claude was started without Varnick's work hooks: before they existed, with Settings > Experimental > Problems board off, or by a build whose marker differs. Restart the session to get them.${tie:+ $tie$anyway.}" >&2
+    exit 1
+  fi
+  # The hook took the marker, so a record or a log line must name the link. The check is pane-wide: it can't tell which agent ran the
+  # command, so a record or line of any agent in this pane that names the same link counts.
+  named=
+  for f in "$folder"/work "$folder"/work.*; do
+    [ -f "$f" ] && [ "$(head -n 1 "$f")" = "${ckind}${cvalue:+ $cvalue}" ] && named=1
+  done
+  if [ -z "$named" ] && [ -f "$folder/work-log" ]; then
+    tail -n 50 "$folder/work-log" | awk -F'\t' -v k="$ckind" -v v="${cvalue:--}" '$4 == k && $5 == v { found = 1 } END { exit !found }' && named=1
+  fi
+  [ -n "$named" ] || { echo "Not linked: the marker was taken, but no record or log line names the link. Run /work again.${tie:+ $tie$anyway.}" >&2; exit 1; }
+  if [ "$ckind" = none ]; then echo "Work link cleared."; else echo "Linked to $ckind $cvalue.${tie:+ $tie.}"; fi
+  exit 0
+fi
+
 case "$kind" in
   none) value= ;;
   problem|option) [ -n "$value" ] || usage ;;
@@ -61,27 +107,23 @@ if [ "$kind" = option ]; then
   value=$slug/$number
   set -- "$problem"/options/"$number"-*.md
   [ -f "$1" ] || { echo "Problem '$slug' has no option $number." >&2; exit 1; }
-  branch=$(git symbolic-ref --short -q HEAD 2>/dev/null)
-  case "$branch" in
-    ""|main|master) tied="no branch tie on ${branch:-a detached HEAD}" ;;
-    *) git config "branch.$branch.varnick-option" "$value" && tied="branch $branch tied" || tied="branch tie failed" ;;
-  esac
+  if [ -z "$tieable" ]; then
+    tied="no branch tie on ${branch:-a detached HEAD}"
+  else
+    git config "branch.$tieable.varnick-option" "$value" && tied="branch $tieable tied" || tied="branch tie failed"
+  fi
 fi
 
-if [ ! -d "$folder" ]; then
-  echo "Not in a Varnick pane, so no record is written.${tied:+ ($tied)}"
-  exit 0
-fi
+[ -d "$folder" ] || notpane "no record is written" "${tied:+($tied)}"
 
-case "$kind" in
-  none) echo "Work link cleared." ;;
-  problem) echo "Linked to problem $slug." ;;
-  option) echo "Linked to option $value ($tied)." ;;
-esac
-echo "Varnick writes the record after this command; a session started before the hooks existed records nothing until restarted."
 # The marker carries the pane id and a one-shot nonce: the hook accepts it once, by deleting the nonce's file, so a marker printed again
 # (a transcript read back, a log) links nothing, and another pane's marker is ignored.
+self="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+case "$self" in *"'"*) echo "This script's path has a quote, so the confirming command can't be printed." >&2; exit 1 ;; esac
 find "$folder" -maxdepth 1 -name '.work-mark.*' -mmin +60 -exec rm -f {} + 2>/dev/null
 nonce=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 : > "$folder/.work-mark.$nonce" || { echo "Could not write to the pane folder." >&2; exit 1; }
+if [ "$kind" = none ]; then what="clearing the work link"; else what="the link to $kind $value${tied:+ ($tied)}"; fi
+echo "Asking Varnick to record $what. It is not linked until the next command says so."
 printf 'VARNICK-WORK|%s|%s|%s|%s|%s|\n' "${folder##*/}" "$nonce" "$kind" "$value" "${repo:-/}"
+printf "sh '%s' confirm %s %s%s\n" "$self" "$nonce" "$kind" "${value:+ $value}"

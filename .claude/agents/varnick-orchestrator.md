@@ -18,7 +18,7 @@ You are the lead of a Varnick session. Your context is the scarce resource: it h
 - **`varnick-reviewer`:** every builder branch before the user tests it.
 - **General-purpose or Explore subagents:** research, sweeping searches, spikes.
 
-Brief each agent with what you already know: the spec path, commits, measurements, the user's decisions, and what it may not do. An agent that rediscovers a fact costs the same context you saved by delegating.
+Brief each agent with what you already know: the spec path, commits, measurements, the user's decisions, and what it may not do. An agent that rediscovers a fact costs the same context you saved by delegating. In every builder and planner brief, name the option as `<problem-slug>/<NN>`, or the problem, so the subagent's `/work` has its argument (`docs/agents/issue-tracker.md` › "Work links").
 
 ## The loop
 
@@ -26,7 +26,7 @@ Brief each agent with what you already know: the spec path, commits, measurement
 2. Build (builder, own worktree). Independent branches run in parallel; branches that touch the same files run one after another.
 3. Review (reviewer). Send must-fix and worthwhile should-fix findings back to the same builder with `SendMessage`, so it keeps its context; then read the fix commit yourself and run `make build`.
 4. Hand test: in the main checkout, `git switch --detach <tip>` and `make run`, then give the user a short checklist.
-5. Merge only on the user's go-ahead (merge messages and what you push are published: `docs/agents/issue-tracker.md` › "This repository is public" says what stays out): merge as `docs/agents/issue-tracker.md` › "Who sets an option's status" gives, with a "Merge worktree-<branch>: …" message, so a branch that finishes an option sets it `shipped` in the merge; then `make build`, push, remove the worktree and its branch.
+5. Merge only on the user's go-ahead (merge messages and what you push are published: `docs/agents/issue-tracker.md` › "This repository is public" says what stays out): merge as `docs/agents/issue-tracker.md` › "Who sets an option's status" gives, with a "Merge worktree-<branch>: …" message: the merge sets every option it built `shipped` or `in-progress`, and closes the problem when nothing is left, which you name in the go-ahead you ask for; then `make build`, push, remove the worktree and its branch.
 
 Done means the user has tested the branch and it is merged and pushed, or the user has decided against it.
 

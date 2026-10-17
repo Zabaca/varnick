@@ -206,6 +206,8 @@ extension PaneFolder {
     static let workFileName = "work"
     /// A subagent's record is `work.<agent id>`; the log has a dash, not a dot, so no agent id can be its name.
     static let workLogFileName = "work-log"
+    /// A subagent's record held at its stop, to come back when it starts again. It doesn't start with `work.`, so the reader skips it.
+    static let heldWorkPrefix = ".work-held."
 
     public static func workFile(for id: UUID) -> URL {
         url(for: id).appendingPathComponent(workFileName)
@@ -247,24 +249,30 @@ extension PaneFolder {
         return PaneWork(live: live, logged: PaneWork.logged(in: log, canonical: canonical))
     }
 
-    /// The subagents' records go when a pane starts claude: their agents ended with the last run, and the session's own record stays.
+    /// The subagents' records, live and held (`WorkHooks.subagentStop`), go when a pane starts claude: their agents ended with the last run, and
+    /// the session's own record stays.
     public static func clearSubagentWork(for id: UUID) {
-        let folder = url(for: id)
-        let prefix = workFileName + "."
+        clearSubagentWork(in: url(for: id))
+    }
+
+    /// The same for a pane folder wherever it is (`make check-work` clears a scratch one).
+    public static func clearSubagentWork(in folder: URL) {
+        let prefixes = [workFileName + ".", heldWorkPrefix]
         var removed = false
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(prefix) {
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where prefixes.contains(where: name.hasPrefix) {
             removed = ((try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))) != nil) || removed
         }
         // The log's date is how the app learns a record changed (`ClaudeSession.checkWork`), so a record removed here is logged like
         // the hook's removal, or the app goes on with the dead subagent's link until the log next changes.
-        guard removed, let handle = (try? FileHandle(forWritingTo: workLogFile(for: id))) ?? createdLog(for: id) else { return }
+        let log = folder.appendingPathComponent(workLogFileName)
+        guard removed, let handle = (try? FileHandle(forWritingTo: log)) ?? createdLog(at: log) else { return }
         defer { try? handle.close() }
         _ = try? handle.seekToEnd()
         try? handle.write(contentsOf: Data("\(Int(Date().timeIntervalSince1970))\t-\t-\tend\t-\t-\t\n".utf8))
     }
 
-    private static func createdLog(for id: UUID) -> FileHandle? {
-        FileManager.default.createFile(atPath: workLogFile(for: id).path, contents: nil)
-        return try? FileHandle(forWritingTo: workLogFile(for: id))
+    private static func createdLog(at log: URL) -> FileHandle? {
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        return try? FileHandle(forWritingTo: log)
     }
 }

@@ -82,7 +82,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice check-work apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -194,6 +194,13 @@ check-engine:
 # Varnick, no zmx, no claude and no network; its one file, a transcript, is written in a scratch folder. Built the same way as check-slots.
 check-voice:
 	@swift run --package-path Packages/VarnickPeer voice-check
+
+# The work-link hooks (`WorkHooks`, Packages/VarnickPeer; ADR 0020) and the `/work` script's two commands (.claude/skills/work/work.sh), run as shell
+# scripts in each of sh, bash, zsh and dash found here, on scratch pane folders and a scratch repository: a subagent's record held at its stop and given
+# back at its start, the marker, the clearing, and the confirmation's success and failure. No Varnick, no claude and no network. Built the same way as
+# check-slots; run from the checkout's root, where it finds the script.
+check-work:
+	@swift run --package-path Packages/VarnickPeer work-check $(CURDIR)/.claude/skills/work/work.sh
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.

@@ -42,6 +42,7 @@ public enum ClaudeCommand {
             hooks["PreToolUse", default: []].append(.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink))
             hooks["PostToolUse", default: []].append(.init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark))
             hooks["SubagentStop", default: []].append(.init(command: WorkHooks.subagentStop))
+            hooks["SubagentStart", default: []].append(.init(command: WorkHooks.subagentStart))
         }
         if voice {
             // The voice session's two markers (option 09 of `listening-never-answers`), after every other entry of their events.

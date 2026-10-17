@@ -2,7 +2,7 @@
 problem: problems-board-drifts-from-the-truth
 title: Agents link first, a link nothing recorded fails, a subagent keeps its link between rounds, and every merge sets its option's status
 summary: Accepted by the user on 2026-10-17, relayed by the coordinator. The builder, planner and orchestrator definitions say when to run `/work`, pointing to `issue-tracker.md`. `/work` no longer says "Linked" before a hook has recorded anything. It asks for a second command that confirms the record, and that command exits non-zero, naming the cause, when the hook never took the marker. SubagentStop keeps a subagent's record aside instead of deleting it, and a new SubagentStart hook gives it back when the same subagent runs again, so a builder resumed with SendMessage is linked again. A nested helper with no record takes its parent subagent's, found through the metadata file Claude Code writes beside the helper's transcript, if a first check shows that file is there in time. Every merge that builds an option sets it shipped or in-progress, never leaves it accepted, and closes the problem when nothing is left. In-progress already puts a problem in Building, so partly built work stops showing as Decided with no change to the board's code. Ties and links to shipped or rejected options, deleted branches and dead panes are already ignored, and stay so.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -137,6 +137,7 @@ No code change. `in-progress` already puts a problem in Building, and its eviden
 ## Further Notes
 
 - **Accepted 2026-10-17.** The user approved the audits' fixes and this problem with "ok lets do all", relayed by the coordinator. The catch-up of statuses and closings it calls for is already done, in 373f3bf.
+- **First check, run 2026-10-17 on Claude Code 2.1.302.** SubagentStart fires on a `SendMessage` resume under the same agent id, so held records are built. `transcript_path` in a subagent's hooks names the session's transcript. The metadata file is not there when SubagentStart fires, for a top-level subagent or a nested helper, so ticket 4 (a helper taking its parent's link) was not built and helpers stay unlinked, as before. Reading the file at the helper's first tool call would work but costs a hook on every call.
 - **Verified against inferred.** The board's rules, the hooks and the script were read at bda4a64, and git's dropping of a deleted branch's tie was checked. Claude Code's hook inputs, its SubagentStart event and its resume path come from reading the 2.1.302 binary, not from a run: the first check settles them.
 - **Suggested tickets,** for `/to-tickets`:
   1. the first check;
