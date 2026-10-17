@@ -294,7 +294,7 @@ export function applyEvents(view, events) {
       case "heard":
         next.exchange.push({ who: "you", text: event.text ?? "" });
         break;
-      // The voice session says nothing when it takes a request or goes to the web (2026-10-17): the state line shows it, the exchange does not.
+      // Taking the request and going to the web are state text only; the voice session says nothing then.
       case "taken":
         next.state = "working";
         break;

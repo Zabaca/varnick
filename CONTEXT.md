@@ -308,7 +308,7 @@ Text generation as it writes the answer to a **Spoken request** from the rows th
 _Avoid_: Answerer, model
 
 **Acknowledgement**:
-The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none. Only Varnick's own steps say these lines: the **Voice session** says neither, on a Mac or on the Phone page (2026-10-17).
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none. Varnick's own steps say them; the **Voice session** does not ([ADR 0042](docs/adr/0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md)).
 _Avoid_: Cue, earcon (the wake sound is a sound, not a line)
 
 **Answer from the web**:

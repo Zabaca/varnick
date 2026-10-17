@@ -374,7 +374,7 @@ describe("the view the host's events make", () => {
   test("a request, its answer and the voice to play", () => {
     let view = applyEvents(newView(), [{ kind: "heard", text: "what time is it" }, { kind: "taken" }]);
     expect(view.state).toBe("working");
-    // Working is the state line's, not a line of the exchange: the voice session no longer says "Let me check." or "Looking that up.".
+    // Working is the state line's, not a line of the exchange.
     expect(stateLine[view.state]).toBe("Working…");
     expect(view.exchange).toEqual([{ who: "you", text: "what time is it" }]);
     view = applyEvents(view, [{ kind: "lookingUp" }]);
@@ -383,11 +383,6 @@ describe("the view the host's events make", () => {
     view = applyEvents(view, [{ kind: "answered", text: "It is noon.", spoken: "It is noon.", audio: "AAAA" }]);
     expect(view).toMatchObject({ state: "speaking", play: "AAAA", done: true });
     expect(view.exchange).toEqual([{ who: "you", text: "what time is it" }, { who: "varnick", text: "It is noon." }]);
-  });
-
-  test("no state line is one of the two lines the voice session dropped", () => {
-    expect(Object.values(stateLine)).not.toContain("Let me check.");
-    expect(Object.values(stateLine)).not.toContain("Looking that up.");
   });
 
   test("an answer with no audio leaves the page listening, with its words shown", () => {

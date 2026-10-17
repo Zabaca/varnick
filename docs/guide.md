@@ -214,7 +214,7 @@ Hey Varnick hands every request to a Claude Code session of yours: one hidden se
 sessions have (your settings, CLAUDE.md files and plugins, Bash, the web, Varnick's tools) and a search of your history, bookmarks and
 Claude sessions. This is how it works unless you turn on Settings › Experimental › Answer with Varnick's own steps. The first request
 starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request; Varnick says nothing when it has
-the request or when Claude goes to the web (the menu bar's mark shows it is working), then speaks the answer. **It runs with permissions skipped,
+the request or when Claude goes to the web (in voice mode the menu bar's mark shows it is working), then speaks the answer. **It runs with permissions skipped,
 so anything the microphone hears, a video or another voice in the room included, can run commands on your Mac without asking.** A
 question it asks raises Needs you ("Claude needs your OK in Varnick."), and the session opens from the notice or Settings › Listening ›
 Show beside Hey Varnick; once you have opened it, Varnick never types into it. It needs Keep sessions running (and zmx), Claude Code logged in
