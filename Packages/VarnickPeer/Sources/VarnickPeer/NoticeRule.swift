@@ -13,7 +13,7 @@ public enum NoticeKind: Equatable, Sendable {
     case message(String)
 }
 
-/// The four switches of Settings › Claude, "Notify me when a session…"; all on by default.
+/// The four switches of Settings › Notifications, "Notify me when a session…"; all on by default.
 public struct NoticeSwitches: Equatable, Sendable {
     public var needsMe: Bool
     public var done: Bool

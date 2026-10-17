@@ -254,7 +254,7 @@ final class Settings: ObservableObject {
     @Published var fontSize: Double { didSet { defaults.set(fontSize, forKey: "terminalFontSize") } }
     /// What the tab strip does with tabs that don't fit (Settings › Claude); absent reads as Shrink.
     @Published var tabOverflow: TabOverflow { didSet { defaults.set(tabOverflow.rawValue, forKey: "tabOverflow") } }
-    /// Settings › Claude, "Notify me when a session…" (`SessionNotifier`): a dialog, question, plan or MCP request waits on me; a turn is done;
+    /// Settings › Notifications, "Notify me when a session…" (`SessionNotifier`): a dialog, question, plan or MCP request waits on me; a turn is done;
     /// a turn stops on an error. Each is on unless switched off.
     @Published var notifyNeedsMe: Bool { didSet { defaults.set(notifyNeedsMe, forKey: "notifyNeedsMe") } }
     @Published var notifyDone: Bool { didSet { defaults.set(notifyDone, forKey: "notifyDone") } }
@@ -751,6 +751,7 @@ struct SettingsView: View {
                                 }
                                 .labelsHidden().pickerStyle(.segmented).frame(width: 260)
                             }
+                            case .notifications:
                             SectionLabel(text: "Notify me when a session…")
                             SettingRow(title: "Needs me",
                                        detail: "Claude waits on a permission dialog, a question, a plan to approve or an MCP server's request. The menu bar icon gets an orange dot, a sound plays and the menu lists the session; choosing it opens the pane. Never for the pane you are looking at, or for a session another Mac controls.") {
@@ -768,6 +769,10 @@ struct SettingsView: View {
                                        detail: "The session tells you something itself, through its notify tool or Claude Code's own push notification (\"notify me when the tests pass\"). The louder sound and the orange dot; at most one alert a minute for a session, and the menu line shows the message's title. A turn that ends right after a message adds no second notice.") {
                                 Toggle("", isOn: $settings.notifyMessages).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            Button("Phones and other devices that get these: Settings › Peers") { sectionID = SettingsSection.peers.rawValue }
+                                .buttonStyle(.link)
+                                .font(.system(size: 12))
+                                .padding(.horizontal, 14).padding(.vertical, 6)
                             case .automations:
                             AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
                             case .tasks:
@@ -1294,13 +1299,14 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
+    case claude, notifications, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {
         case .claude: "sparkles"
+        case .notifications: "bell"
         case .automations: "clock.arrow.circlepath"
         case .tasks: "checklist"
         case .apps: CustomApp.defaultIcon

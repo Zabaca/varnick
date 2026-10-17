@@ -103,8 +103,9 @@ happened. Choosing it shows the panel on that pane.
   phone is in control, or its host doesn't answer) is silent. A session on a paired Mac is read every 5 seconds, so Done can
   come up to 5 seconds late. Sessions already waiting when Varnick starts, or when a Mac comes back, raise nothing, and
   notices are not kept across a restart.
-- **Switches.** Settings › Claude › **Notify me when a session…** has one for each of needs me, is done, stops on an
-  error and sends me a message, all on by default.
+- **Switches.** Settings › **Notifications** › **Notify me when a session…** has one for each of needs me, is done, stops on an
+  error and sends me a message, all on by default. The section links to Settings › Peers, where each device that gets
+  these on its phone page is listed.
 - **A session can tell you something itself.** Every Claude pane has a `notify` tool (a title and an optional body), and
   Claude Code's own push notification, where you have it on, counts too. Ask a session "notify me when the tests pass" and
   it raises a notice of its own: the orange dot, the louder sound and the menu line showing the message's title. A turn
