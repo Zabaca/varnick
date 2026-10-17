@@ -82,7 +82,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -188,6 +188,12 @@ check-slots:
 # a scratch folder, and an automation's Run written byte for byte as slice 1 wrote it. Built the same way as check-slots.
 check-engine:
 	@swift run --package-path Packages/VarnickPeer engine-check
+
+# The voice session's pure seams (`VoiceSession`, Packages/VarnickPeer; option 09 of listening-never-answers) over a table of cases: which session takes
+# a request, the hint, what is typed in, the reply's cleaning, the Stop input's reading, a request's events and the search tool's arguments. No
+# Varnick, no zmx, no claude and no network; the two files it reads are written in a scratch folder. Built the same way as check-slots.
+check-voice:
+	@swift run --package-path Packages/VarnickPeer voice-check
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.

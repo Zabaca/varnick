@@ -300,6 +300,17 @@ public enum Zmx {
         return true
     }
 
+    /// Types `text` into the pane's session as a bracketed paste and then presses Return, which is how a voice session takes a later request
+    /// (option 09 of `listening-never-answers`). The Return is a call of its own after `pause`, as the spike sent it: a Return inside the paste
+    /// would be part of it. `text` must hold no control byte (`VoicePaste.line`). It needs no client and no view. Blocks, so never on the main
+    /// thread. False when zmx refused, as when the session is gone.
+    public static func paste(_ text: String, into id: UUID, pause: TimeInterval = 0.4) -> Bool {
+        let name = sessionName(id)
+        guard run(["send", name, "\u{1b}[200~" + text + "\u{1b}[201~"]) != nil else { return false }
+        Thread.sleep(forTimeInterval: pause)
+        return run(["send", name, "\r"]) != nil
+    }
+
     /// Detaches every client of the session. zmx detaches only from inside a session, so the
     /// command runs with the session's name in its environment.
     public static func detachClients(of name: String) {

@@ -12,11 +12,13 @@ let package = Package(
         .executable(name: "varnick-peer", targets: ["varnick-peer"]),
         .executable(name: "slot-check", targets: ["slot-check"]),
         .executable(name: "engine-check", targets: ["engine-check"]),
+        .executable(name: "voice-check", targets: ["voice-check"]),
     ],
     targets: [
         .target(name: "VarnickPeer", swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "varnick-peer", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "slot-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "engine-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "voice-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
