@@ -222,6 +222,20 @@ and Claude Code's one-time warning for skip-permissions mode accepted: Settings 
 says which when you ask, and does not fall back to the other way. Nothing of a spoken request goes to TypeSafe or Text generation. What is
 sent is in [privacy and security](privacy-and-security.md#anthropic-through-the-voice-session).
 
+**Voice mode** on a Mac keeps a conversation going without saying "Hey Varnick" each time. "Hey Varnick" starts it, or the shortcut
+**Start / end Voice mode** (⌃⌥V; with Listening off it starts Listening first and stops it again when voice mode ends), or Start Voice mode
+in the menu bar's menu. While it is on, every line the microphone hears goes to the voice session as a request, with no wake phrase, so
+**a TV, a video, a call across the desk or another voice in the room becomes a request too, and the session runs commands without
+asking.** It ends when you press the shortcut again or choose End Voice mode; a minute after Varnick last finished speaking with nothing
+said (the minute does not run while Varnick works or speaks, so a long answer is never cut off); when another app starts using the
+microphone, such as a call, so no answer is spoken into it (while one does, the shortcut beeps and Hey Varnick answers one request at a
+time as before); when Claude decides you are done, or that a line wasn't meant for it ("Thanks, that's all"), after its reply; or when the
+session needs your OK or fails. A sound marks entering (Tink) and leaving (Pop), the transcript says "Voice mode on." and "Voice mode
+off.", and the menu bar's Fold turns red while it is on, pulsing while Varnick works or speaks. While Listening is on but voice mode is not,
+the Fold has a short bar under the V; off, it is as it always was. Voice mode needs Hey Varnick on and the voice session answering: with
+Answer with Varnick's own steps on, Hey Varnick answers one request per wake phrase as before. A reply you start within half a second of
+Varnick's last word may be lost as an echo. The Phone page's Voice mode is separate and has its own Start and End.
+
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
 save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
 permissions) and pick one of your account's voices in the same Voice list. That sends everything Varnick speaks to

@@ -266,7 +266,7 @@ The sound itself, kept only with Settings › Listening › Save audio on: m4a f
 _Avoid_: Recording, call recording
 
 **Wake phrase**:
-"Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**.
+"Hey Varnick" at the start of something said into the microphone while **Listening** is on. It turns what follows into a **Spoken request**. With the **Voice session** answering it also starts **Voice mode** on a Mac, in which no wake phrase is needed for the next lines.
 _Avoid_: Hotword, trigger
 
 **Fallback voice**:
@@ -286,7 +286,9 @@ A **Host**'s one Claude **Session** in its **Home** that answers **Spoken reques
 _Avoid_: assistant, spoken conversation
 
 **Voice mode**:
-A button on a Mac **Host**'s Phone page that talks back and forth, by voice, with that Mac's **Voice session**, the one Hey Varnick reaches at the desk. The phone sends its microphone's audio in chunks; the Mac turns it into text with Listening's transcriber, asks the session, and makes the reply into audio in the Voice setting's voice, which the phone plays; each exchange is shown as text too. It works in the foreground, kept alive by a quiet tone, and is not on a headless host. [ADR 0043](docs/adr/0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
+A conversation by voice with a **Host**'s **Voice session**, with no **Wake phrase** for each request.
+- **On a Mac,** "Hey Varnick" or its key (⌃⌥V) starts it, and the key, the menu bar's End Voice mode, Claude (through its `end_voice_mode` tool), a call (another app holding the microphone), the session needing the user's OK or failing, or a minute after Varnick last finished speaking with nothing said ends it. Until then every line the microphone hears is a **Spoken request**, so a TV or another voice in the room can run commands. The menu bar's Fold turns red, and a sound marks entering and leaving. Only for the Voice session: with Answer with Varnick's own steps on it does not apply. [ADR 0044](docs/adr/0044-on-a-mac-hey-varnick-or-a-key-starts-voice-mode-in-which-every-mic-line-is-a-request-until-it-ends.md)
+- **On a Mac host's Phone page,** a button that talks back and forth with that Mac's Voice session. The phone sends its microphone's audio in chunks; the Mac turns it into text with Listening's transcriber, asks the session, and makes the reply into audio in the Voice setting's voice, which the phone plays; each exchange is shown as text too. It works in the foreground, kept alive by a quiet tone, and is not on a headless host, and ends only by its own End, with no minute. [ADR 0043](docs/adr/0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
 _Avoid_: voice chat, dictation
 
 **Route**:

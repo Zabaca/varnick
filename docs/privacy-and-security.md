@@ -541,12 +541,21 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
 
 The Voice session runs with permissions skipped: Claude Code never asks before a command, an edit, a fetch or a screen tool, whatever Skip
 permissions says (that was the choice made for it, so a spoken request is not stopped at a dialog nobody is looking at). So anything the
-microphone hears that starts "Hey Varnick" can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
+microphone hears that starts "Hey Varnick" (or, in voice mode, anything, below) can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
 your own voice misheard, a video or a call played through the speakers (Listening hears the Mac's audio too), or another person in the room.
 It also has Varnick's tools your other sessions have (Screen access and Panel access when they are on, notifications, automations and Tasks),
 which can click, type and press keys without asking. Settings › Listening says so beside Hey Varnick. If that is too much, turn on Settings › Experimental ›
 Answer with Varnick's own steps: that Hey Varnick only reads, searches and answers, and opens nothing (the voice session is then off, and so is Voice mode on the phone).
 
+- **In voice mode on a Mac, no wake phrase is needed.** "Hey Varnick" or its shortcut (⌃⌥V) starts it, and until it ends **every line the microphone hears
+  goes to the session as a request**, so a TV, a radio, a video through the speakers, a call on the other side of the desk or someone else in the room can
+  run commands, and anything that keeps talking keeps it on. It ends on the shortcut or the menu, a minute after Varnick last finished speaking with
+  nothing said, another app taking the microphone (a call: Varnick watches whether any other process is running audio input, reads no app's name and
+  logs only that a call ended voice mode; it can't tell a TV, a call on another device or someone else in the room), Claude calling the end tool when you
+  are done or the line wasn't meant for it, the session needing your OK or failing, or Listening, Hey Varnick or the voice session being switched off.
+  A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when ("Voice mode on.", "Voice mode off."), so the file shows
+  which `[mic]` lines went to Claude. There is no limit on its length and no check that the voice is yours. Settings › Listening says so beside Hey Varnick,
+  and the two change together. The phone's Voice mode (below) is separate.
 - **It is a session like any other in what it can reach:** Varnick's Accessibility and Screen Recording are inherited by the commands it runs
   (see Screen permissions reach every pane, above).
 - **A question or a plan it raises waits for you.** Varnick says "Claude needs your OK in Varnick." and raises Needs you; the session opens from its
