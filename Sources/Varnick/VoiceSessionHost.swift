@@ -117,18 +117,20 @@ final class VoiceSessionHost: ObservableObject {
     /// Types a request into the voice session, or starts one with it as the first prompt, and tells what happens. The stream ends when the request
     /// does: answered, waiting on the user, failed, or past the deadline (the turn goes on). Cancelling its reader ends the request and not the turn.
     ///
-    /// `moment`, `zone` and `units` are the asker's, for the voice hint: this Mac's own for Hey Varnick, the phone's for Voice mode.
-    func ask(_ request: String, device: VoiceHint.Device, moment: Date = Date(), zone: TimeZone = .current, units: VoiceHint.Units? = nil) -> AsyncStream<Update> {
+    /// `moment`, `zone` and `units` are the asker's, for the voice hint: this Mac's own for Hey Varnick, the phone's for Voice mode. `voiceMode` is
+    /// whether this Mac's voice mode was on when the line was heard (option 10 of `listening-never-answers`), which the hint says.
+    func ask(_ request: String, device: VoiceHint.Device, moment: Date = Date(), zone: TimeZone = .current, units: VoiceHint.Units? = nil,
+             voiceMode: Bool = false) -> AsyncStream<Update> {
         AsyncStream { continuation in
             let task = Task { [weak self] in
-                await self?.run(request, device: device, moment: moment, zone: zone, units: units, continuation)
+                await self?.run(request, device: device, moment: moment, zone: zone, units: units, voiceMode: voiceMode, continuation)
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?,
+    private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?, voiceMode: Bool,
                      _ out: AsyncStream<Update>.Continuation) async {
         guard let model else { out.yield(.refused(.off)); return }
         if let refusal = preflight(model) { out.yield(.refused(refusal)); return }
@@ -143,7 +145,7 @@ final class VoiceSessionHost: ObservableObject {
         let heldNow = current.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
         let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now)
         let hint = VoiceHint.text(device: device, now: moment, timeZone: zone,
-                                  units: units ?? .host)
+                                  units: units ?? .host, voiceMode: voiceMode)
         let line = VoicePaste.line(hint: hint, request: request)
         let id: UUID
         let sent: Date

@@ -53,11 +53,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var hotKey: HotKey?
     var pinHotKey: HotKey?
     var listenHotKey: HotKey?
+    var voiceHotKey: HotKey?
     private static let toggleHotKeyID: UInt32 = 1
     private static let pinHotKeyID: UInt32 = 2
     private static let listenHotKeyID: UInt32 = 3
+    private static let voiceHotKeyID: UInt32 = 4
     var statusItem: NSStatusItem!
     private var listenItem: NSMenuItem!
+    private var voiceItem: NSMenuItem!
+    /// What the menu bar icon is drawn from (`showIcon`): Listening running, voice mode's look, and the pulse while Varnick works in voice mode.
+    private var listeningNow = false
+    private var voiceLook = SpokenRequests.ModeLook.off
+    private var pulse: Timer?
+    private var pulseDimmed = false
+    private static let pulseEvery: TimeInterval = 0.5
+    /// The reading of whether a call holds the microphone, started as the menu opens (`menuNeedsUpdate`).
+    private var callRead: Task<Void, Never>?
     private var showItem: NSMenuItem!
     private var pinItem: NSMenuItem!
     private var restartItem: NSMenuItem!
@@ -234,6 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pinItem = menu.addItem(withTitle: "Pin Varnick", action: #selector(togglePinFromMenu), keyEquivalent: "")
         menu.addItem(.separator())
         listenItem = menu.addItem(withTitle: "Start Listening", action: #selector(toggleListening), keyEquivalent: "")
+        voiceItem = menu.addItem(withTitle: "Start Voice mode", action: #selector(toggleVoiceMode), keyEquivalent: "")
         menu.addItem(withTitle: "Show Transcript", action: #selector(showTranscript), keyEquivalent: "")
         menu.addItem(.separator())
         restartItem = menu.addItem(withTitle: "Restart Varnick", action: #selector(restartFromMenu), keyEquivalent: "")
@@ -281,6 +293,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 .receive(on: RunLoop.main)
                 .sink { _ in PhonePageServer.shared.apply(settingChanged: true) },
         ]
+        // Voice mode's icon and menu item follow its state; the menu item also follows Hey Varnick's and the voice session's switches.
+        if let spoken {
+            settingsSubs.append(spoken.$look.sink { [weak self] look in self?.showVoiceMode(look) })
+            settingsSubs.append(Settings.shared.$heyVarnick.combineLatest(Settings.shared.$ownStepsOn)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.showVoiceItem() })
+        }
         startHistorySync()
 
         show()
@@ -358,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         hotKey = nil   // unregister first: the new combo may be the same keys
         pinHotKey = nil
         listenHotKey = nil
+        voiceHotKey = nil
         guard settings.recording == nil else { return }
         if let combo = settings.combo(.toggleLauncher) {
             // ⌃Space conflicts with "Select previous input source" if that macOS shortcut is on.
@@ -372,6 +392,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Unavailable (below macOS 26) is set once in `Listener.init`, so there the key is left unregistered.
         if case .unavailable = Listener.shared.state {} else if let combo = settings.combo(.toggleListening) {
             listenHotKey = HotKey(id: Self.listenHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { Listener.shared.toggle() }
+        }
+        // Registered whatever Listening and Hey Varnick are doing: where voice mode can't start, the key gives the refusal sound.
+        if let combo = settings.combo(.toggleVoiceMode) {
+            voiceHotKey = HotKey(id: Self.voiceHotKeyID, keyCode: Int(combo.keyCode), modifiers: combo.carbonModifiers) { [weak self] in
+                self?.spoken?.toggleVoiceMode(from: .key)
+            }
         }
         showListening(Listener.shared.state)
     }
@@ -420,10 +446,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     @objc func toggleListening() { Listener.shared.toggle() }
 
-    /// Hidden when the restart can't work from here (`BuildUpgrade.menuRestartAvailable`), checked as the menu opens.
+    @objc func toggleVoiceMode() { spoken?.toggleVoiceMode(from: .menu) }
+
+    /// Hidden when the restart can't work from here (`BuildUpgrade.menuRestartAvailable`), checked as the menu opens. The voice mode item is read
+    /// again, and a call holding the microphone, read off the main actor, disables it while the menu is open.
     func menuNeedsUpdate(_ menu: NSMenu) {
         restartItem.isHidden = !BuildUpgrade.menuRestartAvailable(database: model.store.path)
         showNoticeItems(in: menu)
+        showVoiceItem()
+        callRead?.cancel()
+        guard let spoken, !spoken.voiceModeActive, spoken.cannotStartVoiceMode == nil else { return }
+        callRead = Task { [weak self] in
+            guard await CallWatch.othersHoldMicrophoneNow(), !Task.isCancelled, let self, !(self.spoken?.voiceModeActive ?? false) else { return }
+            self.voiceItem.title += " (a call is using the microphone)"
+            self.voiceItem.isEnabled = false
+        }
     }
 
     /// The icon's dot follows the standing notices.
@@ -478,17 +515,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         show()
     }
 
-    /// The one place the menu bar icon is drawn from, with its description and tooltip.
-    private func showIcon(listening: Bool) {
-        let look: FoldMark.MenuLook = listening ? .listening : .off
+    /// The one place the menu bar icon is drawn from: Listening's state, voice mode's and whether Varnick is busy with a request. Its description and
+    /// tooltip name the state. While Varnick works or speaks in voice mode the red pulses, unless Reduce motion is on.
+    private func showIcon() {
+        let look: FoldMark.MenuLook
+        switch voiceLook {
+        case .off: look = listeningNow ? .listening : .off
+        case .waiting: look = .voice(dimmed: false)
+        case .busy: look = .voice(dimmed: pulseDimmed)
+        }
         statusItem.button?.image = FoldMark.menuBarImage(look)
         statusItem.button?.toolTip = look == .off ? nil : look.description
+        let pulsing = voiceLook == .busy && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if pulsing, pulse == nil {
+            pulse = Timer.scheduledTimer(withTimeInterval: Self.pulseEvery, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.pulseDimmed.toggle()
+                    self?.showIcon()
+                }
+            }
+        } else if !pulsing, let timer = pulse {
+            timer.invalidate()
+            pulse = nil
+            pulseDimmed = false
+        }
     }
 
-    /// The icon shows at a glance whether Varnick is off or listening; the menu item says what a click
+    /// Voice mode changed (`SpokenRequests.look`): the icon and the menu item follow.
+    private func showVoiceMode(_ look: SpokenRequests.ModeLook) {
+        voiceLook = look
+        showIcon()
+        showVoiceItem()
+    }
+
+    /// The menu item: Start or End Voice mode with the key's label, disabled with the reason when it can't start.
+    private func showVoiceItem() {
+        let active = spoken?.voiceModeActive ?? false
+        let keySuffix = Settings.shared.combo(.toggleVoiceMode).map { " (\($0.label))" } ?? ""
+        let why = active ? nil : spoken?.cannotStartVoiceMode
+        voiceItem.title = (active ? "End Voice mode" : "Start Voice mode") + keySuffix + (why.map { " (\($0))" } ?? "")
+        voiceItem.isEnabled = active || why == nil
+    }
+
+    /// The icon shows at a glance whether Varnick is off, listening or in voice mode; the menu item says what a click
     /// does, or why listening isn't running.
     private func showListening(_ state: Listener.State) {
-        showIcon(listening: state.isListening)
+        listeningNow = state.isListening
+        showIcon()
+        showVoiceItem()
         let available: Bool
         if case .unavailable = state { available = false } else { available = true }
         let keySuffix = available ? Settings.shared.combo(.toggleListening).map { " (\($0.label))" } ?? "" : ""

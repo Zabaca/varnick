@@ -78,7 +78,7 @@ struct KeyCombo: Codable, Equatable {
 }
 
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case toggleLauncher, pinLauncher, toggleListening, settings, outline, resources
+    case toggleLauncher, pinLauncher, toggleListening, toggleVoiceMode, settings, outline, resources
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
@@ -89,9 +89,12 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 
     /// Registered system-wide, so never matched against keys pressed in the panel.
-    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening }
+    var isGlobal: Bool { self == .toggleLauncher || self == .pinLauncher || self == .toggleListening || self == .toggleVoiceMode }
 
     var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
+
+    /// A default added after users bound keys: it takes no key a user already gave another action (`Settings.combo`).
+    var yieldsDefaultToUserKeys: Bool { isSwap || self == .toggleVoiceMode }
 
     /// Not offered now: the Outline's shortcut while its switch is off, and the stop-task shortcut while Tasks is. A hidden action keeps its
     /// binding but takes no key and counts in no conflict, so binding its keys to another action leaves it as it was.
@@ -102,6 +105,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleLauncher: "Show / hide Varnick (anywhere)"
         case .pinLauncher: "Pin Varnick (keep open when focus leaves)"
         case .toggleListening: "Start / stop Listening (anywhere)"
+        case .toggleVoiceMode: "Start / end Voice mode (anywhere)"
         case .settings: "Settings"
         case .outline: "Show / hide outline"
         case .resources: "Show / hide Resources"
@@ -142,7 +146,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: String {
         switch self {
-        case .toggleLauncher, .pinLauncher, .toggleListening, .settings, .outline, .resources: "Varnick"
+        case .toggleLauncher, .pinLauncher, .toggleListening, .toggleVoiceMode, .settings, .outline, .resources: "Varnick"
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
              .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
@@ -157,6 +161,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleLauncher: KeyCombo(keyCode: kVK_Space, .control)
         case .pinLauncher: KeyCombo(keyCode: kVK_Space, [.control, .shift])
         case .toggleListening: KeyCombo(keyCode: kVK_ANSI_L, [.control, .option])
+        case .toggleVoiceMode: KeyCombo(keyCode: kVK_ANSI_V, [.control, .option])
         case .settings: KeyCombo(keyCode: kVK_ANSI_Comma, .command)
         case .outline: KeyCombo(keyCode: kVK_ANSI_Y, [.command, .shift])
         case .resources: KeyCombo(keyCode: kVK_ANSI_M, [.command, .shift])
@@ -581,7 +586,7 @@ final class Settings: ObservableObject {
     func combo(_ action: ShortcutAction) -> KeyCombo? {
         if let override = overrides[action] { return override }
         // A default added after users bound keys leaves a key they already gave another action to it.
-        if action.isSwap, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
+        if action.yieldsDefaultToUserKeys, overrides.contains(where: { $0.key != action && $0.value == action.defaultCombo }) { return nil }
         return action.defaultCombo
     }
 
@@ -800,7 +805,7 @@ struct SettingsView: View {
                             case .listening:
                             SettingRow(title: "Hey Varnick",
                                        detail: settings.ownStepsOn ? "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. It is answering with Varnick's own steps (Settings › Experimental), not through the voice session, which is off; what that sends is described there."
-                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
+                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. \"Hey Varnick\" also starts Voice mode, and so does its shortcut (Settings › Shortcuts, which also ends it): until it ends, every line the microphone hears goes to the session as a request, with no wake phrase, a TV or another voice in the room included. It ends when you press the shortcut or choose End Voice mode in the menu bar, a minute after Varnick last finished speaking with nothing said, when another app starts using the microphone (a call), when Claude decides you are done or the line wasn't meant for it, or when the session needs your OK or fails. A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
                                 VStack(alignment: .trailing, spacing: 4) {
                                     if Listener.shared.state.isUnavailable {
                                         Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)

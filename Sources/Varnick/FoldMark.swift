@@ -62,18 +62,27 @@ enum FoldMark {
         case off
         /// The halves lined up, with a bar under the V.
         case listening
+        /// Listening's mark in red. `dimmed` is the other half of the pulse while Varnick works or speaks.
+        case voice(dimmed: Bool)
 
         var description: String {
             switch self {
             case .off: "Varnick"
             case .listening: "Varnick, listening"
+            case .voice: "Varnick, in voice mode"
             }
         }
     }
 
-    /// The menu bar's image: 16pt, a template so the menu bar colours and highlights it.
+    /// The menu bar's image: 16pt. Off and listening are templates, so the menu bar colours and highlights them. Voice mode's red is not: it
+    /// doesn't invert when the menu opens, and colour is otherwise the notice dot's alone.
     static func menuBarImage(_ look: MenuLook) -> NSImage {
-        let image = image(look == .off ? .cutIdle : .cutListening, size: 16, template: true)
+        let image: NSImage
+        switch look {
+        case .off: image = Self.image(.cutIdle, size: 16, template: true)
+        case .listening: image = Self.image(.cutListening, size: 16, template: true)
+        case .voice(let dimmed): image = Self.image(.cutListening, size: 16, color: NSColor.systemRed.withAlphaComponent(dimmed ? 0.4 : 1))
+        }
         image.accessibilityDescription = look.description
         return image
     }

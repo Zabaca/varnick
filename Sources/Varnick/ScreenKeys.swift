@@ -102,7 +102,7 @@ enum ScreenKeys {
     /// default bindings: they end Varnick and every session, or take the Mac from the user. Every other combo goes to the app in front.
     @MainActor
     static func refusal(of combo: KeyCombo) -> String? {
-        let own: [ShortcutAction] = [.toggleLauncher, .pinLauncher, .toggleListening]
+        let own: [ShortcutAction] = [.toggleLauncher, .pinLauncher, .toggleListening, .toggleVoiceMode]
         if own.contains(where: { Settings.shared.combo($0) == combo }) {
             return "\(combo.label) is one of Varnick's own shortcuts, which a session may not press"
         }

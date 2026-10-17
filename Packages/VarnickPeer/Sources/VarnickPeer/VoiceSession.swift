@@ -119,8 +119,9 @@ public enum VoiceHint {
         var words: String { self == .us ? "US" : "metric" }
     }
 
-    /// `searchTool` is false on a host that has no History or Bookmarks (a headless one), where the tool isn't listed.
-    public static func text(device: Device, now: Date, timeZone: TimeZone, units: Units, searchTool: Bool = true) -> String {
+    /// `searchTool` is false on a host that has no History or Bookmarks (a headless one), where the tool isn't listed. `voiceMode` is true for a request
+    /// made on a Mac while its voice mode is on (option 10 of `listening-never-answers`): it was heard without a wake phrase.
+    public static func text(device: Device, now: Date, timeZone: TimeZone, units: Units, searchTool: Bool = true, voiceMode: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
@@ -131,11 +132,15 @@ public enum VoiceHint {
         return "[Said aloud to Varnick \(device.words) on \(day), \(time); \(units.words) units. "
             + "A voice reads your reply: answer in one or two short spoken sentences, with no lists, links, paths, code or Markdown, "
             + "and say where the answer came from in a few words."
-            + (searchTool ? " Varnick's search tool (\(searchToolName)) finds the user's pages, bookmarks and Claude sessions." : "") + "]"
+            + (searchTool ? " Varnick's search tool (\(searchToolName)) finds the user's pages, bookmarks and Claude sessions." : "")
+            + (voiceMode ? " Voice mode is on: this was heard without a wake phrase and may not be meant for you. "
+                + "When the user is done, or it wasn't meant for you, call \(endToolName)." : "") + "]"
     }
 
     /// The search tool's name in Claude Code.
     public static let searchToolName = "mcp__\(MCPServer.name)__search"
+    /// The tool that ends the Mac's voice mode, in the voice session's own set beside search.
+    public static let endToolName = "mcp__\(MCPServer.name)__end_voice_mode"
 }
 
 /// What is typed into a waiting voice session: one line with no control byte in it, so it can't end the bracketed paste early, press a key or open

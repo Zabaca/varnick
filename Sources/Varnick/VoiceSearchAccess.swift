@@ -81,6 +81,7 @@ final class VoiceSearchAccess {
         guard let id = UUID(uuidString: request.pane),
               let caller = model.tabs.lazy.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { throw VoiceSearchRefusal.noPane }
         guard caller.record.isVoice else { throw VoiceSearchRefusal.notVoice }
+        if request.tool == VoiceSearchMCP.endVoiceMode { return endVoiceMode() }
         guard request.tool == VoiceSearchMCP.search else { throw VoiceSearchRefusal.unknownTool(request.tool) }
         let arguments: VoiceSearchArguments
         switch VoiceSearchArguments.parse(request.args.mapValues(\.any)) {
@@ -88,6 +89,15 @@ final class VoiceSearchAccess {
         case .failure(let refusal): throw VoiceSearchRefusal.refused(refusal.message)
         }
         return try await search(arguments, model, own: caller.record.conversationID)
+    }
+
+    /// `end_voice_mode` (option 10 of `listening-never-answers`): this Mac's voice mode ends once the answer to the request in its turn has been spoken. The
+    /// phone's Voice mode is not touched: a request that came from the phone, or none in flight, changes nothing.
+    private func endVoiceMode() -> String {
+        guard let spoken = (NSApp.delegate as? AppDelegate)?.spoken, spoken.endVoiceModeAfterAnswer() else {
+            return "Voice mode is not on for this request, so nothing changed."
+        }
+        return "Voice mode will end once your reply is spoken."
     }
 
     /// The pages the filter would have judged and the sessions the panel would show, as the spoken pipeline's search step finds them: the passes of

@@ -286,20 +286,25 @@ try:
 finally:
     shutil.rmtree(scratch, ignore_errors=True)
 
-# The voice session's search tool (option 09 of listening-never-answers): its own set, named by the app for the voice session's pane alone. Named alone it
-# lists search alone; with the others it comes last. NEVER call it here: with Varnick running and the voice session on, a call from the voice session's
-# pane would search the user's history and sessions (a call from any other pane is refused by the app). Only a call to a server that does not list it is
-# made (below), and that is refused before anything is sent.
+# The voice session's own set (option 09 of listening-never-answers, and option 10's end_voice_mode): named by the app for the voice session's pane alone.
+# Named alone it lists search and end_voice_mode; with the others they come last. NEVER call either here: with Varnick running and the voice session on,
+# a call from the voice session's pane would search the user's history and sessions, or end the Mac's voice mode (a call from any other pane is refused by
+# the app). Only a call to a server that does not list it is made (below), and that is refused before anything is sent.
+voice_tools = ["search", "end_voice_mode"]
 only_search, search_with = listed(["--search"]), listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search"])
-if only_search != ["search"]:
-    fail("--search lists %s, not search alone" % only_search)
-if search_with != screen + only_panel + automation_tools + task_tools + ["notify", "search"]:
-    fail("every set and --search lists %s, with search last" % search_with)
-if listed(["--notify", "--search"]) != ["notify", "search"]:
+if only_search != voice_tools:
+    fail("--search lists %s, not search and end_voice_mode alone" % only_search)
+if search_with != screen + only_panel + automation_tools + task_tools + ["notify"] + voice_tools:
+    fail("every set and --search lists %s, with the voice session's tools last" % search_with)
+if listed(["--notify", "--search"]) != ["notify"] + voice_tools:
     fail("--notify --search lists %s" % listed(["--notify", "--search"]))
 for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--screen", "--panel", "--automations", "--tasks", "--notify"]):
-    if "search" in listed(arguments):
-        fail("%s lists search" % arguments)
+    for name in voice_tools:
+        if name in listed(arguments):
+            fail("%s lists %s" % (arguments, name))
+ending = [t for t in listed(["--search"], full=True) if t["name"] == "end_voice_mode"]
+if ending and (ending[0]["inputSchema"].get("properties") or ending[0]["inputSchema"].get("required")):
+    fail("end_voice_mode is %s: it takes no arguments" % ending[0]["inputSchema"])
 searching = [t for t in listed(["--search"], full=True) if t["name"] == "search"]
 if searching:
     schema = searching[0]["inputSchema"]
@@ -314,6 +319,7 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"),
                         (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look"),
                         ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
+                        ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
                         (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
