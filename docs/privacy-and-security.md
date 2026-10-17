@@ -338,6 +338,13 @@ mark done or restart a session, Varnick's shortcuts that work anywhere, quit, pa
 session, turn on Listening or open a page. Varnick's log holds the tool and counts, never the keys. If you don't want a session
 to press keys in your panel, leave Panel access off.
 
+With **Sessions can open panes** also on (off by default), those sessions can open a terminal, a Claude session, a custom app, a page
+or a file beside their own pane, in their own tab on this Mac, and close the panes they opened until you first focus one. Nothing new is
+read or sent because of it: a Claude session they open is an ordinary pane, which draws on your Claude subscription, and it skips permission
+checks only while Skip permissions is on and the session that opened it skips them too. A terminal opens empty. Nothing limits how many
+panes a session opens. Varnick's log holds the tool, the kind of pane, the outcome and the time, never a prompt, an address or a path. If you
+don't want a session to change your tabs, leave this off.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the

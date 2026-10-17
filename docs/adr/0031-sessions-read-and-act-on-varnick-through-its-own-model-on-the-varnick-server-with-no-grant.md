@@ -85,3 +85,13 @@ ADR 0023 says "Never Varnick's own window" and gives no reason. The reason, foun
 - **A hand test through `show`, `outline_act` and the reads checks the model; `keys` checks the key path.** How it looks is still a screen picture's job.
 - **Adding a view's tools is adopting `PanelAccessView` and one line in the registry.** The router keeps the switch, the pane, the ids, the refusals, the log and the reply.
 - **The Outline's reading and its edits have shipped** (`outline_read` and `outline_act`, above). An edit that lands in the bullet being typed in goes into that text view as a key does (above).
+
+## Amendment: sessions now change a tab's layout (2026-10-17)
+
+Panel access began as read and show: nothing a session called added or closed a pane, and `keys` refused starting one. `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`) are the first tools that change a tab's layout, so they have a switch of their own, **Sessions can open panes** (Settings › Claude, under Panel access, off by default, and needing Panel access on), and a set of their own, `--panes`, listed to a session started or restarted while both are on.
+
+- **What they do.** A session opens a terminal, a Claude session with a first message, a custom app, a page or a file beside its own pane, in its own tab on this Mac, and closes the panes it opened until the user first focuses one. Focus stays where it was, the panel is never raised, and nothing limits how many panes are opened (the user's choices).
+- **Same route, no new request.** The calls are Panel access's request with new tool names, answered by its router after its own checks and then the switch of their own, the tab's lock and the hidden tab. Both switches are read at every call.
+- **No more power than the caller has.** A new Claude pane skips permission checks only while Skip permissions is on and the calling session was started skipping them; with the caller asking, Claude Code asks before each call. A terminal opens empty: nothing is typed into it, so a command still runs in Claude's own Bash, under its permission checks.
+- **This Mac's own tabs only.** A tab another Mac or a device controls, a headless host, and the voice session's hidden tab are refused.
+- **Privacy.** Nothing new is read. The log holds the tool, the kind, the outcome and the time.

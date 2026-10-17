@@ -87,6 +87,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var voice: Bool?
     var isVoice: Bool { voice == true }
 
+    /// The pane whose session opened this one with `pane_open` (option 01 of `panes-open-only-by-hand-at-a-mac`): that session may close it with
+    /// `pane_close` until the user first focuses it, which clears this (`ClaudeSession.becameUsers`). Saved with the pane, so it survives a restart.
+    /// Optional so older records load, and an older build ignores it.
+    var openedBy: UUID?
+
     /// A run of an automation or a step of a Task's Run: its MCP server lists `notify` (and a step's `task_result`) alone, whatever the switches say.
     var isRun: Bool { automation != nil || taskRun != nil }
 

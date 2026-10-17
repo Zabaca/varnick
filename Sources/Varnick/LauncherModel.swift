@@ -2260,6 +2260,12 @@ final class LauncherModel: ObservableObject {
             if let tab { self?.arrangeOnHost(tab) }
         }
         tab.layoutLock = { [weak self, weak tab] in tab.flatMap { self?.layoutLockReason(of: $0) } }
+        // The first time the user focuses a pane a session opened, it is theirs: `pane_close` refuses it from then on.
+        tab.onFocus = { [weak self] pane in
+            guard let self, !self.sessionIsChangingView, pane.record.openedBy != nil else { return }
+            pane.becameUsers()
+            self.saveSessions()
+        }
         tab.onMove = { [weak self, weak tab] moved, change in
             if let self, let tab { self.movePane(moved, in: tab, change) }
         }
@@ -3369,6 +3375,9 @@ final class LauncherModel: ObservableObject {
     func applyFontSize(_ size: Double) {
         for tab in tabs { for session in tab.sessions { session.setFontSize(size) } }
     }
+
+    /// True while a session's `show` changes the view (`PanelAccess`): a focus it moves is not the user's, so it does not make a pane the user's.
+    var sessionIsChangingView = false
 
     /// ⌘W: ends the focused pane; its exit handler picks what to show next.
     func endClaude() {
