@@ -1,8 +1,9 @@
 ---
 problem: listening-never-answers
-title: Claude answers through the Messages API, with the sources as tools run in Launchy
+title: Claude answers through the Messages API, with the sources as tools run in Varnick
 summary: Wake and response as in option 01, but the spoken request goes to Claude on Anthropic's API with option 02's four tools, which Launchy runs in-process. Claude decides which sources to search, may read a session, and writes the answer. Better reasoning than a 2-billion-parameter model, but the request and every row Claude reads (page titles, sites, descriptions, bookmark folders, session prompts and replies) go to Anthropic. That reverses a rule Launchy keeps today, so it needs its own switch, an API key and an ADR.
-status: proposed
+status: rejected
+reason: Option 09 shipped instead. Claude answers in the user's own Claude Code session, with the sources as its search tool, so no API key and no second way to Anthropic are needed.
 ---
 
 ## Solution

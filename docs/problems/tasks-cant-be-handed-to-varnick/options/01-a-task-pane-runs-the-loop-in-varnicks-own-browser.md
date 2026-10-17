@@ -2,7 +2,7 @@
 problem: tasks-cant-be-handed-to-varnick
 title: A Task pane, a browser of Varnick's own where the harness runs the loop, Jev chooses each step and Claude writes and steers
 summary: The first slice, behind a Tasks switch in Settings › Experimental. `!task`, or the split picker's Task tile, opens a Task pane. It is a browser of Varnick's own, whose website data is empty when the pane opens and gone when it closes, with a column of steps beside the page. The user opens a site and types the task, such as finding a fact on it ("how much is delivery to Canada") or filling its forms ("create an account for Robin Vale"). Varnick carries it out on the pilots' design. The harness owns the loop: a best-first frontier that peeks at every link, a value bank for forms, checks in code and rules for getting stuck. Jev picks each step from a list the harness writes and acts at 0.7. Claude, through the user's own Claude Code, writes the values and steers when Jev is unsure, seeing the harness state and the trail. It reads and acts inside the page, never on the screen, so it needs no permission. The user types passwords, codes and card numbers into the page, ticks terms and allows every form submit. A click or a key in the page pauses the task, and Stop ends it. Short lines are spoken at milestones. Without Jev, Claude makes Jev's choices, more slowly. Recommended. Rough effort is a spike of one or two days, then about three weeks.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -354,3 +354,4 @@ Recorded at the coordinator's direction after the first slice was reviewed. They
 - **Deferred to a later ticket:** Claude's alarms (a surprise wakes it), and waking Claude on harness signals (no progress, a loop, a budget nearly spent). The pilots found alarms noisy, and the harness's own rules got a task unstuck better than Claude did.
 - **The reference implementation is hybrid-browser-15, not -13** (agent-lab, later, and it fixed the wizard). Follow-up tests 1 and 3 ran in agent-lab hybrid-browser-14 (`19d53ca`): no word rules passed (the answer's shape asked of System 1 matched the marker list's outcomes on the tasks that read), and peeking even when System 1 is confident partly passed (the dead end came down from 13 and 24 s to 9.6 s, not to the 5 s target; hybrid-browser-15's peek on every page load made it 7.8 and 8.8 s).
 - **Fine as built:** giving Jev up after three failures in a row, and eight answer shapes (the pilots' seven and "none, an action" for a task that reads nothing out).
+- **Shipped,** marked 2026-10-17: the merge of 2026-10-15 built this option less the deferred ticket above (Claude's alarms, and waking Claude on harness signals), which is neither written nor built.

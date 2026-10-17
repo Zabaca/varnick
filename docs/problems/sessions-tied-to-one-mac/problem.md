@@ -1,5 +1,5 @@
 ---
-title: A Claude session can only be used from the Mac whose Launchy started it
+title: A Claude session can only be used from the Mac whose Varnick started it
 description: The user runs Launchy on two Macs. A Claude session runs in the zmx of the Mac that started it, and only that Mac's Launchy can show it, type into it, resume it or find it. From the other Mac the user can't start a session that runs on the first, can't pick up a session already running there, and doesn't see its conversations in Recent or search.
 impact: Moving between the two Macs means leaving work behind. A session started on one Mac can't be continued from the other without going back to it, and a finished conversation can't be found or resumed from the other Mac. Long sessions, whose subagents and background work zmx now keeps alive, stay stuck on the Mac they started on.
 severity: mid

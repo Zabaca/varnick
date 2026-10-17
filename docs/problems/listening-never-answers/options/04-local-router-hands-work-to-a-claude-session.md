@@ -2,7 +2,8 @@
 problem: listening-never-answers
 title: Option 01 plus a hand-off, where a request for work becomes a prompt for a new Claude session
 summary: Option 01's deciding step gains a fifth answer, `claude`, for requests to get something done rather than found ("ask Claude to fix the deploy in launchy"). Launchy puts the request into the panel's prompt line, with `#project` when one was named, as if typed. It says it is ready, and the session starts only when the user presses ↩. Finding stays local, as in option 01. Only what the user said goes to Claude, and only on ↩, as a typed prompt does today.
-status: proposed
+status: rejected
+reason: Option 09 shipped instead. The voice session is a Claude Code session that does the work it is asked for, so a request for work needs no hand-off to a typed prompt.
 ---
 
 ## Solution

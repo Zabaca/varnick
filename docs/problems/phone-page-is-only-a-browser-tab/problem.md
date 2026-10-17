@@ -4,7 +4,7 @@ description: The Phone page opens in the phone's browser as an ordinary tab. It 
 impact: Away from the desk, a session waiting on a permission dialog or a question sits idle until the user happens to open the page, as it does at the desk today (sessions-finish-unnoticed). The page is the only way to reach sessions from the phone, and reaching it means finding a browser tab and its address for each host. On an iPhone, Web Push exists only for a web app on the Home Screen, so the two halves of the request can't be split there.
 severity: mid
 evidence: The user's request of 2026-10-14, relayed by the coordinator ("I wish I could install the mobile app as a PWA and also support push notifications"). Code and docs read at 904d138 (main) on 2026-10-14; nothing was run, served, installed or sent. The browser and push-service facts below come from Apple's, WebKit's, Google's and the Web Push RFCs' published documentation as known to the planner, not re-read for this problem and not tested on a phone. They are marked inferred.
-status: open
+status: closed
 ---
 
 ## What the user wants

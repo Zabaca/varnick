@@ -1,6 +1,6 @@
 ---
 problem: panes-share-launchys-permissions
-title: Start pane processes with responsibility disclaimed, so macOS checks them as themselves and not as Launchy
+title: Start pane processes with responsibility disclaimed, so macOS checks them as themselves and not as Varnick
 summary: The planned way to make Launchy the only path to the screen, later. Measured from a pane on 2026-10-09, a process started with `posix_spawn` and the private `responsibility_spawnattrs_setdisclaim(&attrs, 1)` is no longer attributed to Launchy. Its Accessibility and Screen Recording checks read false, and so do a shell started that way and its children. `osascript` to System Events and `screencapture` were refused, and macOS's prompt named zsh, not Launchy. This option starts every pane's process that way. Sessions would stop getting Launchy's grants, and Launchy's tools (`sessions-cant-see-or-act-on-the-screen` option 01) would become their only way to the screen, so that option's deferred permissioning could gate something. It is untested whether it holds through zmx's client and daemon, and whether SwiftTerm's view can drive a terminal Launchy started itself, since SwiftTerm starts its child with `forkpty` today. Panes lose Launchy's microphone too.
 status: proposed
 ---

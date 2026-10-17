@@ -1,5 +1,5 @@
 ---
-title: Launchy can't show where each problem stands, or which sessions are working on it
+title: Varnick can't show where each problem stands, or which sessions are working on it
 description: A repo's problems and options say where each piece of work stands, and the Claude sessions in Launchy do that work, but nothing connects the two. The session board shows sessions by turn and nothing else. To see which problems are decided, being built or shipped, the user reads the files. Which session or subagent works on which problem is recorded nowhere; only the transcripts hint at it.
 impact: With many sessions and subagents running at once, across Macs, the user loses track of what is being built and what waits on a decision. Statuses drift unnoticed (twelve options still said accepted after they were built). A link worked out from transcripts after the fact is a guess: the prototype needed weighted tiers and still couldn't tell a session that read a problem from one that worked on it.
 severity: mid

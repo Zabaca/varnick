@@ -4,7 +4,7 @@ description: When more tabs are open than fit across the tab strip at the top of
 impact: Work in a hidden tab is forgotten. A hidden session waiting on a permission, a question or a plan sits unseen unless the session board is opened. Reaching a hidden tab means stepping through the tabs before it, one at a time. Each project the user works on at once makes it worse.
 severity: mid
 evidence: The user's words and screenshot of 2026-10-13, relayed by the coordinator. The screenshot is not committed. Code read at 38b6d42 (main is 52a5191, and the tab strip, the pills, the settings and the key bindings are the same on both). Nothing was run.
-status: open
+status: closed
 ---
 
 ## What the user asked for (2026-10-13)

@@ -1,6 +1,6 @@
 ---
 problem: orchestration-lives-in-one-session
-title: A task engine in Launchy runs every workflow, and Claude sessions are its workers
+title: A task engine in Varnick runs every workflow, and Claude sessions are its workers
 summary: Launchy gets its own engine, a Bun process written with Effect, that is the only orchestrator. A task has a type, each type has a workflow (a state machine of steps), and workflows nest. Every transition goes into an event log; the user's decisions are states a task waits in; an agent runner starts Claude sessions, headless or as panes the user can watch, and records their session ids so a crash reattaches instead of re-running; verify and fan-out are step types with per-task concurrency and token budgets; tickets, specs, findings and the links between them belong to the engine. Built in four steps, the first with no agents at all. The leading candidate after the 2026-10-03/04 discussion.
 status: proposed
 ---

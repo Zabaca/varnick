@@ -1,6 +1,6 @@
 ---
 problem: pane-kinds-are-built-in
-title: Custom apps are local web servers Launchy runs, and Scratch becomes one
+title: Custom apps are local web servers Varnick runs, and Scratch becomes one
 summary: A custom app is a folder with a small manifest and a Bun entry file, found in the focused pane's project or in the user's folder each time the split picker opens, and listed there after the built-ins. Picking one runs `bun run <entry>` in the new pane's zmx session with a port and a few environment variables, and shows the server in a web pane. Scratch is rewritten in Bun as the first custom app, kept in this repo; it serves a scratch area inside the project, and a project skill tells Claude about it. Launchy keeps no Scratch code. A `custom-apps` skill, written with the feature and reachable from any project, teaches agents what a custom app is and how to build and test one.
 status: shipped
 ---

@@ -1,6 +1,6 @@
 ---
 problem: peers-upgraded-by-hand
-title: The same builds and target, with Launchy running the upgrade and showing its progress in Settings
+title: The same builds and target, with Varnick running the upgrade and showing its progress in Settings
 summary: Builds, the target, the probe, the refusals and the three upgrade scripts are option 01's. The difference is where the scripts run. Upgrade starts them in a zmx session of their own, as Launchy runs the Phone page server, rather than in a terminal tab. The row in Settings › Peers shows the step and the time it has taken. A failure shows the log's last lines with Retry, and Cancel works until the restart begins. The log stays in a file to open in a pane.
 status: rejected
 reason: Not built (ADR 0013). Option 03 was built instead, since a Launchy started from an SSH login lacks the GUI session's Keychain, and launchctl there starts a second Launchy beside one make run started.

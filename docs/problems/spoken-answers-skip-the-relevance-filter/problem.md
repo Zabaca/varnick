@@ -1,5 +1,5 @@
 ---
-title: Hey Launchy answers from results the relevance filter would demote
+title: Hey Varnick answers from results the relevance filter would demote
 description: A spoken request reads the top five pages of the panel's ranking as they stand before the relevance filter, the pass that moves the pages that match a search to the top. The panel's `?` search runs the filter and Hey Launchy doesn't, so the spoken answer can name a page the panel shows under "Less relevant" and miss the one the panel puts first. The answer also names one result even when the request asks for several.
 impact: The user hears a confident answer that names the wrong page, and has to open the panel and type the search to find the right one, which is what Hey Launchy is meant to spare them. Spoken requests tend to describe a page rather than name it, and that is where the filter helps most (on TypeSafe, +0.115 to +0.191 MRR on searches that describe a page without its title's words; see relevance-filter-needs-typesafe).
 severity: mid

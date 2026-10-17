@@ -2,7 +2,8 @@
 problem: listening-never-answers
 title: A web answer searches Exa with the user's own key, and Text generation writes it
 summary: Option 07's web step splits in two. Varnick searches Exa itself with the user's Exa key, sending only the request's words. The writer the user set in Settings › Text generation (Claude Code, this Mac's Gemma or their server) then turns the top results into one or two spoken sentences naming the source, from the numbered results only. A reply that names no result is not spoken as an answer. Exa replaces Claude Code's WebSearch, so the web no longer needs Claude Code logged in, the text helper goes back to no tools, and the request no longer goes to Anthropic's search provider. Exa's own answer endpoint is not used. When the web is asked, the switch, "Looking that up." and the spoken form stay as option 07 has them.
-status: accepted
+status: rejected
+reason: Superseded by options 09 and 10. The pipeline whose web step this option splits is now Experimental and off by default, and the voice session answers from the web through Claude Code's own web tools.
 ---
 
 ## Solution

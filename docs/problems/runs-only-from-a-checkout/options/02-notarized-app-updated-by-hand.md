@@ -2,7 +2,7 @@
 problem: runs-only-from-a-checkout
 title: A notarized Varnick.app, made by `make app` and updated by downloading the next one
 summary: Accepted on 2026-10-09, with updates left for later (options 03 and 04 stay proposed). Option 01's signing, plus a `make app` target that wraps the same build in Varnick.app with the Fold as its icon. It signs the app inside out with a secure timestamp, notarizes and staples it, and zips it as Varnick.zip for a GitHub release the user publishes. Varnick finds its files in its resource folder, whether it runs from a checkout or as the app. Its database moves to Application Support in every mode. The database step of the rename's first-launch migration copies it there once and leaves the checkout's file in place. One copy runs per account. The app opens at login through Login Items, writes its own log and restarts itself. An installed app is updated by downloading the next zip; Upgrade and Restart keep working on Macs that run a checkout. It is built on the rename's integration branch. Rough effort is a week and a half, about half of it signing round trips and checks by hand.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -301,3 +301,5 @@ There is no test target. `make build` must still pass on a Mac without the ident
   6. Docs and the ADR (AFK, after 1 to 5).
   7. The app checked on another Mac (the user, after 6 and the rename's merge).
   8. The first published build (the user, after 7, the hosting decision and going public).
+
+**Shipped, marked 2026-10-17.** Tickets 1 to 6 merged on 2026-10-09 and 10-10, and three builds were published as GitHub releases on 2026-10-10, which is ticket 8. Ticket 7, the user's check of the app on another Mac or a fresh account, is unverified: nothing records it.

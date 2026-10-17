@@ -1,6 +1,6 @@
 ---
-title: A Claude session can only run on a Mac that runs Launchy
-description: The user has a Linux box, a 24-core Ryzen, that runs no GUI and can't run Launchy's app. Option 01's first three tickets are built, so from either Mac the user starts Claude sessions that run on it in zmx, attaches to them and takes them over, ends or releases them, and finds its ended ones in Recent. What remains is search. The Ryzen's relay answers `rows` with nothing, so none of its conversations can be found from either Mac's search (option 01's ticket 4).
+title: The headless host's Claude sessions can't be found by search
+description: The user has a Linux box, a 24-core Ryzen, that runs no GUI and can't run Varnick's app. Option 01's first three tickets are built, so from either Mac the user starts Claude sessions that run on it in zmx, attaches to them and takes them over, ends or releases them, and finds its ended ones in Recent. What remains is search. The Ryzen's relay answers `rows` with nothing, so none of its conversations can be found from either Mac's search (option 01's ticket 4).
 impact: A conversation held on the Ryzen can be found only by scrolling Recent, never by what was asked or said in it, while each Mac's own conversations, and a paired Mac's, come up in search.
 severity: mid
 evidence: The user's request of 2026-10-05. Read-only checks on the Ryzen over `ssh -o BatchMode=yes alex@linux-box` on 2026-10-05 (below). Code read at fd3d8be. The source of the user's existing fleet tooling (a separate repo) read for prior art: its decision records, shared scripts and terminal installer. The accepted live view, frozen-screen-not-live option 04. Nothing was installed or started on the Ryzen, and no zmx session or claude was run there.

@@ -4,7 +4,7 @@ description: Hey Varnick's answers, and its decide step whenever Jev doesn't dec
 impact: Hey Varnick can't be turned on until Gemma is downloaded or a server passes its Check. Answers come from a small model whose prompts were cut down to suit it. After ten idle minutes Gemma unloads, so the next spoken request waits while it loads again (1.3 s, plus about 2.8 s of shader setup on the first one after launch). No answer is lost or wrong today. The cost is the setup, the memory and the quality of the answers.
 severity: low
 evidence: The user's request of 2026-10-10. The code was read on 2026-10-10 at 53e4064, and the help of `claude` 2.1.296 the same day. What one `claude -p` call costs in time is unmeasured; an eval in agent-lab is timing it, and its figures go under "Measured". The figures on what a bare call carries are from zbc's `@zabaca/agent` README (measured on Claude Code 2.1.220 and 2.1.291), not rerun here.
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-10)

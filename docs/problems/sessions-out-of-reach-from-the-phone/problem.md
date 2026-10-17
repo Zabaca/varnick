@@ -1,5 +1,5 @@
 ---
-title: Launchy's sessions can't be reached from the phone
+title: Varnick's sessions can't be reached from the phone
 description: The user's Claude sessions run on their Macs, and soon on a Linux box, and can only be seen, typed into or started from a Mac running Launchy. Away from the desk, from their Android phone (a Pixel 8a on the tailnet), they can't see which sessions run on a host, can't answer or take over one, and can't start a new one in a project with an agent.
 impact: A session waiting on a question or a permission sits idle until the user is back at a Mac. Work can't be started from the phone, so ideas wait as well. The ways the user tried, Termux or an SSH app and Claude Code's Remote Control, are ruled out (below), so today there is no way at all.
 severity: mid

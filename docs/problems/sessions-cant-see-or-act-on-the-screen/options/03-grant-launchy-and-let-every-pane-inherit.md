@@ -1,6 +1,6 @@
 ---
 problem: sessions-cant-see-or-act-on-the-screen
-title: Grant Launchy Accessibility and Screen Recording, and let every pane's session inherit them
+title: Grant Varnick Accessibility and Screen Recording, and let every pane's session inherit them
 summary: The baseline, and today's real state whenever Point at the screen is granted. macOS attributes every pane process to Launchy, zmx-hosted ones included (measured from its privacy service's log on 2026-10-09). So while Launchy holds Accessibility and Screen Recording, every session sees and controls the screen directly, with any tool: screencapture, osascript, the user's helper, bigarrow or its own code. Launchy builds nothing. Nothing asks, nothing shows it and nothing records it, Skip-permissions sessions included, and any of them can click Allow in Launchy's own prompts. Recommended: reject as the lasting answer. This option was first "grant zmx" and then "keep a granted helper"; neither grant is consulted.
 status: rejected
 reason: It is today's state, not an answer. While option 01's permissioning is deferred, pane processes keep Launchy's grants, as this option describes. The planned end is that they stop getting them (panes-share-launchys-permissions option 01, a disclaimed spawn measured on 2026-10-09), leaving Launchy's tools as the only way to the screen.

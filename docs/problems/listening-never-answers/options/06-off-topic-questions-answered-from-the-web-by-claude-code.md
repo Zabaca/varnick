@@ -2,7 +2,8 @@
 problem: listening-never-answers
 title: Every spoken request is acknowledged by its route, and a question the user's own things don't answer is answered from the web by their own Claude Code
 summary: Its web triggers and per-route acknowledgements are superseded by option 07 (2026-10-14); its web call, switch, privacy text, clock answer and can't-do line stand. Two changes. First, every spoken request is acknowledged as soon as its route is known after the hold ("Checking your sessions.", "Checking your pages.", "Looking at your screen.", "Looking that up."), and the answer follows the acknowledgement without cutting it off. This changes the shipped local and screen answers for every Hey Varnick user. "What time is it" is answered from the clock and "set a timer" gets a fixed line, with no acknowledgement. Second, a new switch, Answer from the web, off by default, answers from the web a request Jev finds off-topic, instead of refusing it, and a request led by History whose local search finds nothing, instead of saying so. The text helper runs the user's own `claude` with one tool, WebSearch, on their plan, and Varnick speaks a one- or two-sentence answer naming its source. Only the question's words, the date, the time and the units go to Anthropic, and Claude's search words to its search provider. The switch needs Hey Varnick, the relevance filter on TypeSafe (Jev's off-topic and the filter's verdict decide what goes) and Claude Code logged in.
-status: accepted
+status: rejected
+reason: Superseded by options 09 and 10. Hey Varnick's requests go to the voice session, which says "Let me check." as it takes one and answers from the web through Claude Code, and the pipeline whose acknowledgements and web step this option changes is now Settings › Experimental › Answer with Varnick's own steps, off by default. Its branch was never merged.
 ---
 
 ## Solution

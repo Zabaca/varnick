@@ -2,7 +2,8 @@
 problem: listening-never-answers
 title: Gemma on this Mac calls the three sources as tools
 summary: Wake, response and privacy as in option 01, but the steps aren't fixed. This Mac's Gemma 4 E2B runs a short tool loop with four tools: search History, search Bookmarks, search sessions, and read one session, including Claude's last reply. It may search more than once or read a session before it answers. Searches use option 01's search apart from the panel, and the answer is only spoken. Runs on this Mac only.
-status: proposed
+status: rejected
+reason: Option 09 shipped instead. Every spoken request goes to the voice session, a Claude Code session with a search tool over History, Bookmarks and sessions, which chooses what to search and reads sessions itself.
 ---
 
 ## Solution

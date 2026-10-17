@@ -1,6 +1,6 @@
 ---
 problem: sessions-out-of-reach-from-the-phone
-title: The Mac's running Launchy serves the page itself
+title: The Mac's running Varnick serves the page itself
 summary: Launchy gets an HTTP and websocket server of its own, on an owner-only Unix socket published with `tailscale serve`. It answers the phone from its own model, with the same host functions a peer's requests reach, and runs the phone's terminals in pseudo-terminals of its own. Devices, checks, the page and the reconnect rules are as in option 01. Mac only. It meets everything but the user's Linux requirement, and puts a listener in the app.
 status: rejected
 reason: Not chosen in ADR 0011. It is Mac only and puts a listener in the app, and the Linux host needs the page too.

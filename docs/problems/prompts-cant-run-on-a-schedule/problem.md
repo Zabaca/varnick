@@ -4,7 +4,7 @@ description: The user wants automations, work that runs on its own on a cadence.
 impact: Recurring work is started by hand each time, or moved to schedulers that miss part of what the user needs. Examples are a morning summary, a nightly check of a repo, or triage every few hours. Claude Code's cloud routines can't reach the Mac, the headless host or their folders. `/loop` ends with its session. Claude Desktop's scheduled tasks run only on a Mac that is awake with the app open, and report nowhere Varnick shows: the menu bar, the phone's push, the board.
 severity: mid
 evidence: The user's request of 2026-10-15 and three decisions, relayed by the coordinator (below). Claude Code's scheduling limits, checked by the coordinator the same day against Claude Code's docs on routines, scheduled tasks and Desktop scheduled tasks. The permission modes from `claude --help` of Claude Code 2.1.301 on this Mac. Code and docs read at d70f766. Nothing was run, scheduled or installed, and launchd wasn't touched.
-status: open
+status: closed
 ---
 
 ## What the user wants (2026-10-15)

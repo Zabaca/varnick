@@ -1,10 +1,10 @@
 ---
-title: Hey Launchy can't see or point at what is on the screen
+title: Hey Varnick can't see or point at what is on the screen
 description: The user wants to ask Hey Launchy about something in front of them ("where's the Allow button", "which one is the save button", "what is this") and have Launchy notice that the request is about the screen, find the thing, point at it with a big arrow and a sign, and say the sign's note aloud. Since 2026-10-09 Launchy does this for another app's focused window, from its Accessibility tree (option 01, ADR 0019), then from the text in a picture of it read on this Mac (option 02, ADR 0021). What remains is Launchy's own panel, which is never read (option 05, being built), an icon with no label or text, which neither step finds (options 03 and 04), and the filter set On this Mac, where nothing points (no option yet).
 impact: A question about a name in Launchy's own panel gets "I can't see that on your screen", an unlabelled icon isn't found, and a user who keeps search On this Mac gets no pointing at all. The user is left to hunt for the control themselves, at the moment a pointing hand would help most, in an unfamiliar dialog, a crowded toolbar or a setting buried in a pane.
 severity: low
 evidence: The user's request of 2026-10-09, relayed by the coordinator with the directions below. The code was read on 2026-10-09 at 0b9249d. The reference project big-arrow-on-the-screen (MIT) and TypeSafe's Choice and API docs were also read on 2026-10-09. An eval in agent-lab compared Jev and Gemma on screen requests on 2026-10-09 (section below). After option 01 shipped (merge 63807cc), a spoken request on 2026-10-09 for a name shown in Launchy's own open panel got "I can't see that on your screen", since Launchy's own windows are never read; the transcript is kept locally.
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-09)

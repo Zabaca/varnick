@@ -4,7 +4,7 @@ description: Search embeddings and Text generation run only inside Launchy, on e
 impact: Each Mac that wants both roles downloads 650 MB and 3.6 GB, holds about 0.65 GB and 2.5 GB while they are loaded, and runs the whole embedding backlog on its own GPU and battery. Each model unloads after 10 idle minutes, so the next search after a pause waits about 1.75 s for the embedder to load again, and the next spoken answer waits for Gemma. A Mac that skips the downloads gets keyword-only search and no spoken answers.
 severity: low
 evidence: Measured and read on 2026-10-07 (below), with fixed made-up sentences and counts only, never the user's text. Latency figures for this Mac were measured by the coordinator; the GPU figures come from the spike report of the same day. Neither was rerun for this problem.
-status: open
+status: closed
 ---
 
 ## Today

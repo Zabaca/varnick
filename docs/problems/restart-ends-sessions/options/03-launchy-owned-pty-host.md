@@ -1,6 +1,6 @@
 ---
 problem: restart-ends-sessions
-title: A Launchy-owned terminal host
+title: A Varnick-owned terminal host
 summary: A second, small Launchy executable owns every pane's pseudo-terminal and process, outlives the app, and streams each pane to Launchy over a Unix socket, restoring the screen on reconnect.
 status: rejected
 reason: It is option 01 written and maintained here. It needs the same per-session daemon, socket protocol, screen restore and version skew, and adds a second executable target and a protocol to keep compatible across builds. Reconsider only if zmx proves unworkable and its reason no longer holds, for instance if SwiftTerm can't render zmx's restored screens.

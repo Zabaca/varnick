@@ -2,7 +2,8 @@
 problem: prompts-cant-run-on-a-schedule
 title: Automations are files the user arms, so a Claude session can write one
 summary: Option 01's firing, runs, notices and limits, but an automation is defined in a markdown file, not in a list Settings owns. Its frontmatter holds the cadence, host, folder, agent, permission choice and allowed tools, and its body is the prompt. Files live in an automations folder beside a project's custom apps folder, or in the user's own automations folder. Varnick finds them as it finds custom apps (ADR 0002's "comes from disk"). Nothing in a file fires until the user arms it in Settings › Automations, and arming pins the file's contents: any edit disarms it until it is armed again. A Claude session makes or changes an automation by writing the file, with no new tool, and the user sees "new, not armed" in Settings and on the board's Runs tab. Proposed as a later way in on top of option 01's Settings editor, not in place of it.
-status: proposed
+status: rejected
+reason: Slice 3 of option 01, merged on 2026-10-15, lets a session create, edit and switch automations through Varnick's MCP tools with no arming step, by the user's decision, which replaced this option's files.
 ---
 
 ## Solution

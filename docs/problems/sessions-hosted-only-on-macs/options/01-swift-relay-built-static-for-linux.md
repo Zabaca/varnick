@@ -1,8 +1,8 @@
 ---
 problem: sessions-hosted-only-on-macs
-title: Launchy's relay, built for Linux on the Ryzen, hosts sessions there with no app
+title: Varnick's relay, built for Linux on the Ryzen, hosts sessions there with no app
 summary: The relay's protocol code moves into a Foundation-only local package that the Mac app and a new Linux relay both build from. Hosts differ at one seam with two adapters. A Mac host hands start, end and the lists to its app, as today. A headless host does all of it itself, from a state folder it owns. An installer shaped like the existing fleet tooling's sends that package to the Ryzen, which builds the Linux relay itself. To the Macs the Ryzen is one more peer; a Mac changes in where its SSH command looks for the relay, and in how a headless peer shows (Decided by the user, 6).
-status: accepted
+status: in-progress
 ---
 
 ## Solution

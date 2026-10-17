@@ -1,6 +1,6 @@
 ---
 problem: sessions-finish-unnoticed
-title: Option 01, plus macOS notifications Launchy posts itself once it runs as Launchy.app
+title: Option 01, plus macOS notifications Varnick posts itself once it runs as Varnick.app
 summary: Option 01, plus a macOS notification for each notice, posted by Launchy in its own process, but only when it runs from an app bundle. Today no Launchy runs from one; runs-only-from-a-checkout's options 02 to 04 would make Launchy.app. Every one of those options keeps the checkout build, which the user's Macs run, a bare executable, and there Launchy never touches the notification center (expected to end the process) and keeps option 01's menu bar mark and sound. One process, Launchy's own name and permission entry, no helper and no messages between processes. Banners, clicks, withdrawal and the permission prompt are as in option 02. Rough effort is a day and a half on top of option 01, once Launchy.app exists.
 status: proposed
 ---

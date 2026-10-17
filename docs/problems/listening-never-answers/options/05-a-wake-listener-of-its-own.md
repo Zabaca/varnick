@@ -1,6 +1,6 @@
 ---
 problem: listening-never-answers
-title: A wake listener of its own, tuned to "Launchy", that runs without Listening
+title: A wake listener of its own, tuned to "Varnick", that runs without Listening
 summary: Replaces option 01's way of hearing the wake phrase; the other steps are whichever option is accepted. A separate mic analyzer uses Apple's `DictationTranscriber` with a custom language model that knows how "Launchy" is pronounced, and listens only for the wake phrase and the request after it. It runs whenever Hey Launchy is on, whether Listening is on or off, and writes nothing to the transcript. It hears "Launchy" more reliably and doesn't require transcribing everything, at the cost of the mic being in use all the time.
 status: proposed
 ---

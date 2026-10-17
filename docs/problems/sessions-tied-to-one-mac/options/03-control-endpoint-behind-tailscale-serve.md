@@ -1,6 +1,6 @@
 ---
 problem: sessions-tied-to-one-mac
-title: A Launchy endpoint behind `tailscale serve` for control; SSH only for the terminal
+title: A Varnick endpoint behind `tailscale serve` for control; SSH only for the terminal
 summary: Each Launchy serves a small HTTP API on loopback, published to the tailnet with `tailscale serve`, as the user's existing browser terminal publishes its Picker. Peers find each other, start sessions, take over, follow changes and pull search rows through it, with changes pushed instead of polled. SSH carries only the terminal bytes, through `ssh -t` to the host's zmx.
 status: rejected
 reason: Not chosen in ADR 0007. It adds a second door beside SSH with weaker authentication, and a listener in Launchy.

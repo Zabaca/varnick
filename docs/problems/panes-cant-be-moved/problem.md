@@ -4,7 +4,7 @@ description: Each pane stays where it was split off. The user can drag a divider
 impact: The layout stays as it grew, split by split. Rearranging means closing panes and splitting again. Closing ends a terminal's shell. It ends a Claude pane's session too, leaving its conversation in the tab's history to resume. The user works in several panes per tab, so a layout that no longer fits the work is either kept as it is or rebuilt by hand.
 severity: low
 evidence: The user's words of 2026-10-14, relayed by the coordinator. The code was read at b762537 (main). Nothing was run.
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-14)

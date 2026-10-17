@@ -2,7 +2,7 @@
 problem: prompts-cant-run-on-a-schedule
 title: Each host fires its own automations, and a run is a Claude pane in zmx that stays out of sight until opened
 summary: Behind an Automations switch in Settings › Experimental. Automations are made and edited in Settings › Automations on any Mac. Each one has a name, a prompt, a folder, an optional agent, a host, a cadence chosen from presets, and permissions. It is kept on the host that runs it, and that host fires it. On a Mac, the running Varnick checks once a minute, at launch and on wake. On the headless host, a systemd user timer runs the relay once a minute, so nothing stays running. A due run starts a Claude pane exactly as a typed prompt would, in zmx, in a run tab of its own. The tab is kept out of the strip, the session list, the board and Recent until the user opens it from the board's Runs tab or from a notice. The notices need nothing new: Done is finished, Needs you is stuck, and errors and Messages work as in any pane. A run missed while the Mac slept or Varnick was quit runs once when it wakes or launches, if the slot is under 12 hours old. A run never overlaps itself, stops at a time limit, and ends its process 10 minutes after it finishes, so its conversation is resumed when opened. A run's permissions follow Settings › Claude's Skip permissions, as a typed prompt's do, unless the automation overrides them. A run never gets Screen access or Panel access tools. Accepted 2026-10-15. Slice 1 is this Mac only, with no protocol bump. Slice 2 is the headless host, with protocol 29.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -761,3 +761,7 @@ It never calls a tool the set lists. With Varnick running on the user's Mac, tha
 
 1. **On the headless host, does the saving Mac attach to the run** (this option), **or only follow it, with the page server routing a run by that Mac's presence even with no client?** Resolved by the user, 2026-10-15 (relayed by the coordinator): attach, as recommended. It is how every Mac-controlled session there already works, and it needs no change to the routing. Slice 2's Resolved for slice 2 has the cost.
 2. **Should a run ended at its working limit raise a notice?** The pane is gone, so it needs one of two things: a notice the notifier keeps for a run rather than a pane, or a way to end the turn and leave the pane. Recommendation: decide after slice 1's hand test shows how often limits are hit. Until then it is marked in the run list only.
+
+### Shipped (2026-10-17)
+
+Slices 1, 3 and 2 merged on 2026-10-15, the last in c3d4ede, and nothing this option defines is left. A `host` argument for the session tools, which slice 2 leaves to a later slice, was never defined and is not built.

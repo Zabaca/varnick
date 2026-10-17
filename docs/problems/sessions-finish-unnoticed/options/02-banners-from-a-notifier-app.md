@@ -1,6 +1,6 @@
 ---
 problem: sessions-finish-unnoticed
-title: Option 01, plus macOS notifications posted by a small notifier app beside Launchy
+title: Option 01, plus macOS notifications posted by a small notifier app beside Varnick
 summary: Option 01, plus a macOS notification for each notice. Launchy is a bare executable, which can't use the notification center, so the notifications are posted by a small app bundle that `make build` assembles beside the binary, as it puts zmx there. The banner names the session and what it needs. Clicking it opens that pane, and clearing the notice withdraws it. macOS asks permission once, at the first notification. Without permission, option 01's menu bar mark and sound carry on. The first ticket checks whether Launchy's own binary can post after all; if it can, there is no notifier app and Launchy posts itself. This works on the checkout builds the user's Macs run today, and in a Launchy.app later. Rough effort is about a week, option 01 included.
 status: accepted
 ---

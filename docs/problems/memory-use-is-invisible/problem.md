@@ -4,7 +4,7 @@ description: Nothing in Varnick says how much memory it uses, or which tab, pane
 impact: When memory runs short, the user can't tell which tab to close. Nor can they tell whether the app, its models, its helpers or Claude Code is what grew. Each answer costs a session's time, and it is wrong unless each process's ancestry is followed. Most of the memory is Claude Code in panes (6.45 GB in the snapshot below), and it grows with every tab left open.
 severity: mid
 evidence: The user's question and a session's measurement of 2026-10-13, relayed by the coordinator; the measurement used `ps` and `footprint` on the user's Mac. Code read at 0b3f9b2. On 2026-10-13 the planner also looked at this Mac's processes, read-only: `ps`, zmx's listing, and two small libproc probes built in a scratch folder. What they printed stays out of the repo. Varnick was not run.
-status: open
+status: closed
 ---
 
 ## What the user asked for (2026-10-13)

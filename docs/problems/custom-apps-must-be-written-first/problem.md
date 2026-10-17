@@ -4,7 +4,7 @@ description: Custom apps (ADR 0005) are a public feature that people who downloa
 impact: The feature that lets Varnick's panes hold anything stays invisible to people who download Varnick. Scratch, its best demonstration, reaches nobody outside this repo. Apps people write for themselves stay on their own Macs.
 severity: mid
 evidence: Code and docs at f856715, read on 2026-10-10. Scratch's installed packages measured on a copy installed in a checkout on 2026-10-04. Nothing was built or run.
-status: open
+status: closed
 ---
 
 ## What the user wants (2026-10-10)

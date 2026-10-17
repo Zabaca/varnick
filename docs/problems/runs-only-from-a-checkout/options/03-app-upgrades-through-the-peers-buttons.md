@@ -1,6 +1,6 @@
 ---
 problem: runs-only-from-a-checkout
-title: Installed apps upgrade from published builds through the Upgrade and Restart Launchy buttons
+title: Installed apps upgrade from published builds through the Upgrade and Restart Varnick buttons
 summary: Left for later on 2026-10-09, still proposed: the user chose option 02 and isn't pursuing updates yet. Option 02, plus Launchy's own updater for the app. On an installed Mac, Upgrade downloads the newest published build from the repository's GitHub releases and checks that it is notarized and signed by the same team as the running app. It then stages the build in Application Support. Restart Launchy swaps it into place and opens it, and puts the old app back if the new one doesn't start. The frozen upgrade and restart requests, the separate restart, and Upgrade all and Restart all work as they do for checkouts, so one list in Settings › Peers upgrades a mixed fleet. Macs that run a checkout keep origin/main. There is no new dependency. Rough effort is a week and a half on top of option 02.
 status: proposed
 ---

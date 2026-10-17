@@ -1,6 +1,6 @@
 ---
 problem: orchestration-lives-in-one-session
-title: Launchy runs the agents as panes, and a Claude session stays the lead
+title: Varnick runs the agents as panes, and a Claude session stays the lead
 summary: No engine. Launchy gains a small interface a session can call to open a Claude pane with an agent, a prompt and a folder, and to learn when the agent is waiting, done or gone and where its result is. The lead session starts its builders and reviewers that way instead of as hidden subagents, so each one is a pane the user can watch and answer, kept in zmx through restarts and crashes. The lead still orchestrates, turn by turn.
 status: proposed
 ---

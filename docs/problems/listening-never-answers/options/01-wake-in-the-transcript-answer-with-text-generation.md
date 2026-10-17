@@ -1,6 +1,6 @@
 ---
 problem: listening-never-answers
-title: Wake on the mic's transcript; Launchy searches and Text generation answers aloud
+title: Wake on the mic's transcript; Varnick searches and Text generation answers aloud
 summary: While Listening is on, a mic phrase that starts with "Hey Launchy" becomes a spoken request. TypeSafe's Jev picks the source when the relevance filter is on TypeSafe (Text generation, this Mac's Gemma or the tailnet server, does otherwise, and when Jev fails) and Launchy strips the search words. Launchy runs the same search the panel runs, without touching the panel, and Text generation writes a one- or two-sentence answer from the top rows. Launchy speaks the answer in the Voice setting, and that is the whole response: the panel isn't shown and nothing opens. Launchy's own voice is kept out of the transcript and can't wake it. Only the request text leaves the user's machines, to TypeSafe, only for the decide step and only with the relevance filter on TypeSafe.
 status: shipped
 ---

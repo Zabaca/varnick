@@ -1,6 +1,6 @@
 ---
 problem: orchestration-lives-in-one-session
-title: Launchy owns the outer task layer, and Claude Code's Workflow tool runs the inner fan-out
+title: Varnick owns the outer task layer, and Claude Code's Workflow tool runs the inner fan-out
 summary: Launchy gets option 01's outer layer (tasks, gates, the event log, links, artifacts and the board), but a step that fans out (a review with skeptics, investigators, a fix-and-recheck loop) is handed to a Claude session that runs a saved Workflow tool script and returns one result. Two orchestrators split the work at that seam.
 status: proposed
 ---

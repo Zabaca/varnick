@@ -4,7 +4,7 @@ description: Varnick speaks every Hey Varnick answer with Apple's on-device synt
 impact: Speech is the whole of a spoken request's response (ADR 0015): nothing is shown, so every answer is heard in the voice Varnick has. A voice that is tiring to listen to makes each answer worse, and makes Hey Varnick feel like a demo rather than an assistant. No answer is lost or wrong because of it.
 severity: low
 evidence: The user's listening comparison of 2026-10-10. Single calls to the ElevenLabs API on 2026-10-10 with a Starter-plan key, not a benchmark (figures under "Measured"). The code was read on 2026-10-10 at 0b289b0.
-status: open
+status: closed
 ---
 
 ## Today

@@ -1,5 +1,5 @@
 ---
-title: Restarting Launchy ends every session open in it
+title: Restarting Varnick ends every session open in it
 description: Every Claude, terminal and transcript pane runs as a child of Launchy's own terminal view, so any restart, quit or crash ends them all. `--resume` brings a Claude conversation back, but work it had in flight (running tool calls, background subagents, a shell's dev server) is lost and has to be started again.
 impact: A long session running several subagents is set back to its last finished turn on every restart, and the lost work costs time and tokens to redo. Developing Launchy restarts it often, so this happens repeatedly, and agents are told to leave restarts to the user because a restart may end the session they run in.
 severity: high

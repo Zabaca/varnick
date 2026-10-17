@@ -1,6 +1,6 @@
 ---
 problem: restart-ends-sessions
-title: Hand terminals to a relaunched Launchy
+title: Hand terminals to a relaunched Varnick
 summary: A planned restart re-executes Launchy in place, keeping every pane's pseudo-terminal open and its process as a child, and the new build picks them up without any extra process.
 status: rejected
 reason: It covers only restarts Launchy performs itself. A crash, `pkill`, `launchctl kickstart -k` and Quit would still end every session, and `make run` and the LaunchAgent stop Launchy from outside today. It also needs SwiftTerm to adopt an existing pseudo-terminal, which it can't.

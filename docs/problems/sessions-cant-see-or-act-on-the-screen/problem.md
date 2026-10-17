@@ -1,10 +1,10 @@
 ---
-title: Claude sessions in Launchy's panes can't see the screen, act on apps or point at things
+title: Claude sessions in Varnick's panes can't see the screen, act on apps or point at things
 description: The user wants a Claude session running in a Launchy pane to do three things. It should look at the screen (a window's controls, or a picture of it), act on apps (click, type), and mark things for the user with Launchy's Arrow. Launchy itself can now read windows, capture them and draw the Arrow (ADR 0019, 0021), and a session in a pane can do none of it unless Launchy holds those grants. When Launchy does, every pane's session gets them directly, measured by macOS's own attribution, with nothing in between.
 impact: A session can't check what it built in a native app, follow a setup in System Settings, or show the user which button to press. It asks the user to look and describe, or to click for it. The other side of it: whenever the user grants Launchy Accessibility and Screen Recording for Point at the screen, every pane session can view and control the screen unsupervised, Skip-permissions ones included (below).
 severity: mid
 evidence: The user's request of 2026-10-09, relayed by the coordinator. Code read on 2026-10-09 at ca01eb4. Measured that day from a session in a Launchy pane, also relayed: the process chain, the trust checks with zmx granted, and macOS's privacy service's own attribution of a pane's process (its log). What each showed is under Today.
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-09)

@@ -4,7 +4,7 @@ description: The user wants to open-source Launchy by making its GitHub reposito
 impact: Until it is cleaned up the repository stays private, so nobody else can use, read or build on Launchy. Published as it is, it would put the user's and their clients' addresses, the tailnet's layout and the proxy's setup on the web, beyond recall once cloned. A new user's Claude sessions would also start with permission checks off, a paid service's filter would show as on, and the code would carry no licence to use it under.
 severity: mid
 evidence: Three read-only audits of the tree and its full history, relayed by the coordinator on 2026-10-07; they found no credential in any file or commit. The planner checked on 2026-10-07 at 651cacf, read-only - refs, authors, paths deleted from the tree, patterns over every commit message and every diff on main, and the repository's metadata on GitHub. The code lines below were read at 651cacf, and this Mac's stored settings were read with `defaults read`. Nothing was changed.
-status: open
+status: closed
 ---
 
 ## What the user wants
@@ -28,6 +28,8 @@ The user wants the repository at github.com/Zabaca/launchy made public, so that 
 Option 01's scrub is done, and so is its cutover: origin holds only main, whose root is the squashed commit 253012d. Left: making the repository public, and turning on private vulnerability reporting.
 
 Later on 2026-10-09 the user chose to rename Launchy to Varnick before going public (name-taken-by-another-launcher, option 01 accepted). The steps left here, and the check from outside, now wait until the rename has merged, both GitHub renames are done (they were, the same day), every machine runs Varnick, and the public-repo check has run again over the renamed tree. They then run against Zabaca/varnick.
+
+**2026-10-17:** both are done. Zabaca/varnick is public, and private vulnerability reporting is on (read through GitHub's API).
 
 ## Today
 

@@ -4,7 +4,7 @@ description: Screen access gives a session generic tools for any app's window, a
 impact: Every hand check of a Varnick feature falls to the user. The session that built the Outline could not check it. Agents can't use Varnick's features as tools either, such as the Outline as a shared working document or the board as the list of sessions. Today a session can only read the pixels of a screen picture, which shows everything and can act on nothing.
 severity: mid
 evidence: The user's words of 2026-10-11, relayed by the coordinator, after an agent tried and failed to hand-test the Outline for the user (built on its own branch, at 596c761, not merged at the time of writing). Code read at d24ce5b (main) and 596c761 (the Outline). The exclusion's history comes from git (19c4faf, db973f1, 5028afa).
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-11)

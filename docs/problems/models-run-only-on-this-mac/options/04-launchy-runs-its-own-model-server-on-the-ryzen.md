@@ -1,6 +1,6 @@
 ---
 problem: models-run-only-on-this-mac
-title: Launchy installs its own llama.cpp server for Gemma on the Ryzen, beside foundry's embedding service
+title: Varnick installs its own llama.cpp server for Gemma on the Ryzen, beside foundry's embedding service
 summary: The Ryzen side of Text generation on a server. Launchy's peer installer gains a flag that installs llama.cpp's Vulkan server, pinned to the build the GPU spike measured, serving Gemma 4 E2B Q4_0 on the RX 7800 XT. It runs as a systemd user unit, as the Phone page does, listening only on the Ryzen's tailnet address. Embeddings stay with foundry's `foundry-embeddings`. Foundry has to record a second GPU tenant first; that decision is foundry's, made in its own repo.
 status: proposed
 ---
