@@ -286,12 +286,35 @@ try:
 finally:
     shutil.rmtree(scratch, ignore_errors=True)
 
+# The voice session's search tool (option 09 of listening-never-answers): its own set, named by the app for the voice session's pane alone. Named alone it
+# lists search alone; with the others it comes last. NEVER call it here: with Varnick running and the voice session on, a call from the voice session's
+# pane would search the user's history and sessions (a call from any other pane is refused by the app). Only a call to a server that does not list it is
+# made (below), and that is refused before anything is sent.
+only_search, search_with = listed(["--search"]), listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search"])
+if only_search != ["search"]:
+    fail("--search lists %s, not search alone" % only_search)
+if search_with != screen + only_panel + automation_tools + task_tools + ["notify", "search"]:
+    fail("every set and --search lists %s, with search last" % search_with)
+if listed(["--notify", "--search"]) != ["notify", "search"]:
+    fail("--notify --search lists %s" % listed(["--notify", "--search"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--screen", "--panel", "--automations", "--tasks", "--notify"]):
+    if "search" in listed(arguments):
+        fail("%s lists search" % arguments)
+searching = [t for t in listed(["--search"], full=True) if t["name"] == "search"]
+if searching:
+    schema = searching[0]["inputSchema"]
+    properties = schema.get("properties", {})
+    if schema.get("required") != ["query"] or set(properties) != {"query", "project", "from", "to"} or any(properties.get(name, {}).get("type") != "string" for name in properties):
+        fail("search is %s: string query (required), project, from and to" % schema)
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
                         (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
                         ([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
                         ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"),
-                        (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look")):
+                        (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look"),
+                        ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
+                        (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))

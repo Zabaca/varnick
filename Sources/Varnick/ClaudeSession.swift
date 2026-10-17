@@ -621,6 +621,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // result schema, `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a); never the task tools.
         let isRun = record.isRun
         let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
+        // The voice session (option 09 of `listening-never-answers`) has a pane's full set and the search tool, and two more hooks.
+        let isVoice = record.voice == true
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
@@ -628,8 +630,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
                                                                                     panel: !isRun && Settings.shared.panelAccess,
                                                                                     automations: !isRun && Settings.shared.automationsOn,
-                                                                                    tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult),
-                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult)
+                                                                                    tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult,
+                                                                                    voiceSearch: isVoice),
+                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
+                                                 voice: isVoice)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.

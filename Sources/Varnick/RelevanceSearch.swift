@@ -19,7 +19,7 @@ struct RelevanceSearch {
     static let candidateLimit = 60   // per list, before fusion
     static let rrfK = 60.0
     /// How many pages the filter judges, from the top of the fused ranking.
-    static let judgedPages = 20
+    nonisolated static let judgedPages = 20
     static let sessionsShown = 3
     /// A session matched only by meaning shows when its best exchange's cosine similarity reaches this, since nearest
     /// neighbours always exist. Tuned by hand with `Varnick --search`; keyword matches always show. The best of many

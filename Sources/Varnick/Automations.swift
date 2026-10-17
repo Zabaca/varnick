@@ -305,7 +305,7 @@ extension LauncherModel {
     /// still ended by their limits.
     func releaseRuns(of automation: UUID? = nil) {
         // A Task's Run tab is the Tasks switch's to release, never the Automations switch's.
-        releaseHiddenRuns { pane in pane.record.taskRun == nil && (automation == nil || pane.record.automation == automation) }
+        releaseHiddenRuns { pane in pane.record.taskRun == nil && pane.record.voice != true && (automation == nil || pane.record.automation == automation) }
     }
 
     /// At launch, before the first check: a hidden run tab that no Run names becomes an ordinary tab. That covers an automations file of version 1,
@@ -314,7 +314,8 @@ extension LauncherModel {
     func releaseUnnamedRuns() {
         guard taskRuns.problem == nil else { return }
         // A view of a headless host's run is named by that host's runs file, not this Mac's: the host's listing says whether it is still a run (`adoptHostRuns`).
-        releaseHiddenRuns { pane in pane.record.host == nil && taskRuns.run(pane: pane.id) == nil }
+        // The voice session is no Run, and is tended by its own host (`VoiceSessionHost`).
+        releaseHiddenRuns { pane in pane.record.host == nil && pane.record.voice != true && taskRuns.run(pane: pane.id) == nil }
     }
 
     private func releaseHiddenRuns(where wanted: (ClaudeSession) -> Bool) {

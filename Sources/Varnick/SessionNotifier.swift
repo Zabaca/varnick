@@ -93,6 +93,7 @@ final class SessionNotifier: ObservableObject {
     func turnChanged(in pane: ClaudeSession, from old: PaneTurn?, to new: PaneTurn) {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
         if pane.record.taskRun != nil { model.taskHost.paneTurnChanged(pane) }
+        if pane.record.voice == true { model.voiceSession.paneTurnChanged(pane, to: new.turn) }
         // A peer's date moves with each reply, so the same turn is told within a couple of seconds.
         let sameTurn = old.map { abs($0.since.timeIntervalSince(new.since)) <= 2 } ?? false
         // A standing message folds a Done into itself, and an error or Needs you replaces it (`NoticeRule.merge`).
@@ -103,6 +104,9 @@ final class SessionNotifier: ObservableObject {
         // A Task step's pane raises Needs you and Messages only: its Done and its errors are the step's outcome, and the Run's own notice says how
         // the Run ended.
         if pane.record.taskRun != nil, case .raise(let kind) = decision, kind.settles { decision = .none }
+        // The voice session's turn that a surface waits on, or took the answer of, raises no Done: the answer was spoken (option 09 of
+        // `listening-never-answers`). A turn that went past the deadline raises it when it finishes.
+        if case .raise(let kind) = decision, kind.settles, model.voiceSession.suppressesDone(pane) { decision = .none }
         // An error that follows its waiting stands for the running word before it.
         let from = unsettled[pane.id]?.from ?? (old?.turn == .waiting ? .working : old?.turn ?? .working)
         switch decision {
@@ -165,7 +169,7 @@ final class SessionNotifier: ObservableObject {
                 NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
                                   inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
                 standing: notices.first { $0.id == id }?.kind)
-            if case .raise(let kind) = decision, pane.record.taskRun == nil { raise(kind, for: pane) }
+            if case .raise(let kind) = decision, pane.record.taskRun == nil, !model.voiceSession.suppressesDone(pane) { raise(kind, for: pane) }
         }
     }
 
