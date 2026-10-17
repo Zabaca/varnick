@@ -137,6 +137,7 @@ No code change. `in-progress` already puts a problem in Building, and its eviden
 ## Further Notes
 
 - **Accepted 2026-10-17.** The user approved the audits' fixes and this problem with "ok lets do all", relayed by the coordinator. The catch-up of statuses and closings it calls for is already done, in 373f3bf.
+- **First check, run 2026-10-17 on Claude Code 2.1.302.** SubagentStart fires on a `SendMessage` resume under the same agent id, so held records are built. `transcript_path` in a subagent's hooks names the session's transcript. The metadata file is not there when SubagentStart fires, for a top-level subagent or a nested helper, so ticket 4 (a helper taking its parent's link) was not built and helpers stay unlinked, as before. Reading the file at the helper's first tool call would work but costs a hook on every call.
 - **Verified against inferred.** The board's rules, the hooks and the script were read at bda4a64, and git's dropping of a deleted branch's tie was checked. Claude Code's hook inputs, its SubagentStart event and its resume path come from reading the 2.1.302 binary, not from a run: the first check settles them.
 - **Suggested tickets,** for `/to-tickets`:
   1. the first check;

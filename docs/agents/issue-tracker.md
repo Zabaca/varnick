@@ -48,7 +48,7 @@ The same merge closes the problem (`status: closed`) when it leaves no option `a
 
 **Work links.** Writing a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing problem, links the writer to the problem by itself (a hook), so a planner writing a new `problem.md` and a ticket claim need nothing more. A planner on an existing problem runs `/work problem <slug>` before it writes, so its edits made through Bash are linked as well. `/work problem <slug>` also links work that writes no such file; `/work none` clears. A link to an option replaces only through `/work`.
 
-`/work` takes two commands, because the hook that records the link runs after the command ends: the first prints a marker, and the second, on the first's last line, says whether a hook recorded it. A failure of the second names the cause, usually a session whose claude started without the work hooks, which needs a restart. The branch tie holds either way. A subagent resumed with `SendMessage` is linked again by itself, as `where-it-breaks.md` says; a subagent's own helper is not linked to its parent's option.
+`/work` takes two commands, run in turn as the skill says; `where-it-breaks.md` (the work-link hooks) says why, what a failure means, that a subagent resumed with `SendMessage` is linked again by itself, and that a subagent's own helper is not linked to its parent's option.
 
 ## Conventions
 

@@ -228,13 +228,21 @@ for shell in shells where URL(fileURLWithPath: shell).lastPathComponent != "zsh"
     expect(tag + "outside a pane: fails", ran.status != 0, "\(ran.status) \(ran.out)")
     expect(tag + "outside a pane: says no record is written", ran.out.contains("no record is written"), ran.out)
     expect(tag + "outside a pane: no 'Linked to'", !ran.out.contains("Linked to"), ran.out)
+    expect(tag + "outside a pane: no older-build advice without LAUNCHY_SESSION_FILE", !ran.out.contains("LAUNCHY_SESSION_FILE is set"), ran.out)
     ran = work(shell, ["confirm", "aa11", "option", "p/01"], nil)
     expect(tag + "confirm outside a pane: fails", ran.status != 0, "\(ran.status) \(ran.out)")
+
+    // A pane started by a build older than the rename has LAUNCHY_SESSION_FILE and no VARNICK_SESSION_FILE: both commands say it needs a restart.
+    for arguments in [["option", "p/01"], ["confirm", "aa11", "option", "p/01"]] {
+        ran = run(shell, [skill.path] + arguments, env: ["LAUNCHY_SESSION_FILE": scratch.path + "/old/.launchy-session.json"], cwd: repo)
+        expect(tag + "older build, \(arguments[0]): fails, names the variable and the restart",
+               ran.status != 0 && ran.out.contains("LAUNCHY_SESSION_FILE is set") && ran.out.contains("needs a restart") && !ran.out.contains("Linked to"), "\(ran.status) \(ran.out)")
+    }
 
     // The first command, in a pane: a marker and the second command, and no claim of a link.
     var pane = freshPane()
     ran = work(shell, ["option", "p/01"], pane)
-    var out = lines(ran)
+    let out = lines(ran)
     expect(tag + "first: exits 0", ran.status == 0, "\(ran.status) \(ran.out)")
     expect(tag + "first: does not say Linked", !ran.out.contains("Linked to"), ran.out)
     expect(tag + "first: prints one marker", out.filter { $0.hasPrefix("VARNICK-WORK|") }.count == 1, ran.out)
