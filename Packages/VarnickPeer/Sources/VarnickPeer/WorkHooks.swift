@@ -85,14 +85,37 @@ public enum WorkHooks {
         """#)
     }
 
-    /// At a subagent's end: its record goes, and the log says so, which is what makes the app read the records again.
-    static var subagentStop: String {
+    /// At a subagent's end: its record is held, not deleted, under a name the reader skips (`.work-held.<agent id>`), so it stops counting as
+    /// live; the log says so, which is what makes the app read the records again. A subagent resumed with SendMessage stops again after each
+    /// round and starts again under the same id (`subagentStart`).
+    public static var subagentStop: String {
         quiet(entry + #"""
         case "$inp" in *agent_id*) ;; *) exit 0;; esac
         """# + "\n" + helpers + #"""
         [ -n "$aid" ] && [ -f "$d/work.$aid" ] || exit 0
-        rm -f "$d/work.$aid"
+        mv -f "$d/work.$aid" "$d/.work-held.$aid" || exit 0
         chg=1; logit end
+        """#)
+    }
+
+    /// At a subagent's start: a record held at its last stop comes back, and the log gets the link again. Claude Code runs this hook when a
+    /// subagent is resumed with SendMessage, under the same agent id (seen on 2.1.302). A subagent that already has a record of its own keeps it,
+    /// and one with nothing held changes nothing, not even the log.
+    public static var subagentStart: String {
+        quiet(entry + #"""
+        case "$inp" in *agent_id*) ;; *) exit 0;; esac
+        """# + "\n" + helpers + #"""
+        h="$d/.work-held.$aid"
+        [ -n "$aid" ] && [ -f "$h" ] && [ ! -f "$rec" ] || exit 0
+        first=$(head -n 1 "$h"); root=$(sed -n 's/^repo //p' "$h" | head -n 1)
+        case "$first" in none|"problem "*|"option "*) ;; *) exit 0;; esac
+        mv "$h" "$rec" || exit 0
+        chg=1
+        case "$first" in
+        none) logit none;;
+        problem\ *) logit problem "${first#problem }" "$root";;
+        option\ *) logit option "${first#option }" "$root";;
+        esac
         """#)
     }
 

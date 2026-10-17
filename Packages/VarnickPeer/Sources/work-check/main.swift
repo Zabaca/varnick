@@ -140,6 +140,74 @@ for shell in shells {
     // Put the record back for what follows.
     _ = hook(WorkHooks.mark, shell, pane, bashCall(marker(pane, kind: "option", value: "p/03", nonce: "bb22"), agent: "a1"))
     expect(tag + "mark: the record is back", text(pane.file("work.a1")) == record)
+
+    // SubagentStop holds the record; it no longer counts as live.
+    ran = hook(WorkHooks.subagentStop, shell, pane, agentCall("SubagentStop", "a1"))
+    expect(tag + "stop: prints nothing, exits 0", ran.status == 0 && ran.out.isEmpty, "\(ran.status) \(ran.out)")
+    expect(tag + "stop: the record is gone from the live name", !exists(pane.file("work.a1")))
+    expect(tag + "stop: the record is held", text(pane.file(".work-held.a1")) == record)
+    expect(tag + "stop: logs the end", pane.kinds.last == "end", "\(pane.kinds)")
+    expect(tag + "stop: the board's reader finds no live link", PaneFolder.work(in: pane.folder).live.isEmpty)
+
+    // SubagentStart gives it back, under the same agent id.
+    let before = pane.kinds.count
+    ran = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", "a1"))
+    expect(tag + "start: prints nothing, exits 0", ran.status == 0 && ran.out.isEmpty, "\(ran.status) \(ran.out)")
+    expect(tag + "start: the record is back", text(pane.file("work.a1")) == record)
+    expect(tag + "start: nothing is held", !exists(pane.file(".work-held.a1")))
+    expect(tag + "start: logs the link again", pane.kinds.count == before + 1 && pane.kinds.last == "option", "\(pane.kinds)")
+    expect(tag + "start: the reader finds the link", PaneFolder.work(in: pane.folder).live.map(\.agentID) == ["a1"])
+
+    // A start with nothing held changes nothing, and not even the log.
+    let logBefore = text(pane.file("work-log"))
+    _ = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", "a1"))
+    _ = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", "zz9"))
+    expect(tag + "start: nothing held, nothing done", text(pane.file("work-log")) == logBefore && !exists(pane.file("work.zz9")))
+
+    // A start does not replace a record the subagent already has.
+    try! "problem q\nrepo \(root)\nagent builder\n".write(to: pane.file(".work-held.a1"), atomically: true, encoding: .utf8)
+    _ = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", "a1"))
+    expect(tag + "start: its own record stands", text(pane.file("work.a1")) == record)
+    try? fm.removeItem(at: pane.file(".work-held.a1"))
+
+    // A stop with no record of its own holds nothing, and a call with no agent id touches the session's record.
+    let stopLog = text(pane.file("work-log"))
+    _ = hook(WorkHooks.subagentStop, shell, pane, agentCall("SubagentStop", "nobody"))
+    expect(tag + "stop: no record, nothing held", !exists(pane.file(".work-held.nobody")) && text(pane.file("work-log")) == stopLog)
+    _ = hook(WorkHooks.mark, shell, pane, bashCall(marker(pane, kind: "problem", value: "p", nonce: "cc33")))
+    expect(tag + "mark: the session's record", text(pane.file("work")) == "problem p\nrepo \(root)\n", "\(String(describing: text(pane.file("work"))))")
+    _ = hook(WorkHooks.subagentStop, shell, pane, agentCall("SubagentStop", nil))
+    _ = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", nil))
+    expect(tag + "stop and start with no agent id leave the session's record", text(pane.file("work")) == "problem p\nrepo \(root)\n")
+
+    // A held record whose id is not safe to name a file is never read.
+    ran = hook(WorkHooks.subagentStart, shell, pane, agentCall("SubagentStart", "../x"))
+    expect(tag + "start: an unsafe id is ignored", ran.status == 0 && ran.out.isEmpty)
+
+    // Outside a Varnick pane the hooks do nothing.
+    ran = hook(WorkHooks.subagentStop, shell, nil, agentCall("SubagentStop", "a1"))
+    expect(tag + "stop: outside a pane", ran.status == 0 && ran.out.isEmpty)
+    ran = hook(WorkHooks.subagentStart, shell, nil, agentCall("SubagentStart", "a1"))
+    expect(tag + "start: outside a pane", ran.status == 0 && ran.out.isEmpty)
+}
+
+// Clearing, as a pane starting claude does it: live and held records go, the session's stays, the log says so.
+do {
+    let pane = freshPane()
+    try! "problem p\nrepo \(root)\n".write(to: pane.file("work"), atomically: true, encoding: .utf8)
+    try! record.write(to: pane.file("work.a2"), atomically: true, encoding: .utf8)
+    try! record.write(to: pane.file(".work-held.a3"), atomically: true, encoding: .utf8)
+    PaneFolder.clearSubagentWork(in: pane.folder)
+    expect("clear: removes the live record", !exists(pane.file("work.a2")))
+    expect("clear: removes the held record", !exists(pane.file(".work-held.a3")))
+    expect("clear: keeps the session's record", exists(pane.file("work")))
+    expect("clear: logs the end", pane.kinds == ["end"], "\(pane.kinds)")
+    PaneFolder.clearSubagentWork(in: pane.folder)
+    expect("clear: nothing to clear logs nothing", pane.kinds == ["end"], "\(pane.kinds)")
+    let onlyHeld = freshPane()
+    try! record.write(to: onlyHeld.file(".work-held.a4"), atomically: true, encoding: .utf8)
+    PaneFolder.clearSubagentWork(in: onlyHeld.folder)
+    expect("clear: a held record alone is removed and logged", !exists(onlyHeld.file(".work-held.a4")) && onlyHeld.kinds == ["end"], "\(onlyHeld.kinds)")
 }
 
 // MARK: The /work script: two commands
