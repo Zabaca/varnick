@@ -135,3 +135,5 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   6. A pause in the middle of a request, a cough, a clap: tune `silenceMs`, `minSpeechMs` and `lowestThreshold` in `voicerules.js` if requests cut off or false-start. A television or fan stepping up does not start a 30 s request.
   7. Another app taking the microphone, or the system muting it, ends the mode within about 5 s and says why.
   8. Voice session off, or Keep sessions running off: Start then the first request says why at once, before anything is sent. A headless host's page has no button.
+
+- **2026-10-17, at the user's ask:** a Mac's voice session now takes a request only at "over" (ADR 0044's amendment of that date). This page still ends a request after `silenceMs` of quiet; making it follow the rule is open.

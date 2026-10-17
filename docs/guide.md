@@ -212,7 +212,9 @@ Listening starts or restarts. The files stay on this Mac and Varnick never delet
 
 Hey Varnick hands every request to a Claude Code session of yours: one hidden session in Varnick's Home, with everything your
 sessions have (your settings, CLAUDE.md files and plugins, Bash, the web, Varnick's tools) and a search of your history, bookmarks and
-Claude sessions. This is how it works unless you turn on Settings › Experimental › Answer with Varnick's own steps. The first request
+Claude sessions. This is how it works unless you turn on Settings › Experimental › Answer with Varnick's own steps. **End a request by
+saying "over"** ("Hey Varnick, what was I working on yesterday, over"): it is sent only then, however long you pause, and a minute of
+speech is the most it keeps (the rule is in [ADR 0044](adr/0044-on-a-mac-hey-varnick-or-a-key-starts-voice-mode-in-which-every-mic-line-is-a-request-until-it-ends.md)). The first request
 starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request; Varnick says nothing when it has
 the request or when Claude goes to the web (in voice mode the menu bar's mark shows it is working), then speaks the answer. **It runs with permissions skipped,
 so anything the microphone hears, a video or another voice in the room included, can run commands on your Mac without asking.** A
