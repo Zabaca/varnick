@@ -43,8 +43,12 @@ final class VoiceSessionHost: ObservableObject {
     /// Why nothing was sent.
     enum Refusal: Error, Equatable {
         case off
-        /// Keep sessions running is off or zmx is missing.
+        /// Hey Varnick is off: the voice session runs with permissions skipped, so it answers only where the user has turned Hey Varnick on.
+        case needsHeyVarnick
+        /// Keep sessions running is off.
         case needsKeepSessions
+        /// zmx is missing.
+        case needsZmx
         /// Claude Code's one-time warning for skip-permissions mode isn't accepted: a hidden session would stop at it.
         case needsSkipAccepted
         /// Claude Code isn't logged in: the session would stop at its login.
@@ -65,9 +69,9 @@ final class VoiceSessionHost: ObservableObject {
         guard ticker == nil else { return }
         self.model = model
         if !Settings.shared.voiceSessionOn { endUnopened() }
-        switchWatch = Settings.shared.$ownStepsOn.map { !$0 }.removeDuplicates().dropFirst().sink { [weak self] on in
+        switchWatch = Settings.shared.$ownStepsOn.removeDuplicates().dropFirst().sink { [weak self] _ in
             // The publisher sends before the value is stored, so this waits a turn.
-            DispatchQueue.main.async { if !on { self?.endUnopened() } }
+            DispatchQueue.main.async { if !Settings.shared.voiceSessionOn { self?.endUnopened() } }
         }
         ticker = Task { [weak self] in
             while !Task.isCancelled {
@@ -98,11 +102,13 @@ final class VoiceSessionHost: ObservableObject {
 
     // MARK: A request
 
-    /// What stops a request before anything is sent: the switch, Keep sessions running, Claude Code's one-time warning for skip-permissions mode (a hidden
+    /// What stops a request before anything is sent: the switch, Hey Varnick, Keep sessions running, zmx, Claude Code's one-time warning for skip-permissions mode (a hidden
     /// session would stop at it) and its login. Nil when nothing does. A surface with a long way to a request (the phone's upload) asks it first.
     func preflight(_ model: LauncherModel) -> Refusal? {
         guard Settings.shared.voiceSessionOn else { return .off }
-        guard Zmx.isEnabled else { return .needsKeepSessions }
+        guard Settings.shared.heyVarnick else { return .needsHeyVarnick }
+        guard Settings.shared.keepSessionsRunning else { return .needsKeepSessions }
+        guard Zmx.isAvailable else { return .needsZmx }
         guard ClaudeTrust.skipPermissionsAccepted() != false else { return .needsSkipAccepted }
         guard model.textGeneration.claude.loginPassed else { return .notLoggedIn }
         return nil

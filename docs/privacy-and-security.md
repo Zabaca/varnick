@@ -255,7 +255,7 @@ session's:
   last request.
 
 Nothing of a spoken request goes to TypeSafe, and Text generation, the relevance filter's part in a spoken request, Answer from the
-web and Point at the screen are not used for it. The Voice session needs Keep sessions running and Claude Code found and logged in, and
+web and Point at the screen are not used for it. The Voice session needs Hey Varnick on (for Voice mode on the phone too: nothing runs with permissions skipped on a Mac whose user never turned it on), Keep sessions running and Claude Code found and logged in, and
 Claude Code's one-time warning for skip-permissions mode accepted; when one is missing Hey Varnick says so and the setting shows it beside Hey Varnick, and
 nothing falls back to Varnick's own steps, so nothing is sent by another route.
 What the session does is shown in its tab (Settings › Listening › Show beside Hey Varnick, or its Needs you notice); Varnick's log says only how long a
@@ -556,7 +556,7 @@ Answer with Varnick's own steps: that Hey Varnick only reads, searches and answe
 
 ### Voice mode on the phone
 
-Voice mode (the Phone page, on a Mac's page, while Answer with Varnick's own steps is off) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
+Voice mode (the Phone page, on a Mac's page; it needs Hey Varnick turned on at that Mac, and is refused while Answer with Varnick's own steps is on) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
 
 - **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches it takes for a request (it listens for speech and sends from the first word to a pause, with the 300 ms before the first word, which it keeps in memory while it listens), never continuously. The browser's own microphone indicator is on the whole time.
 - **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.

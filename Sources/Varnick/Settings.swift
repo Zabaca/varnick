@@ -244,11 +244,8 @@ final class Settings: ObservableObject {
     /// fires and every run tab not yet opened shows as an ordinary tab. The file is kept either way.
     @Published var automationsOn: Bool { didSet { defaults.set(automationsOn, forKey: Self.automationsOnKey) } }
     static let automationsOnKey = "automationsOn"
-    /// Experimental (Settings › Experimental): "Answer with Varnick's own steps (Jev)". Off by default, for every install; absent reads as off. Off,
-    /// every Hey Varnick request goes to the voice session (option 09 of `listening-never-answers`, ADR 0042): one hidden Claude Code session in Home,
-    /// run with permissions skipped. On, today's pipeline answers instead (the route, the judge, the Text generation writer, Answer from the web, Point
-    /// at the screen), and the voice session is off. It replaced `voiceSessionOn` (the voice session's own switch, off by default), which is no longer
-    /// read: a Mac that never touched this switch gets the voice session whatever the old one said, so nobody lands on the pipeline unasked.
+    /// Experimental: "Answer with Varnick's own steps (Jev)", off by default and absent reads off. Off, the voice session answers Hey Varnick; on, the
+    /// older pipeline does and the voice session is off. It replaced `voiceSessionOn`, never read now: ADR 0042's amendment says why.
     @Published var ownStepsOn: Bool { didSet { defaults.set(ownStepsOn, forKey: Self.ownStepsOnKey) } }
     static let ownStepsOnKey = "ownStepsOn"
     /// Whether the voice session answers spoken requests: the default, and the opposite of `ownStepsOn`.
@@ -802,14 +799,17 @@ struct SettingsView: View {
                             }
                             case .listening:
                             SettingRow(title: "Hey Varnick",
-                                       detail: "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running and Claude Code logged in. Settings › Experimental can swap it for Varnick's own steps.") {
+                                       detail: settings.ownStepsOn ? "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. It is answering with Varnick's own steps (Settings › Experimental), not through the voice session, which is off; what that sends is described there."
+                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
                                 VStack(alignment: .trailing, spacing: 4) {
                                     if Listener.shared.state.isUnavailable {
                                         Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)
                                     } else if settings.ownStepsOn {
-                                        Button("Answering with Varnick's own steps: Settings › Experimental") { sectionID = SettingsSection.experimental.rawValue }
-                                            .buttonStyle(.link)
-                                            .font(.system(size: 12))
+                                        if let need = textGenerationNeed {
+                                            modelsLink(need)
+                                        } else if textGenerationFallsBack {
+                                            modelsLink("Using this Mac's model")
+                                        }
                                     } else if settings.heyVarnick, let need = voiceSessionNeed {
                                         // Hey Varnick says the same when it is asked; it never falls back to the other steps.
                                         Text(need).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
@@ -817,7 +817,7 @@ struct SettingsView: View {
                                     if !settings.ownStepsOn { VoiceSessionShowButton(host: launcher.voiceSession) }
                                 }
                                 Toggle("", isOn: $settings.heyVarnick).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.heyVarnick && Listener.shared.state.isUnavailable)
+                                    .disabled(!settings.heyVarnick && (Listener.shared.state.isUnavailable || (settings.ownStepsOn && textGenerationNeed != nil)))
                             }
                             SettingRow(title: "Save audio",
                                        detail: "While Listening is on, saves what the microphone and the Mac's audio hear, other people on calls included, as audio files on this Mac only, so you can test voice recognition on real calls. Each time Listening starts (and after a change of microphone or output) it writes two files, one for the mic and one for the Mac's audio, into \(SavedAudio.displayPath)/<day>/, starting new ones every 15 minutes. Nothing is sent anywhere, and nothing is deleted automatically: remove the files yourself. Turning it on or off takes effect the next time Listening starts or restarts.") {
@@ -1050,10 +1050,6 @@ struct SettingsView: View {
                                        detail: "Hey Varnick answers with Varnick's own steps instead of the Claude Code voice session (Settings › Listening). While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or when you used a project. Varnick searches History, Bookmarks and your sessions together, answers out loud from what helps, and opens nothing (it shows an arrow only with Point at the screen, below). With the relevance filter on TypeSafe (Settings › Search) and a key saved, the words you say after \"Hey Varnick\" are sent to TypeSafe, with today's date and time and a list of your projects (each one's name, other names, a one-line description from its README and its last three session titles, paired Macs' by name and titles), to decide what you mean: the time, something Varnick can't do, the screen, which project and which time, and which words to search for. They are sent again, with today's date and where this week started, with the titles, sites and descriptions of the top 20 pages and the title, folder name, when and prompts of up to 3 sessions, to judge which help. Choosing TypeSafe sends what its features need; with On this Mac, or the filter off, nothing goes to TypeSafe. With Text generation on Claude Code (the default), what you say and the results it reads, with today's date, go to Anthropic to write the answer. With the filter on TypeSafe but no key or no answer, or off, the request and today's date go there too, with up to 20 pages and 3 sessions (title, site or folder, when, and a description or prompts cut to 300 characters), to judge which help. With the filter On this Mac, they never do. With an ElevenLabs voice chosen in Settings › Listening, the answers Varnick speaks go to ElevenLabs. Experimental.") {
                                 if settings.ownStepsOn, !settings.heyVarnick {
                                     Text("Needs Hey Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                } else if settings.ownStepsOn, let need = textGenerationNeed {
-                                    modelsLink(need)
-                                } else if settings.ownStepsOn, textGenerationFallsBack {
-                                    modelsLink("Using this Mac's model")
                                 }
                                 Toggle("", isOn: $settings.ownStepsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
@@ -1106,8 +1102,8 @@ struct SettingsView: View {
         }
         .controlSize(.small)
         // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is
-        // chosen. Listening shows it for Answer from the web too, whichever Text generation is on.
-        .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue)") {
+        // chosen; so does Experimental while Varnick's own steps are on (Answer from the web needs it). Listening needs it for the voice session.
+        .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue) \(settings.ownStepsOn)") {
             guard section == .listening || (section == .experimental && settings.ownStepsOn) || (settings.textGenerationRunOn == .claude && section == .models) else { return }
             await claudeCode.prepareForUse()
         }
@@ -1166,14 +1162,14 @@ struct SettingsView: View {
         }
     }
 
-    /// What the voice session lacks before it can answer, shown beside Hey Varnick: what `VoiceSessionHost.preflight` refuses on, in the same order.
+    /// What the voice session lacks before it can answer, shown beside Hey Varnick: what `VoiceSessionHost.preflight` refuses on after Hey Varnick, in its order.
     private var voiceSessionNeed: String? {
         if !settings.keepSessionsRunning { return "Needs Keep sessions running" }
         if !Zmx.isAvailable { return "Needs zmx: build with make" }
-        if !claudeCode.loginPassed { return "Needs Claude Code: open a Claude pane and log in" }
         if ClaudeTrust.skipPermissionsAccepted() == false {
             return "Needs skip-permissions mode accepted: run claude --dangerously-skip-permissions once in a pane and accept"
         }
+        if !claudeCode.loginPassed { return "Needs Claude Code: open a Claude pane and log in" }
         return nil
     }
 
