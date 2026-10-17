@@ -54,6 +54,7 @@ The lead session (the orchestrator agent) uses this for the steps that need the 
 ## Further Notes
 
 - The scriptable-panes planning run (Oct 3, 23:54 to 00:21) was killed by the 00:21 crash mid-draft, and nothing of it reached `docs/problems/`. This option needs that problem written properly first, or written here. Its run may still resume in its own session: four of its seven agents (two code maps, two outside surveys) finished and are cached in its journal, so only the three drafts would run again (unverified that the resume still works).
+- **2026-10-17:** the opening half of the scriptable-panes problem is now `panes-open-only-by-hand-at-a-mac`. Its option 01 lets a session open a Claude pane with a prompt, an agent and a folder in its own tab, and takes up open questions 2 and 4 for that case: panes beside the caller, and a helper that skips permissions only while the setting is on and the caller skips them. Waiting, done and gone stay this option's.
 - Combines with option 03, which brings linking and the drift check. Together they're the cheapest way to make the work linked, visible and gated, with workers that survive a crash though the lead doesn't. Blast radius stays prose.
 - Open questions:
   1. Is the lead's own durability worth an engine, once its workers survive? This is the real choice between this option plus 03, and option 01.
