@@ -38,6 +38,8 @@ function showView(s, view) {
   $("live").hidden = view !== "other";
   $("terminal-view").hidden = view !== "terminal";
   $("end").hidden = view !== "terminal";
+  // Redraw belongs to what draws a screen: the terminal and the live screen.
+  $("redraw").hidden = view !== "terminal" && view !== "other";
   if (view !== "other") stopLive(s);
 }
 
@@ -334,6 +336,28 @@ function scheduleRepaint(s) {
   s.repaints = redrawDelays.map((delay) => setTimeout(() => repaint(s), delay));
 }
 
+/**
+ * The Redraw button, the strongest local recovery: the renderer is thrown away and made again, fitted, and the host sends the screen
+ * again (the terminal attaches afresh, the live screen's channel opens afresh). Nothing is typed and nothing about control changes.
+ */
+function redrawNow(s) {
+  if (s.closed) return;
+  if (s.view === "terminal") {
+    s.observer?.disconnect();
+    s.term?.dispose();
+    $("term").replaceChildren();
+    s.term = null;
+    s.fit = null;
+    ensureTerminal(s);
+    refit(s);
+    reattach(s);
+  } else if (s.view === "other") {
+    stopLive(s);
+    startWatch(s);
+    liveSub(s);
+  }
+}
+
 /** Drops the terminal's socket and attaches again, asking the status first as any reconnect does: the host sends the whole screen. */
 function reattach(s) {
   clearTimeout(s.timer);
@@ -521,6 +545,7 @@ $("retry").addEventListener("click", () => {
   connect(s, false);
 });
 $("end").addEventListener("click", () => { if (current) endSession(current); });
+$("redraw").addEventListener("click", () => { if (current) redrawNow(current); });
 
 // A key press must not blur xterm's input, or the phone's keyboard would drop.
 for (const button of document.querySelectorAll("#keys button")) {

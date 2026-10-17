@@ -91,6 +91,7 @@ function hideFrame() {
 function showFrame(t, pane) {
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
   $("end").hidden = !t.data.mine;
+  $("redraw").hidden = true;
   header(t, kindWord(pane.kind));
   const address = framedAddress(pane);
   $("frame").hidden = false;
@@ -105,6 +106,7 @@ function showNote(t, pane) {
   $("note").hidden = false;
   // End is the phone's to offer only while it holds the tab; otherwise Take over comes first.
   $("end").hidden = !t.data.mine;
+  $("redraw").hidden = true;
   header(t, pane ? kindWord(pane.kind) : "");
   const note = pane ? paneNote(pane, t.host) : { text: "This tab has no pane.", detail: "" };
   $("note-text").textContent = note.text;
@@ -189,6 +191,7 @@ function failed(t, error) {
   $("note-text").hidden = false;
   $("note-text").textContent = error;
   $("end").hidden = true;
+  $("redraw").hidden = true;
   header(t, "");
 }
 
@@ -205,6 +208,7 @@ export function openTab({ tab, pane, host, done, take = null }) {
   // Nothing of the session or tab shown before: its card, live screen and terminal are gone from view until a pane is chosen.
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
   $("end").hidden = true;
+  $("redraw").hidden = true;
   header(t, "Opening…");
   load(t);
   t.timer = setInterval(() => { if (visible()) load(t); }, refreshMs);
