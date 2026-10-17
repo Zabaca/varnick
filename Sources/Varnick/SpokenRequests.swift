@@ -24,10 +24,13 @@ final class SpokenRequests: ObservableObject {
     static let wakeWait: TimeInterval = 8
     /// How soon after a result's end the next one still belongs to the request.
     static let gap: TimeInterval = 1.5
-    /// How long a request may take to collect, by the clock from its first result and by its speech; its length limit is
-    /// `SpokenText.maxRequestCharacters`.
-    static let maxSeconds: TimeInterval = 20
-    /// How long a request waits, with no new result, before it is taken as said. Speech that goes on (a volatile result) puts it off.
+    /// How long a request for the voice session may take to collect, by the clock from its first result and by its speech: a safety net, since only
+    /// "over" ends it (`VoiceMode.overStep`, ADR 0044). Its length limit is `SpokenText.maxRequestCharacters`.
+    static let maxSeconds: TimeInterval = 60
+    /// The same for a request to Varnick's own steps, which end by the hold.
+    static let ownStepsMaxSeconds: TimeInterval = 20
+    /// How long a request to Varnick's own steps waits, with no new result, before it is taken as said. Speech that goes on (a volatile result) puts it
+    /// off. The voice session has no hold: silence never ends its request.
     static let hold: TimeInterval = 0.5
     /// How long after speech begins its first volatile result shows up, which the wait for a request after the wake phrase alone
     /// allows past its deadline. The hold does not cover it: a request already collecting is put off by the volatile result itself.
@@ -122,6 +125,10 @@ final class SpokenRequests: ObservableObject {
 
     private var enabled: Bool { Settings.shared.heyVarnick && Listener.shared.state.isListening }
 
+    /// A request for the voice session ends when the user says "over"; one for Varnick's own steps, by the hold.
+    private var endsOnOver: Bool { Settings.shared.voiceSessionOn }
+    private var collectSeconds: TimeInterval { endsOnOver ? Self.maxSeconds : Self.ownStepsMaxSeconds }
+
     // MARK: Hearing
 
     private func hear(_ phrase: MicPhrase) {
@@ -144,11 +151,13 @@ final class SpokenRequests: ObservableObject {
             // request waits for that reading (`answerByVoiceSession`); the wake phrase alone waits for it here.
             let entering = Settings.shared.voiceSessionOn
             entryCheck = entering ? Task { await CallWatch.othersHoldingMicrophoneNow() } : nil
-            if rest.isEmpty {
+            // Only "over" ends a request for the voice session, so "Hey Varnick over" is the wake phrase alone.
+            let first = entering && !rest.isEmpty ? VoiceMode.overStep(line: rest, collected: "") : nil
+            if rest.isEmpty || first == .ignore {
                 wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
                 if entering, let check = entryCheck { enterAfterWakeAlone(check) }
             } else {
-                collect(rest, from: phrase, arrived: now)
+                collect(first, or: rest, from: phrase, arrived: now)
             }
         case .waiting(let until):
             if phrase.start > until {
@@ -169,16 +178,21 @@ final class SpokenRequests: ObservableObject {
                     NSLog("Varnick: voice mode left out a line that matched Varnick's own words")
                     return
                 }
-                return collect(text, from: phrase, arrived: now)
+                // The wait goes on if the line is "over" and nothing else.
+                let step = endsOnOver ? VoiceMode.overStep(line: text, collected: "") : nil
+                if step == .ignore { return }
+                return collect(step, or: text, from: phrase, arrived: now)
             }
             // Saying the wake phrase again before the request is no harm.
             let rest = SpokenText.request(in: phrase.text) ?? phrase.text
-            if SpokenText.cleaned(rest).isEmpty {
+            let step = endsOnOver ? VoiceMode.overStep(line: rest, collected: "") : nil
+            if SpokenText.cleaned(rest).isEmpty || step == .ignore {
                 wait(until: phrase.end.addingTimeInterval(Self.wakeWait))
             } else {
-                collect(rest, from: phrase, arrived: now)
+                collect(step, or: rest, from: phrase, arrived: now)
             }
         case .collecting(var request):
+            if endsOnOver { return collectingOnOver(request, phrase, arrived: now) }
             let continues = phrase.start.timeIntervalSince(request.lastEnd) <= Self.gap
             guard continues else { return }
             guard phrase.isFinal else { return rearm(from: now) }
@@ -188,11 +202,35 @@ final class SpokenRequests: ObservableObject {
             request.lastArrived = now
             phase = .collecting(request)
             speculate(on: request.text)
-            if request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.maxSeconds {
+            if request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.ownStepsMaxSeconds {
                 dispatch()
             } else {
                 rearm(from: now)
             }
+        }
+    }
+
+    /// A final line of a request for the voice session: it goes on the request, however long since the last, and "over" takes the request at once. The
+    /// cap (`maxSeconds`, `maxRequestCharacters`) takes it as it stands, as it always has. A volatile result changes nothing.
+    private func collectingOnOver(_ request: Request, _ phrase: MicPhrase, arrived: Date) {
+        guard phrase.isFinal else { return }
+        var request = request
+        let ended: Bool
+        switch VoiceMode.overStep(line: phrase.text, collected: request.text) {
+        case .ignore:
+            return
+        case .collect(let text):
+            request.text = String(text.prefix(SpokenText.maxRequestCharacters))
+            ended = false
+        case .take(let text):
+            request.text = String(text.prefix(SpokenText.maxRequestCharacters))
+            ended = true
+        }
+        request.lastEnd = phrase.end
+        request.lastArrived = arrived
+        phase = .collecting(request)
+        if ended || request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.maxSeconds {
+            dispatch()
         }
     }
 
@@ -237,8 +275,17 @@ final class SpokenRequests: ObservableObject {
         }
     }
 
-    /// The request's first words are in; whatever follows within the gap is added.
-    private func collect(_ text: String, from phrase: MicPhrase, arrived: Date) {
+    /// The request's first words are in: `step` is what the "over" rule made of them for the voice session (nil for Varnick's own steps, which take `text`
+    /// and add whatever follows within the gap). A request that has its "over" is taken at once.
+    private func collect(_ step: VoiceMode.OverStep?, or text: String, from phrase: MicPhrase, arrived: Date) {
+        switch step {
+        case .take(let said)?: collect(said, from: phrase, arrived: arrived, taken: true)
+        case .collect(let said)?: collect(said, from: phrase, arrived: arrived)
+        case .ignore?, nil: collect(text, from: phrase, arrived: arrived)
+        }
+    }
+
+    private func collect(_ text: String, from phrase: MicPhrase, arrived: Date, taken: Bool = false) {
         // A new request takes the last one's arrow away at once.
         ArrowOverlay.shared.hide()
         let request = Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
@@ -246,6 +293,7 @@ final class SpokenRequests: ObservableObject {
         phase = .collecting(request)
         stopSpeculating()
         speculate(on: request.text)
+        if taken { return dispatch() }
         // Speech already heard after this result is its continuation: wait from when that was last heard.
         if let volatile = lastVolatile, volatile.start >= phrase.end.addingTimeInterval(-0.05) {
             rearm(from: volatile.arrived)
@@ -254,12 +302,13 @@ final class SpokenRequests: ObservableObject {
         }
     }
 
-    /// Takes the request as said once `hold` has passed with nothing new, and at the latest `maxSeconds` after collecting began.
+    /// Takes the request as said once `hold` has passed with nothing new, and at the latest `collectSeconds` after collecting began. For the voice
+    /// session there is no hold, only that latest time: its request ends at "over".
     private func rearm(from date: Date) {
         holding?.cancel()
         guard case .collecting(let request) = phase else { return }
-        let deadline = request.collecting.addingTimeInterval(Self.maxSeconds)
-        let wait = max(0, min(date.addingTimeInterval(Self.hold), deadline).timeIntervalSinceNow)
+        let deadline = request.collecting.addingTimeInterval(collectSeconds)
+        let wait = max(0, (endsOnOver ? deadline : min(date.addingTimeInterval(Self.hold), deadline)).timeIntervalSinceNow)
         holding = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard !Task.isCancelled else { return }
@@ -628,9 +677,9 @@ final class SpokenRequests: ObservableObject {
     }
 
     /// With the voice session on (option 09 of `listening-never-answers`), the request goes to the host's voice session and its lines are said as the
-    /// session's request goes through them, each when the one before it ends (`Speaker.queue`): "Let me check." when the session has taken it,
-    /// "Looking that up." when Claude goes to the web, then the answer, cleaned and cut to two sentences. Nothing of the request, the answer or what
-    /// Claude does is logged: the timing line holds durations and kinds.
+    /// session's request goes through them, each when the one before it ends (`Speaker.queue`): the answer, cleaned and cut to two sentences, or the line for
+    /// what ended the request instead. It says nothing when the session takes the request or goes to the web; in voice mode the red mark shows it is working.
+    /// Nothing of the request, the answer or what Claude does is logged: the timing line holds durations and kinds.
     /// A request with the wake phrase turns voice mode on first, unless a call holds the microphone or the session can't answer; it returns how it ended.
     private func answerByVoiceSession(_ request: Request) async -> VoiceMode.Outcome {
         let inMode = modeOn
@@ -675,10 +724,10 @@ final class SpokenRequests: ObservableObject {
                 switch event {
                 case .taken:
                     tookAfter = Date().timeIntervalSince(began)
-                    say("let me check", VoiceLines.taken)
+                    // Nothing is said now, so open the answer's connection here.
+                    Speaker.shared.warmUp()
                 case .lookingUp:
                     looked = true
-                    say("looking that up", VoiceLines.lookingUp)
                 case .needsYou:
                     ending = "needs you"
                     outcome = .needsYou
@@ -795,8 +844,6 @@ final class SpokenRequests: ObservableObject {
 
 /// The lines Hey Varnick says for the voice session (option 09 of `listening-never-answers`); another surface words its own.
 enum VoiceLines {
-    static let taken = "Let me check."
-    static let lookingUp = WebAnswer.looking
     static let needsYou = "Claude needs your OK in Varnick."
     static let noAnswer = "I couldn't answer that."
     static let failed = "Claude Code isn't answering."

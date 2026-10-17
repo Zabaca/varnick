@@ -12,7 +12,7 @@ This builds on listening-never-answers option 09: a host's **voice session** has
 1. **Pick a machine.** The user opens that host's Phone page, as today, from the links to the other hosts' pages. Home gets a **Voice mode** button.
 2. **Voice mode** fills the screen with a view of its own:
    - the exchange so far as text, the user's requests and Varnick's answers;
-   - a state line: listening, sent, "Let me check.", "Looking that up.", or needs your OK;
+   - a state line: listening, sent, "Working…", "Searching the web…", or needs your OK (the first two as state text only: ADR 0042's amendment of 2026-10-17);
    - a button to end the mode.
 
    It asks for the mic once, holds a screen wake lock and sets Media Session controls. It stays in the mode until ended, the page is hidden for too long, or the phone is locked.
@@ -127,11 +127,13 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   - *A 220 Hz tone at 0.02 (Web Audio), hidden for 132 s:* no freeze, a level every second, the mic heard the user throughout (loud frames in every 30 s bucket, rms up to 0.24), and the websocket stayed open (35 pings).
   - *Not known:* whether that run was the home screen or a locked screen (the locked run was left to the user), and anything past about 2 minutes. A locked phone is therefore not supported.
 - **Hand test,** with the Mac running the build, Voice session on, Keep sessions running and Claude Code logged in with skip-permissions accepted, then on the Pixel:
-  1. Voice mode, Start: "Listening". Say "what time is it": your words appear as text, "Let me check.", then the answer as text and in the Mac's voice.
+  1. Voice mode, Start: "Listening". Say "what time is it": your words appear as text, the state line says "Working…", then the answer as text and in the Mac's voice.
   2. A follow-up ("and in Tokyo?") is answered in context and the Mac's log says the session was reused; a question asked at the Mac by Hey Varnick can be followed up from the phone within 10 minutes.
-  3. A world question shows "Looking that up."
+  3. A world question shows "Searching the web…" as the state line, and nothing in the exchange.
   4. A request that makes Claude ask a question shows "Claude needs your OK" and Open (which ends Voice mode) opens the session with control taken.
   5. Home screen for 2 minutes with the mode on, then speak: the conversation survives. A locked screen: say how it behaves.
   6. A pause in the middle of a request, a cough, a clap: tune `silenceMs`, `minSpeechMs` and `lowestThreshold` in `voicerules.js` if requests cut off or false-start. A television or fan stepping up does not start a 30 s request.
   7. Another app taking the microphone, or the system muting it, ends the mode within about 5 s and says why.
   8. Voice session off, or Keep sessions running off: Start then the first request says why at once, before anything is sent. A headless host's page has no button.
+
+- **2026-10-17, at the user's ask:** a Mac's voice session now takes a request only at "over" (ADR 0044's amendment of that date). This page still ends a request after `silenceMs` of quiet; making it follow the rule is open.

@@ -124,7 +124,7 @@ needs to Anthropic, under your own Claude account and on your plan. Hey Varnick 
 setting says so; nothing is sent before that. To keep the text on this Mac, choose **On this Mac**. An install that
 already answered with it stays there when it upgrades.
 
-- **What you say.** The request after "Hey Varnick", cut to 500 characters.
+- **What you say.** The request after "Hey Varnick", cut to 1,500 characters.
 - **The decisions,** when TypeSafe isn't used (the relevance filter is On this Mac or off, or no key is saved) or doesn't
   answer in time: the same questions as TypeSafe's first call, as one prompt, with today's date and time and the list
   of your projects above. With Claude Code that goes to Anthropic, with a server to the server, and with this Mac's

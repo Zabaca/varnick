@@ -65,6 +65,49 @@ public enum VoiceMode {
         return text.trimmingCharacters(in: punctuation).isEmpty ? nil : text
     }
 
+    // MARK: The word "over"
+
+    /// What a final line does to a request being collected for the voice session (ADR 0044, amendment of 2026-10-17): the request ends only when the
+    /// user says "over", never by silence.
+    public enum OverStep: Equatable {
+        /// The line goes on the request, which now reads this; it is not over.
+        case collect(String)
+        /// The line ended with "over": the request is over and reads this, with the "over" taken out.
+        case take(String)
+        /// Nothing to do: the line holds no words, or it is "over" with nothing collected.
+        case ignore
+    }
+
+    /// `line`, a final result, against the `collected` request so far (empty for the request's first line, after its wake phrase if it had one). A line
+    /// ends the request when its last word is "over", whatever its case, ignoring punctuation and space after it; "hangover" and "over there" do not.
+    public static func overStep(line: String, collected: String) -> OverStep {
+        let ending = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols)
+        // What comes off the end next to the word: space and the marks a transcriber puts around it, but not a question mark or a stop that ends the request's own sentence.
+        let beside = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;:-–—"))
+        var words = Substring(line)
+        while let last = words.last, last.unicodeScalars.allSatisfy(ending.contains) { words = words.dropLast() }
+        let join = { (rest: Substring) -> String in
+            let text = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            if collected.isEmpty { return text }
+            return text.isEmpty ? collected : collected + " " + text
+        }
+        guard words.lowercased().hasSuffix("over"), isWordStart(words, before: 4) else {
+            guard !line.trimmingCharacters(in: ending).isEmpty else { return .ignore }
+            return .collect(join(Substring(line)))
+        }
+        var rest = words.dropLast(4)
+        while let last = rest.last, last.unicodeScalars.allSatisfy(beside.contains) { rest = rest.dropLast() }
+        let text = join(rest)
+        return text.trimmingCharacters(in: ending).isEmpty ? .ignore : .take(text)
+    }
+
+    /// Whether the `count` characters at the end of `text` begin a word: the character before them is not a letter or a number.
+    private static func isWordStart(_ text: Substring, before count: Int) -> Bool {
+        let head = text.dropLast(count)
+        guard let before = head.last else { return true }
+        return !(before.isLetter || before.isNumber)
+    }
+
     /// The latest volatile result: speech that may not be finished, when its audio began and when the result arrived.
     public struct Speech: Equatable {
         public var start: Date

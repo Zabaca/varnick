@@ -278,7 +278,7 @@ The signed copy of Bun inside Varnick.app and the `agent.js` it runs, which writ
 _Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
 
 **Spoken request**:
-What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused. By default it is answered by the **Voice session**; with Answer with Varnick's own steps on (Settings › Experimental, off by default) it is answered as this describes, by Varnick's own steps.
+What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused. By default it is answered by the **Voice session**; with Answer with Varnick's own steps on (Settings › Experimental, off by default) it is answered as this describes, by Varnick's own steps. A request for the **Voice session** ends only when the user says "over" ([ADR 0044](docs/adr/0044-on-a-mac-hey-varnick-or-a-key-starts-voice-mode-in-which-every-mic-line-is-a-request-until-it-ends.md)); Varnick's own steps take it after a short silence.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
 
 **Voice session**:
@@ -308,7 +308,7 @@ Text generation as it writes the answer to a **Spoken request** from the rows th
 _Avoid_: Answerer, model
 
 **Acknowledgement**:
-The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none. Varnick's own steps say them; the **Voice session** does not ([ADR 0042](docs/adr/0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md)).
 _Avoid_: Cue, earcon (the wake sound is a sound, not a line)
 
 **Answer from the web**:

@@ -16,8 +16,8 @@ public enum VoiceSession {
     public static let startsWithin: TimeInterval = 30
     /// How long a surface waits for the answer before it says so and stops waiting; the turn goes on.
     public static let deadline: TimeInterval = 60
-    /// The most of a request that is kept and sent anywhere.
-    public static let maxRequestCharacters = 500
+    /// The most of a request that is kept and sent anywhere: a minute of speech (`SpokenRequests.maxSeconds`) is about a thousand.
+    public static let maxRequestCharacters = 1500
     /// The sentences of an answer a voice speaks.
     public static let maxSentences = 2
 

@@ -98,7 +98,7 @@ expect("hint: phone, metric, another zone, no search tool",
 let said = VoicePaste.line(hint: "[hint]", request: "what's\nthe weather\t\u{1b}[201~ \u{1b}[200~ in  Paris\r")
 expect("paste: no control byte and one line", !said.unicodeScalars.contains { $0.properties.generalCategory == .control }, said)
 expect("paste: the hint, then the request, white space collapsed", said == "[hint] what's the weather [201~ [200~ in Paris", said)
-expect("paste: a request is cut", VoicePaste.line(hint: "[h]", request: String(repeating: "a", count: 900)).count == 3 + 1 + VoiceSession.maxRequestCharacters)
+expect("paste: a request is cut", VoicePaste.line(hint: "[h]", request: String(repeating: "a", count: 2000)).count == 3 + 1 + VoiceSession.maxRequestCharacters)
 expect("paste: C1 codes and DEL go", VoicePaste.sanitized("a\u{7f}b\u{85}c\u{9b}d") == "a b c d", VoicePaste.sanitized("a\u{7f}b\u{85}c\u{9b}d"))
 expect("paste: an empty request", VoicePaste.line(hint: "[h]", request: " \n ") == "[h] ")
 
@@ -287,7 +287,7 @@ expect("search: a boolean as the project", refusal(["query": "x", "project": tru
 expect("search: a number as from", refusal(["query": "x", "from": 20261015]) == "from must be text, not a number or a boolean")
 expect("search: a number as to", refusal(["query": "x", "to": 1.5])?.hasPrefix("to must be text") == true)
 expect("search: an argument it doesn't take", refusal(["query": "x", "limit": 5])?.hasPrefix("limit is not an argument") == true)
-expect("search: a long query is cut", parsed(["query": String(repeating: "a", count: 900)])?.query.count == VoiceSession.maxRequestCharacters)
+expect("search: a long query is cut", parsed(["query": String(repeating: "a", count: 2000)])?.query.count == VoiceSession.maxRequestCharacters)
 let range = parsed(["query": "x", "from": "2026-10-15T09:00:00-07:00", "to": "2026-10-16T09:00:00-07:00"])
 expect("search: a window with offsets", range?.window(now: after(0)) == DateInterval(start: Date(timeIntervalSince1970: 1_792_080_000), end: Date(timeIntervalSince1970: 1_792_166_400)),
        "\(String(describing: range?.window(now: after(0))))")
@@ -480,6 +480,44 @@ line("the wake phrase alone is nothing", "Hey Varnick", afterWake: "", is: nil)
 line("the wake phrase and a stray full stop is nothing", "Hey Varnick.", afterWake: ".", is: nil)
 line("a line of punctuation is nothing", " . ", afterWake: nil, is: nil)
 line("an empty line is nothing", "", afterWake: nil, is: nil)
+
+// A request for the voice session ends only when the user says "over".
+func overStep(_ name: String, _ text: String, collected: String = "", is expected: VoiceMode.OverStep) {
+    let got = VoiceMode.overStep(line: text, collected: collected)
+    expect("over: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+overStep("a request and over is taken without it", "what time is it over", is: .take("what time is it"))
+overStep("case and a full stop", "What time is it? Over.", is: .take("What time is it?"))
+overStep("a comma before it", "what time is it, over", is: .take("what time is it"))
+overStep("over alone is taken", "Over.", collected: "what time is it", is: .take("what time is it"))
+overStep("over alone, any case and marks", " OVER! ", collected: "what time is it", is: .take("what time is it"))
+overStep("over alone with nothing collected is ignored", "over", is: .ignore)
+overStep("over and a mark alone with nothing collected is ignored", "Over.", is: .ignore)
+overStep("a line without over goes on the request", "what time is it", is: .collect("what time is it"))
+overStep("it goes after what was collected", "in Tokyo", collected: "what time is it", is: .collect("what time is it in Tokyo"))
+overStep("a last line with over joins what was collected", "in Tokyo over", collected: "what time is it", is: .take("what time is it in Tokyo"))
+overStep("over in the middle is not the end", "move it over there", is: .collect("move it over there"))
+overStep("over at the start of a line is not the end", "over there is the shop", is: .collect("over there is the shop"))
+overStep("a word ending in over is not over", "hangover", is: .collect("hangover"))
+overStep("a longer word ending in over", "I want to take over", is: .take("I want to take"))
+overStep("takeover is one word", "the takeover", is: .collect("the takeover"))
+overStep("it's over is a whole word", "I think it's over", is: .take("I think it's"))
+overStep("an empty line is ignored", "", is: .ignore)
+overStep("a line of marks is ignored", " . ", collected: "what time is it", is: .ignore)
+overStep("a long silence has no part in it", "still thinking", collected: "what time is it", is: .collect("what time is it still thinking"))
+// A line as the Mac reads it: the wake phrase, the request and over in one line, or the request over several finals.
+let wakeLine = "Hey Varnick, what time is it over"
+let afterWake = "what time is it over"
+overStep("the wake phrase, the request and over in one line", VoiceMode.requestText(of: wakeLine, afterWake: afterWake) ?? "", is: .take("what time is it"))
+overStep("the wake phrase and over, with nothing between, is ignored", VoiceMode.requestText(of: "Hey Varnick over", afterWake: "over") ?? "", is: .ignore)
+var joined = ""
+for part in ["what was I working on", "yesterday afternoon", "the one about pantry"] {
+    guard case .collect(let more) = VoiceMode.overStep(line: part, collected: joined) else { expect("over: a split request goes on", false, part); break }
+    joined = more
+}
+overStep("a request split over several finals", "over", collected: joined, is: .take("what was I working on yesterday afternoon the one about pantry"))
+expect("over: the voice session's request limit holds a minute of speech", VoiceSession.maxRequestCharacters >= 1000)
 
 // Varnick's own voice coming back is not a line (a long-delay output outlasts the tail after its last sound).
 let spokenLines = ["The weather in Paris is sunny and 72 degrees.", "I found two sessions about pantry."]
