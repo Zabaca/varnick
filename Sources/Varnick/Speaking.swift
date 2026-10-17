@@ -292,9 +292,15 @@ final class Speaker {
     }
 }
 
+/// Where a voice's rendered buffers go: the Mac's speakers (`SpeechPlayback`) or, for Voice mode on the phone, a recording (`VoiceRender`). An empty
+/// buffer ends the rendering.
+protocol SpeechSink: Sendable {
+    func add(_ buffer: AVAudioBuffer)
+}
+
 /// One speech played from the buffers the synthesizer renders, or ElevenLabs sends, as they arrive. Thread-safe: they call `add`
 /// from their own queues and the audio engine calls back from its own.
-final class SpeechPlayback: @unchecked Sendable {
+final class SpeechPlayback: @unchecked Sendable, SpeechSink {
     /// Longest a speech may take from start to end, however it hangs.
     private static let limit: TimeInterval = 90
     /// Longest the synthesizer may take to deliver anything. A voice that never calls back is spoken directly instead, and the

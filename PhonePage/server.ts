@@ -26,10 +26,11 @@ import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
+import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
 import { fileSink, SpikeLog, SpikeSockets, spikeFiles, spikeIsOn, spikePaths, type SpikeData } from "./voicespike";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 29;
+export const PROTOCOL_VERSION = 30;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -241,6 +242,9 @@ async function main(): Promise<void> {
     "/installrules.js": { file: "page/installrules.js", type: js },
     "/push.js": { file: "page/push.js", type: js },
     "/pushrules.js": { file: "page/pushrules.js", type: js },
+    "/voice.js": { file: "page/voice.js", type: js },
+    "/voicerules.js": { file: "page/voicerules.js", type: js },
+    "/voice-worklet.js": { file: "page/voice-worklet.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
@@ -371,7 +375,8 @@ async function main(): Promise<void> {
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
       const spikeLogging = path === spikePaths.log && spikeOn();
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path) && !spikeLogging) return plain(404, "Not found");
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path) && !spikeLogging
+        && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (spikeLogging) {
@@ -381,6 +386,16 @@ async function main(): Promise<void> {
       if (pushPaths.includes(path)) {
         const answered = await pushRoute(push, device, path, body, { now: Date.now, log });
         return json(answered.body, answered.status);
+      }
+      // Voice mode (voice.ts): one chunk of an utterance, or a typed ask. The host takes it and answers at once; what comes of it is polled.
+      if (path === "/api/voice/audio" || path === "/api/voice/ask") {
+        const audio = path === "/api/voice/audio";
+        const parsed = audio ? parseAudioBody(body) : parseAskBody(body);
+        if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
+        const fields = audio ? audioFields(parsed.value as AudioChunk) : askFields(parsed.value as TextAsk);
+        // Its own slot key, so a poll and a chunk never wait on the sessions and Recent.
+        const taken = shapeTaken(await relay.ask(audio ? "voiceAudio" : "voiceAsk", device.id, fields, undefined, `${device.id}:voice`));
+        return json(taken.body, taken.status);
       }
       if (path === "/api/end") {
         const target = parseEndBody(body);
@@ -479,6 +494,12 @@ async function main(): Promise<void> {
       if (!folder.ok) return json({ ok: false, error: folder.error }, 400);
       const agents = await agentsOf(relay, device, host.name, folder.value);
       return json(agents.body, agents.status);
+    }
+    if (path === "/api/voice/status" && request.method === "GET") {
+      const query = parseStatusQuery(new URL(request.url).searchParams);
+      if (!query.ok) return json({ ok: false, error: query.error }, 400);
+      const answered = shapeStatus(await relay.ask("voiceStatus", device.id, statusFields(query.value), undefined, `${device.id}:voice`));
+      return json(answered.body, answered.status);
     }
     if (path === "/api/home" && request.method === "GET") {
       proxy?.touch();

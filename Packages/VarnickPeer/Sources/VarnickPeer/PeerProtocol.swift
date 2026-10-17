@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 29
+    public static let version = 30
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -175,6 +175,11 @@ public enum PeerOp: String, Codable, Sendable {
     case runAutomation
     /// A Mac showed a run's tab (`PeerRequest.tab`): the host takes the run mark off the tab and dates the Run opened, so no tick ends it.
     case runOpened
+    /// Voice mode (protocol 30, `PeerVoiceAsk`): one chunk of an utterance's audio, the ask as text, and the events of an ask so far. Only a Mac's app
+    /// answers; a listed device or Mac may ask.
+    case voiceAudio
+    case voiceAsk
+    case voiceStatus
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -795,6 +800,8 @@ public struct PeerRequest: Codable, Sendable {
     public var automationBase: Automation?
     /// DeleteAutomation and RunAutomation: the automation's id, a uuid.
     public var automationID: String?
+    /// VoiceAudio, VoiceAsk and VoiceStatus (protocol 30).
+    public var voice: PeerVoiceAsk?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -870,6 +877,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// Automations, SaveAutomation, DeleteAutomation and RunAutomation (protocol 29): the headless host's automations and Runs.
     public var automations: HostAutomations?
+
+    /// VoiceAudio, VoiceAsk and VoiceStatus (protocol 30): the ask's id and, for a status, its events.
+    public var voice: PeerVoiceReply?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

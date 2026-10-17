@@ -245,8 +245,8 @@ enum PeerOpenTabs {
         let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "that Mac")'s Settings."
         // A hidden Task Run's tab (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is not listed at all: the phone's Runs list and the other Macs'
         // lists are automation runs only until slice 3 lists a Task's Runs there.
-        // The voice session's hidden tab (option 09 of `listening-never-answers`) is left out the same way, until option 05 of
-        // `phone-page-is-only-a-browser-tab` lists it.
+        // The voice session's hidden tab (option 09 of `listening-never-answers`) is left out the same way, for good: the phone's Voice mode (option 05 of
+        // `phone-page-is-only-a-browser-tab`) reaches it by the needs-you event of `voiceStatus`, which names its session.
         let listable = hosted(in: state).filter { tab in !tab.layout.records.contains { ($0.taskRun != nil || $0.isVoice) && $0.runUnopened == true } }
         return listable.map { tab in
             // A run nobody opened is marked (protocol 29), as a headless host marks its own: the other Macs keep it out of their lists.

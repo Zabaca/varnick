@@ -16,6 +16,10 @@ final class VoiceSessionHost: ObservableObject {
     private var switchWatch: AnyCancellable?
     /// The pane a surface's request is in flight to.
     private var inFlight: UUID?
+    /// The pane the last request that began went to, which stays after it ends: a surface told Needs you reads it to say which session to open.
+    private(set) var requestPane: UUID?
+    /// Whether a surface's request is in flight to the voice session now.
+    var requestInFlight: Bool { inFlight != nil }
     /// Panes whose last turn's answer a surface took, so that turn raises no Done (`suppressesDone`). A new turn clears it.
     private var answered: Set<UUID> = []
     /// Whether an unopened voice session exists, for Settings' Show button.
@@ -96,17 +100,20 @@ final class VoiceSessionHost: ObservableObject {
 
     /// Types a request into the voice session, or starts one with it as the first prompt, and tells what happens. The stream ends when the request
     /// does: answered, waiting on the user, failed, or past the deadline (the turn goes on). Cancelling its reader ends the request and not the turn.
-    func ask(_ request: String, device: VoiceHint.Device) -> AsyncStream<Update> {
+    ///
+    /// `moment`, `zone` and `units` are the asker's, for the voice hint: this Mac's own for Hey Varnick, the phone's for Voice mode.
+    func ask(_ request: String, device: VoiceHint.Device, moment: Date = Date(), zone: TimeZone = .current, units: VoiceHint.Units? = nil) -> AsyncStream<Update> {
         AsyncStream { continuation in
             let task = Task { [weak self] in
-                await self?.run(request, device: device, continuation)
+                await self?.run(request, device: device, moment: moment, zone: zone, units: units, continuation)
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    private func run(_ request: String, device: VoiceHint.Device, _ out: AsyncStream<Update>.Continuation) async {
+    private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?,
+                     _ out: AsyncStream<Update>.Continuation) async {
         guard let model, Settings.shared.voiceSessionOn else { out.yield(.refused(.off)); return }
         guard Zmx.isEnabled else { out.yield(.refused(.needsKeepSessions)); return }
         guard ClaudeTrust.skipPermissionsAccepted() != false else { out.yield(.refused(.needsSkipAccepted)); return }
@@ -121,8 +128,8 @@ final class VoiceSessionHost: ObservableObject {
         if let pane = current, !pane.readsOwnTurn { pane.checkTurn() }
         let heldNow = current.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
         let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now)
-        let hint = VoiceHint.text(device: device, now: now, timeZone: .current,
-                                  units: Locale.current.measurementSystem == .us ? .us : .metric)
+        let hint = VoiceHint.text(device: device, now: moment, timeZone: zone,
+                                  units: units ?? (Locale.current.measurementSystem == .us ? .us : .metric))
         let line = VoicePaste.line(hint: hint, request: request)
         let id: UUID
         let sent: Date
@@ -163,6 +170,7 @@ final class VoiceSessionHost: ObservableObject {
             if inFlight == id { inFlight = nil }
             refreshGoing()
         }
+        requestPane = id
         out.yield(.began(why: why))
         refreshGoing()
 

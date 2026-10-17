@@ -31,6 +31,8 @@ extension HeadlessPeerHost {
         case .apps: return .reply(PeerReply(v: PeerProtocol.version, ok: true, apps: []))
         case .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened:
             return .reply(automationRequest(op, request, by: by))
+        // Voice mode needs a transcriber and a voice, which only a Mac has (option 05 of `phone-page-is-only-a-browser-tab`).
+        case .voiceAudio, .voiceAsk, .voiceStatus: return .reply(.failure("\(name) is a headless host: Voice mode needs a Mac"))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }

@@ -308,5 +308,107 @@ expect("hooks: the web marker has its matcher", settings.contains("^(WebSearch|W
 expect("hooks: nothing changes for an ordinary session", ClaudeCommand.hookSettings(problems: false) == ClaudeCommand.hookSettings(problems: false, voice: false))
 expect("hooks: the work-link PreToolUse entry stays beside the web marker", settings.contains("PreToolUse") && settings.components(separatedBy: "\"PreToolUse\"").count == 2)
 
+// MARK: Voice mode on the phone (option 05 of `phone-page-is-only-a-browser-tab`, protocol 30)
+
+let askID = "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d"
+let otherID = "9c1a7d52-0e3b-4a6f-8d21-6b4e5f7a8c90"
+let bytes = { (count: Int) in Data(repeating: 1, count: count) }
+
+expect("protocol: this is 30", PeerProtocol.version == 30)
+expect("protocol: the three voice requests are told apart", [PeerOp.voiceAudio, .voiceAsk, .voiceStatus].allSatisfy(PeerProtocol.isVoiceRequest)
+       && !PeerProtocol.isVoiceRequest(.tabs) && !PeerProtocol.isVoiceRequest(.runOpened))
+
+var voiceRequest = PeerRequest(.voiceAsk)
+voiceRequest.voice = PeerVoiceAsk(id: askID, text: "what time is it", moment: 1_760_000_000, zone: "America/Denver", units: "us")
+expect("wire: a voice request round-trips", PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(voiceRequest))?.voice == voiceRequest.voice)
+var voiceAnswer = PeerReply.success()
+voiceAnswer.voice = PeerVoiceReply(id: askID, events: [PeerVoiceEvent(.taken), .answered(text: "It is noon.", audio: Data([1, 2, 3]))], next: 2, done: true)
+let decodedAnswer = PeerJSON.decode(PeerReply.self, from: PeerJSON.line(voiceAnswer))
+expect("wire: a voice reply round-trips", decodedAnswer?.voice == voiceAnswer.voice)
+expect("wire: an event decodes from the page server's JSON",
+       PeerJSON.decode(PeerVoiceReply.self, from: #"{"id":"x","events":[{"kind":"heard"}],"next":1}"#)?.events?.first?.kind == .heard)
+
+// The hint: the phone's own moment, zone and units, as the host takes them.
+let hostNow = Date(timeIntervalSince1970: 1_760_000_000)
+let denver = TimeZone(identifier: "America/Denver")!
+let hinted = PeerVoiceAsk(id: askID, moment: 1_760_003_600, zone: "Asia/Tokyo", units: "metric").hint(now: hostNow, hostZone: denver, hostUnits: .us)
+expect("hint: the phone's moment, zone and units win", hinted.moment == Date(timeIntervalSince1970: 1_760_003_600) && hinted.zone.identifier == "Asia/Tokyo" && hinted.units == .metric)
+let unhinted = PeerVoiceAsk(id: askID, moment: 1_760_000_000 + 3 * 86_400, zone: "Not/AZone", units: "furlongs").hint(now: hostNow, hostZone: denver, hostUnits: .us)
+expect("hint: a moment days off, a zone and units it doesn't know are the host's", unhinted.moment == hostNow && unhinted.zone == denver && unhinted.units == .us)
+expect("hint: nothing given is the host's", PeerVoiceAsk(id: askID).hint(now: hostNow, hostZone: denver, hostUnits: .metric).units == .metric)
+
+// The events of the voice session, as the phone is told them.
+expect("events: taken and looking up", PeerVoiceEvent.of(.taken, session: "s") == PeerVoiceEvent(.taken) && PeerVoiceEvent.of(.lookingUp, session: "s") == PeerVoiceEvent(.lookingUp))
+expect("events: needs you carries the session to open", PeerVoiceEvent.of(.needsYou, session: "varnick-x") == PeerVoiceEvent(.needsYou, session: "varnick-x"))
+expect("events: an answer is made by the Mac, with its audio", PeerVoiceEvent.of(.answered("x"), session: "s") == nil)
+expect("events: a failure says a line and a kind", PeerVoiceEvent.of(.failed(.notTaken), session: "s") == PeerVoiceEvent(.failed, text: "Claude didn't take that.", failure: "not taken"))
+expect("events: the deadline and no answer", PeerVoiceEvent.of(.deadline, session: "s")?.kind == .deadline && PeerVoiceEvent.of(.noAnswer, session: "s")?.kind == .noAnswer)
+let answered = PeerVoiceEvent.answered(text: "It is noon in Denver. See [the clock](https://example.com/clock). Sources:\n- https://example.com", audio: nil)
+expect("events: an answer carries its text and its spoken form", answered.text?.hasPrefix("It is noon") == true && answered.spoken == "It is noon in Denver. See the clock." && answered.audio == nil, "\(answered)")
+expect("events: an answer that cleans to nothing is spoken as the line", PeerVoiceEvent.answered(text: "Sources:\n- a", audio: nil).spoken == "I couldn't answer that.")
+expect("events: a long answer is cut", PeerVoiceEvent.answered(text: String(repeating: "word ", count: 5_000), audio: nil).text?.count == PeerVoiceEvent.maxAnswerCharacters)
+expect("events: which ones end an ask", [PeerVoiceEvent.Kind.needsYou, .answered, .noAnswer, .failed, .deadline].allSatisfy { PeerVoiceEvent($0).ends }
+       && ![PeerVoiceEvent.Kind.heard, .taken, .lookingUp].contains { PeerVoiceEvent($0).ends })
+
+// Audio: the WAV the phone plays, and the samples.
+let wav = VoiceAudio.wav(pcm16: Data([1, 0, 2, 0, 3, 0]), rate: 16_000)
+expect("audio: a WAV is a 44 byte header and the samples", wav.count == 44 + 6 && wav.prefix(4) == Data("RIFF".utf8) && wav.dropFirst(8).prefix(8) == Data("WAVEfmt ".utf8)
+       && wav.dropFirst(36).prefix(4) == Data("data".utf8))
+expect("audio: its sizes are right", wav[4] == 42 && wav[40] == 6 && wav[24] == 0x80 && wav[25] == 0x3E, "\(Array(wav.prefix(44)))")
+expect("audio: floats become 16-bit and back, clipped", VoiceAudio.floats(fromPCM16: VoiceAudio.pcm16(fromFloats: [0, 0.5, -0.5, 2, -2])).map { ($0 * 100).rounded() / 100 } == [0, 0.5, -0.5, 1, -1])
+expect("audio: the peak", VoiceAudio.peak(ofPCM16: VoiceAudio.pcm16(fromFloats: [0, 0.25, -0.5, 0.1])) > 0.49 && VoiceAudio.peak(ofPCM16: bytes(0)) == 0)
+expect("audio: a last odd byte is dropped", VoiceAudio.floats(fromPCM16: Data([0, 64, 7])).count == 1)
+
+// The upload of an utterance in chunks.
+var upload = VoiceUploads(limit: 2)
+func add(_ id: String, _ seq: Int, last: Bool = false, size: Int = 32_000, rate: Int? = 16_000, at seconds: TimeInterval = 0) -> VoiceUploads.Outcome {
+    upload.add(id: id, seq: seq, last: last, rate: rate, audio: bytes(size), now: t0.addingTimeInterval(seconds))
+}
+expect("upload: chunks in order, the last completes the utterance", add(askID, 0) == .more && add(askID, 1) == .more && add(askID, 2, last: true, size: 100) == .complete(bytes(64_100)))
+expect("upload: it is gone once complete", upload.count == 0)
+expect("upload: a chunk that skips is refused and drops the utterance", add(askID, 0) == .more && add(askID, 2) == .refused("That audio chunk is out of order") && upload.count == 0)
+expect("upload: a first chunk that isn't the first", add(askID, 1) == .refused("That audio chunk is out of order"))
+expect("upload: a chunk over the limit", add(askID, 0, size: VoiceAudio.maxChunkBytes + 2) == .refused("That audio chunk is the wrong size"))
+expect("upload: an odd chunk", add(askID, 0, size: 31) == .refused("That audio chunk is the wrong size"))
+expect("upload: another rate", add(askID, 0, rate: 48_000) == .refused("Voice mode sends 16 kHz audio"))
+expect("upload: a chunk number below zero", add(askID, -1) == .refused("That audio chunk is out of order"))
+var length = 0
+var overrun: VoiceUploads.Outcome = .more
+for seq in 0..<40 where overrun == .more {
+    overrun = add(askID, seq, size: 48_000)
+    length += 48_000
+}
+expect("upload: more than 30 seconds is refused", overrun == .refused("That request is too long: say less at once"), "\(overrun) at \(length)")
+expect("upload: only so many at once", add("a", 0) == .more && add("b", 0) == .more && add("c", 0) == .refused("Too many requests are being sent"))
+expect("upload: one that goes quiet is dropped", add("d", 0, at: 61) == .more && upload.count == 1)
+expect("upload: the limit counts the live ones", add("e", 0, at: 62) == .more && add("f", 0, at: 63) == .refused("Too many requests are being sent"))
+
+// The ledger: what the phone polls.
+var ledger = VoiceLedger(limit: 3)
+expect("ledger: an ask begins", ledger.begin(askID, now: t0) && ledger.busy())
+expect("ledger: only one at a time, and no id twice", !ledger.begin(otherID, now: t0) && !ledger.begin(askID, now: t0))
+ledger.add(PeerVoiceEvent(.heard, text: "hi"), to: askID, now: after(1))
+ledger.add(PeerVoiceEvent(.taken), to: askID, now: after(2))
+expect("ledger: the events so far, and where to ask next", ledger.read(askID, after: 0) == PeerVoiceReply(id: askID, events: [PeerVoiceEvent(.heard, text: "hi"), PeerVoiceEvent(.taken)], next: 2, done: false))
+expect("ledger: only what came after", ledger.read(askID, after: 1)?.events == [PeerVoiceEvent(.taken)] && ledger.read(askID, after: 2)?.events == [])
+expect("ledger: an `after` beyond the end or below zero is clamped", ledger.read(askID, after: 99)?.next == 2 && ledger.read(askID, after: -5)?.events?.count == 2)
+ledger.add(PeerVoiceEvent(.answered, text: "a"), to: askID, now: after(3))
+ledger.add(PeerVoiceEvent(.failed), to: askID, now: after(4))
+expect("ledger: the end closes it, and nothing is added after", ledger.read(askID, after: 0)?.done == true && ledger.read(askID, after: 0)?.events?.count == 3 && !ledger.busy())
+expect("ledger: an unknown ask is nothing", ledger.read(otherID, after: 0) == nil)
+expect("ledger: the next ask can begin once it ended", ledger.begin(otherID, now: after(5)))
+expect("ledger: a finished ask is kept 5 minutes", ledger.read(askID, after: 0) != nil)
+ledger.add(PeerVoiceEvent(.deadline), to: otherID, now: after(6))
+ledger.prune(now: after(3 + VoiceLedger.keep - 1))
+expect("ledger: still there just before", ledger.read(askID, after: 0) != nil)
+ledger.prune(now: after(3 + VoiceLedger.keep + 1))
+expect("ledger: gone after", ledger.read(askID, after: 0) == nil && ledger.read(otherID, after: 0) != nil)
+var crowded = VoiceLedger(limit: 2)
+for (index, id) in ["a", "b", "c"].enumerated() {
+    _ = crowded.begin(id, now: after(Double(index)))
+    crowded.add(PeerVoiceEvent(.deadline), to: id, now: after(Double(index)))
+}
+expect("ledger: no more than its limit, the oldest goes", crowded.count == 2 && crowded.read("a", after: 0) == nil && crowded.read("c", after: 0) != nil)
+
 print("check-voice: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

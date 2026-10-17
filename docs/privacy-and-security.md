@@ -553,6 +553,16 @@ today's Hey Varnick only reads, searches and answers, and opens nothing.
 - **Its tab is out of sight until you open it,** and once you have, it is yours: Varnick never types into a session you opened, and from its next start or
   resume it is an ordinary session: it follows your Skip permissions and has neither the search tool nor the voice hooks.
 
+### Voice mode on the phone
+
+Voice mode (the Phone page, on a Mac's page, with the Voice session switch on) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
+
+- **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches it takes for a request (it listens for speech and sends from the first word to a pause), never continuously. The browser's own microphone indicator is on the whole time.
+- **The audio goes to the Mac over the tailnet and nowhere else.** The Mac turns it into text on-device (Listening's transcriber) and does not keep it; the text goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
+- **Nothing of the exchange is kept on the phone,** and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
+- **A quiet tone plays on the phone for as long as Voice mode runs,** to keep the page from being frozen while it is in the background.
+- **A question the session asks is answered in the session's terminal,** opened from the page with Take over, as any session is.
+
 ### Screen access acts without asking
 
 Screen access (ADR 0023) gives the sessions started or restarted while it is on a `varnick` MCP server with

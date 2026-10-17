@@ -1047,6 +1047,13 @@ final class PeerManager: ObservableObject {
         case .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened:
             // Automations on a headless host are that host's: a Mac keeps its own in its own files, through Settings and the tools.
             return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "This Mac") keeps its own automations: only a headless host answers these"))
+        case .voiceAudio, .voiceAsk, .voiceStatus:
+            // Voice mode (option 05 of `phone-page-is-only-a-browser-tab`): for a Mac in the list or a device, as `start` is, read from the file the relay reads.
+            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { $0.id == by }) || MacPeerHost().listsDevice(by) else {
+                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
+            }
+            guard let model else { return starting }
+            return PeerJSON.line(await VoiceRemote.shared.answer(request, by: by, model: model))
         case .attach, .status, .screen, .watch, .tabs, .take, .file, .files, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))

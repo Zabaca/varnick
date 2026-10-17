@@ -1,0 +1,34 @@
+# Voice mode on the Phone page talks to a Mac's voice session through its relay, hears and speaks on the Mac, and is kept alive by a quiet tone
+
+Amends [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page now holds the microphone, in the foreground, and sends the host audio) and reads [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md) (the voice session this is the second surface of). The problem and the option are in `docs/problems/phone-page-is-only-a-browser-tab/options/05-voice-mode-talks-to-a-hosts-voice-session.md`.
+
+A **Voice mode** button on a Mac host's Phone page starts a back-and-forth by voice with that Mac's **Voice session** (`CONTEXT.md`): the same session Hey Varnick reaches at the desk, so a question asked aloud there can be followed up from the phone within the 10 minutes. The user's decisions of 2026-10-16:
+
+- **Speech becomes text, and the reply becomes voice, on the Mac host,** with Listening's transcriber and the Voice setting's voice (ElevenLabs or the installed voice). The phone sends audio and plays audio.
+- **No Voice mode on a headless host at first.** It has no transcriber or voice; the page hides the button and the relay says so.
+- **Foreground only,** by the browser's rules, with one measured addition (below).
+
+## The decisions
+
+- **Three relay requests (protocol 30), each one short process.** `voiceAudio` carries one chunk of an utterance (16 kHz 16-bit mono, 1 s, base64; a request is one base64 argument of at most 120,000 bytes, which is why a chunk is small), `voiceAsk` the same ask as text, and `voiceStatus` the ask's events from a count on, polled once a second as `task_run_status` is. A listed device or Mac may ask; only a Mac's app answers (`VoiceRemote`).
+- **The page decides where a request ends** (silence after speech, named constants, a noise floor measured at the start so the tone and a fan are not speech) and sends it while it is still being said, so only the last chunk waits after the last word. The Mac assembles the chunks in order (`VoiceUploads`), transcribes (`VoiceTranscriber`: a single pass of `SpeechTranscriber` over the finished utterance), shows the phone what it heard, and asks the voice session as Hey Varnick does, with the phone's moment, zone and units in the hint (`VoiceSessionHost.ask`).
+- **The reply comes back as the answer's text, its spoken form and its audio** as one 16 kHz mono WAV made on the Mac (`VoiceRender`, which records the Speaker's voice instead of playing it; an answer too long for a reply line goes as text alone). The page plays it through its audio context. While a request is out and its reply plays, the microphone's audio is dropped, so Varnick does not hear itself.
+- **A question or plan is answered in the session's own terminal.** The event names the voice session's zmx session; the page's Open button opens it with take, as any session opens there, and the session is then the user's (ADR 0042). The hidden tab is still never in a tab list: it is reached by that event alone.
+- **A quiet tone keeps the page alive.** The spike on a Pixel (Chrome 155, a tab, 2026-10-16) found a hidden, silent page frozen after 60 s (the websocket closed about 5 s later, and the page was fine on return), and a hidden page that played a 220 Hz tone at 0.02 not frozen for 132 s, its microphone hearing the user throughout and its websocket open. So Voice mode plays that tone from Start to End, and keeps the screen on while the page is shown. A page that is frozen anyway reconnects on its next resume (the microphone, the context, the tone, the screen) and says so in the view.
+- **Nothing of the exchange is kept.** It lives in the view; the page's worker and cache hold none of it; the server logs the method, path, status, device and time; the Mac's timing line holds durations and kinds.
+
+## Considered Options
+
+- **Speech to text on the phone (Chrome's SpeechRecognition) and the phone's own voice.** Not chosen by the user. It would have worked on a headless host too, but SpeechRecognition ends the moment the page is hidden, and Chrome sends its audio to Google.
+- **A streaming channel (a websocket relay process) for the audio.** Not built: chunks through the existing short relay requests are enough for a request of a few seconds, and nothing new has to stay open on the Mac.
+- **Ending the mode when the page is hidden or the phone locks.** The option's first draft. Replaced by the tone for the hidden page; a locked screen is unmeasured (see Consequences).
+- **A native Android shell with a microphone foreground service,** for a locked phone. Deferred.
+
+## Consequences
+
+- **Every Mac, the headless host and each Phone page must run the commit that made protocol 30.** A headless host answers the three requests with a refusal.
+- **A locked phone is not known to work.** The spike's tone run was a hidden page; locked is the user's to try (the hand test), and Doze can cut the network with the screen off.
+- **The tone is audible to the microphone** and sounds quiet but not silent; the noise floor keeps it from beginning a request. A phone that plays other audio may be paused by Android's audio focus.
+- **Anything the phone's microphone hears can run commands on the Mac, unasked,** as at the Mac (ADR 0042). The page sends audio only when the user has tapped Start on it, and Voice mode needs the Voice session switch on.
+- **Audio goes from the phone to the Mac over the tailnet,** and nowhere else. What the transcriber hears is on-device; what the session reads goes to Anthropic, as ADR 0042 says.
+- **One ask at a time per Mac,** the voice session's rule: a request while Hey Varnick's or another phone's is in flight is told the Mac is still on the last one.
