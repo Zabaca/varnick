@@ -267,9 +267,9 @@ describe("the one-line summary", () => {
       expect(done.stderr.toString()).toBe("");
       expect(done.exitCode).toBe(0);
       const out = done.stdout.toString();
-      expect(out).toContain(`${run}      1.0 mic live (vis=visible mute=0 ctx=running ready=live)`);
+      expect(out).toContain(`${run}      0.0 bucket 0-30s levels=10 loudest=0.012 muted=0 vis=hidden\n`);
       expect(out).toContain(`${run}      3.0 vis state=hidden`);
-      expect(out).toContain(`${run}      7.0 mic silent (vis=hidden mute=0 ctx=running ready=live)`);
+      expect(out).toContain(`${run}     60.0 bucket 60-90s levels=1 loudest=0.000 muted=0 vis=hidden SILENT\n`);
       expect(out).toContain(`${run}     80.0 level-gap 70.0s`);
       expect(out).toContain(`${run}     80.5 resume vis=visible`);
       expect(out).toContain(`${run}     40.0 host-ping-gap 30.0s`);
@@ -278,6 +278,33 @@ describe("the one-line summary", () => {
       // In time order, the summary last.
       const times = out.trimEnd().split("\n").map((line) => Number(line.trim().split(/\s+/)[1]));
       expect(times).toEqual([...times].sort((a, b) => a - b));
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  test("a long run whose page froze reads to its end, whatever order its lines reached the log", () => {
+    const folder = mkdtempSync(join(tmpdir(), "spike-sum-"));
+    try {
+      const path = join(folder, "voice-spike.log");
+      const lines: string[] = [];
+      const add = (t: number, kind: string, fields = "") => lines.push(`${1_760_000_000_000 + t} 2025-10-09T08:53:20.000Z ${run} ${kind} t=${t} dev=Pixel_8a${fields}`);
+      add(0, "start");
+      for (let s = 1; s <= 10; s++) add(s * 1000, "level", " rms=0.02000 peak=0.1 blank=0 mute=0 ready=live ctx=running vis=hidden ws=1");
+      // The page froze at 12 s: the host heard pings until 60 s, and the page's levels from 11 s to 260 s came in one batch when it resumed.
+      for (let s = 5; s <= 60; s += 5) add(s * 1000, "host-ping", ` n=${s / 5}`);
+      add(12_000, "freeze");
+      for (let s = 11; s <= 260; s++) add(s * 1000, "level", ` rms=${s < 100 ? "0.00000" : "0.05000"} peak=0.1 blank=0 mute=0 ready=live ctx=running vis=${s < 200 ? "hidden" : "visible"} ws=1`);
+      add(200_000, "resume", " vis=visible");
+      writeFileSync(path, `${lines.join("\n")}\n`);
+      const done = Bun.spawnSync(["sh", "-c", summaryCommand(path)], { stdout: "pipe", stderr: "pipe" });
+      const out = done.stdout.toString();
+      expect(done.stderr.toString()).toBe("");
+      expect(out).toContain("summary levels=260 host-pings=12 pongs=0");
+      expect(out).toContain(`${run}    240.0 bucket 240-270s levels=21 loudest=0.050 muted=0 vis=visible\n`);
+      expect(out).toContain(`${run}     30.0 bucket 30-60s levels=30 loudest=0.000 muted=0 vis=hidden SILENT\n`);
+      expect(out).toContain(`${run}     12.0 freeze`);
+      expect(out.trimEnd().split("\n").at(-1)).toContain(`${run}    260.1 summary`);
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

@@ -25,19 +25,22 @@ export function spikeFiles(folder: string): { marker: string; log: string } {
 export const spikeIsOn = (folder: string | undefined): boolean => folder !== undefined && existsSync(spikeFiles(folder).marker);
 
 /**
- * The one-line summary of a log, for the person running the spike: each run's timeline of what changed (the microphone going silent or live, the page
- * hiding, freezing and resuming, the wake lock, the tone, the websocket) and its gaps in levels (over 3 s) and in the host's pings (over 7 s),
- * ending with a summary line. Times are seconds since the run began.
+ * The one-line summary of a log, for the person running the spike: each run's timeline of what changed (the page hiding, freezing and resuming, the
+ * wake lock, the tone, the websocket), its gaps in levels (over 3 s) and in the host's pings (over 7 s), and a line for each 30 s of the run with how
+ * many levels came in it and the loudest (a bucket whose loudest is under 0.0005 is SILENT). Times are seconds since the run began; the last line of
+ * a run is its summary. A page's lines reach the log in the order they got through, which for a frozen page is not the order they happened, so the
+ * output is sorted by time; and a log still being written shows a run only as far as it has got.
  */
 export function summaryCommand(logPath: string): string {
   const program = [
     '{ r=$3; k=$4; delete f; for (i=5; i<=NF; i++) { n=index($i,"="); f[substr($i,1,n-1)]=substr($i,n+1) } t=f["t"]/1000; if (t>last[r]) last[r]=t }',
-    'k=="level" { m=(f["rms"]+0<0.0005)?"silent":"live"; if (m!=mic[r]) { printf "%s %8.1f mic %s (vis=%s mute=%s ctx=%s ready=%s)\\n",r,t,m,f["vis"],f["mute"],f["ctx"],f["ready"]; mic[r]=m }',
+    'k=="level" { b=int(t/30); key=r SUBSEP b; seen[key]=1; runOf[key]=r; at[key]=b*30; count[key]++; if (f["rms"]+0>loud[key]) loud[key]=f["rms"]+0; muted[key]+=f["mute"]+0; vis[key]=f["vis"];',
     'levels[r]++; if ((r in lv) && t-lv[r]>3) printf "%s %8.1f level-gap %.1fs\\n",r,t,t-lv[r]; lv[r]=t; next }',
     'k=="host-ping" { pings[r]++; if ((r in hp) && t-hp[r]>7) printf "%s %8.1f host-ping-gap %.1fs\\n",r,t,t-hp[r]; hp[r]=t; next }',
     'k=="pong" { pongs[r]++; if (f["rtt"]+0>rtt[r]) rtt[r]=f["rtt"]+0; if (f["rtt"]+0>1000) printf "%s %8.1f slow-pong rtt=%sms\\n",r,t,f["rtt"]; next }',
     '{ line=""; for (i=5; i<=NF; i++) if ($i !~ /^(t|dev)=/) line=line " " $i; printf "%s %8.1f %s%s\\n",r,t,k,line }',
-    'END { for (r in last) printf "%s %8.1f summary levels=%d host-pings=%d pongs=%d max-rtt=%dms\\n",r,last[r]+0.05,levels[r],pings[r],pongs[r],rtt[r] }',
+    'END { for (key in seen) printf "%s %8.1f bucket %d-%ds levels=%d loudest=%.3f muted=%d vis=%s%s\\n",runOf[key],at[key],at[key],at[key]+30,count[key],loud[key],muted[key],vis[key],(loud[key]<0.0005?" SILENT":"");',
+    'for (r in last) printf "%s %8.1f summary levels=%d host-pings=%d pongs=%d max-rtt=%dms\\n",r,last[r]+0.05,levels[r],pings[r],pongs[r],rtt[r] }',
   ].join(" ");
   return `awk '${program}' '${logPath.replace(/'/g, `'\\''`)}' | sort -s -k1,1 -k2,2n`;
 }
