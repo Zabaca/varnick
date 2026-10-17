@@ -63,3 +63,35 @@ export function dragLines(pixels, rowHeight) {
   const lines = Math.trunc(pixels / rowHeight);
   return { lines, rest: pixels - lines * rowHeight };
 }
+
+/**
+ * Milliseconds after a layout event (a resize, a rotation, a fold, coming back to the page) when the screen is fitted and drawn again.
+ * Android finishes such a change over several frames, and a box measured in the middle of one is stale or zero, so a single pass can end
+ * at the wrong size; the later passes catch the settled one. The first is on the next task, after the page's own height is set.
+ */
+export const redrawDelays = [0, 150, 600];
+
+/**
+ * The grid the terminal should have: `size` is what the fit addon proposed (undefined while the box measures zero), `current` the
+ * terminal's own grid. Null leaves it alone. With the keyboard up the grid never loses rows (it keeps its height and shows its bottom
+ * rows), but may gain them.
+ */
+export function gridFor(size, current, keyboardUp) {
+  if (!size || !(size.cols > 0) || !(size.rows > 0)) return null;
+  const rows = keyboardUp && size.rows < current.rows ? current.rows : size.rows;
+  return { cols: size.cols, rows };
+}
+
+/** How long a page may be hidden before its socket is not trusted: Android keeps one for about 90 s, and a network change leaves it half open. */
+export const staleAfterHiddenMs = 60_000;
+
+/**
+ * Whether the terminal's socket is replaced when the page is shown again (the host then sends the whole screen): it is closing or closed
+ * without the page having heard (a frozen page, or one restored from the back/forward cache), or the page was away long enough that an
+ * open socket may be dead without saying so. `readyState` is WebSocket's (0 connecting, 1 open, 2 closing, 3 closed); null is no socket.
+ */
+export function reattachOnReturn(readyState, hiddenMs) {
+  if (readyState === null || readyState === undefined) return false;
+  if (readyState >= 2) return true;
+  return readyState === 1 && hiddenMs >= staleAfterHiddenMs;
+}

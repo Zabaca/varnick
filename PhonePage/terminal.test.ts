@@ -6,7 +6,7 @@ import { buildRequest, relayEnvironment } from "./relay";
 import {
   attachEnvironment, clampGrid, closeCode, decideExit, decideOpen, recheckControl, takenReason, endText, firstOutput, fitReason, isSessionName, parseClient, parseOpen, refusal,
 } from "./terminal";
-import { closeAction, ctrlCode, dragLines, keys, livedLongEnough, reconnectDelay, takenController } from "./page/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, staleAfterHiddenMs, takenController } from "./page/rules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
@@ -270,6 +270,37 @@ describe("the page's rules", () => {
     // Before the terminal is measured there is no row height: nothing scrolls, and nothing is carried.
     expect(dragLines(40, 0)).toEqual({ lines: 0, rest: 0 });
     expect(dragLines(40, NaN)).toEqual({ lines: 0, rest: 0 });
+  });
+
+  test("the grid a refit asks for", () => {
+    const current = { cols: 80, rows: 30 };
+    expect(gridFor({ cols: 100, rows: 40 }, current, false)).toEqual({ cols: 100, rows: 40 });
+    // A box that measures zero (hidden, or mid-rotation) proposes nothing, or NaN: the grid is left alone.
+    expect(gridFor(undefined, current, false)).toBeNull();
+    expect(gridFor({ cols: 0, rows: 0 }, current, false)).toBeNull();
+    expect(gridFor({ cols: NaN, rows: 10 }, current, false)).toBeNull();
+    // The keyboard never takes rows away, but a taller box still gives them.
+    expect(gridFor({ cols: 80, rows: 12 }, current, true)).toEqual({ cols: 80, rows: 30 });
+    expect(gridFor({ cols: 60, rows: 12 }, current, true)).toEqual({ cols: 60, rows: 30 });
+    expect(gridFor({ cols: 80, rows: 12 }, current, false)).toEqual({ cols: 80, rows: 12 });
+    expect(gridFor({ cols: 80, rows: 40 }, current, true)).toEqual({ cols: 80, rows: 40 });
+  });
+
+  test("a socket is replaced on return only when it can't be trusted", () => {
+    const CONNECTING = 0, OPEN = 1, CLOSING = 2, CLOSED = 3;
+    expect(reattachOnReturn(null, 999_999)).toBe(false);
+    expect(reattachOnReturn(OPEN, 2_000)).toBe(false);
+    expect(reattachOnReturn(OPEN, staleAfterHiddenMs - 1)).toBe(false);
+    expect(reattachOnReturn(OPEN, staleAfterHiddenMs)).toBe(true);
+    expect(reattachOnReturn(CONNECTING, staleAfterHiddenMs * 10)).toBe(false);
+    expect(reattachOnReturn(CLOSING, 0)).toBe(true);
+    expect(reattachOnReturn(CLOSED, 0)).toBe(true);
+  });
+
+  test("the screen is repainted as the layout settles, soonest first", () => {
+    expect(redrawDelays[0]).toBe(0);
+    expect([...redrawDelays].sort((a, b) => a - b)).toEqual(redrawDelays);
+    expect(redrawDelays.length).toBeGreaterThan(1);
   });
 
   test("the key bar's keys", () => {

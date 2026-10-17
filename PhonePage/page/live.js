@@ -89,6 +89,15 @@ export function createLive({ host, sizer, mount }) {
       if (last.cols > 0) place();
       else draw();
     },
+    /**
+     * After a return to the page or a change of layout: the last frame again from scratch (which also works out the scale from the box as
+     * it measures now), then every row repainted, since the renderer is not told when only the box changed.
+     */
+    redraw() {
+      if (disposed || !last) return;
+      draw();
+      term.refresh(0, term.rows - 1);
+    },
     dispose() {
       disposed = true;
       term.dispose();
