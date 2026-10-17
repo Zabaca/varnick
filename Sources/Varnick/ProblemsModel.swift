@@ -315,7 +315,13 @@ enum ProblemsReader {
     /// A project keeps its problems here, in its main checkout.
     static func problemsFolder(of project: String) -> String { project + "/docs/problems" }
 
-    /// What every project in `projects` that has a problems folder holds, and its tied branches (read only when it holds problems).
+    /// The folders the board reads: the projects, then Varnick's Home (`HomeFolder`, which is no project) unless a project is that folder.
+    static func roots(of projects: [String]) -> [String] {
+        let homeKey = WorkRepo.key(HomeFolder.path)
+        return projects.contains { WorkRepo.key($0) == homeKey } ? projects : projects + [HomeFolder.path]
+    }
+
+    /// What every folder in `projects` that has a problems folder holds, and its tied branches (read only when it holds problems).
     /// Stops at the next project when the task is cancelled.
     static func read(_ projects: [String]) async -> [ProjectProblems] {
         var found: [ProjectProblems] = []
