@@ -58,19 +58,25 @@ public enum VoiceSession {
 
     /// Reused only when the session is unopened, its turn is waiting for a prompt, its last turn ended less than `reuseWithin` ago and no request is
     /// in flight. Anything else starts a new one; an old one that is working is left to finish and ended by `idleEnded` after.
-    public static func decide(held: Held?, turn: PaneTurn?, opened: Bool, now: Date) -> Decision {
+    /// `abandonedAt` is when a request was given up on while its turn went on (the deadline, a cancel): that turn, still working, is busy for up
+    /// to `reuseWithin` and not replaced, since a new session would end it and the notice it promised must still come.
+    public static func decide(held: Held?, turn: PaneTurn?, opened: Bool, now: Date, abandonedAt: Date? = nil) -> Decision {
         guard let held else { return .start(.first) }
         if held.requestInFlight { return .busy }
         if opened { return .start(.opened) }
-        guard let turn else { return .start(.working) }
+        guard let turn else { return stillWorking(abandonedAt, now) ? .busy : .start(.working) }
         switch turn.turn {
         case .waiting:
             return now.timeIntervalSince(turn.since) < reuseWithin ? .send : .start(.idle)
         case .working, .background:
-            return .start(.working)
+            return stillWorking(abandonedAt, now) ? .busy : .start(.working)
         case .permission, .question, .plan, .input, .failed:
             return .start(.needsUser)
         }
+    }
+
+    private static func stillWorking(_ abandonedAt: Date?, _ now: Date) -> Bool {
+        abandonedAt.map { now.timeIntervalSince($0) < reuseWithin } ?? false
     }
 
     /// Whether an unopened session is to be ended now: it is in any state but working and `reuseWithin` has passed since its turn last changed (waiting,

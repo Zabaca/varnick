@@ -22,6 +22,9 @@ final class VoiceSessionHost: ObservableObject {
     var requestInFlight: Bool { inFlight != nil }
     /// Panes whose last turn's answer a surface took, so that turn raises no Done (`suppressesDone`). A new turn clears it.
     private var answered: Set<UUID> = []
+    /// Panes whose request was given up on, by the deadline or a cancel, while their turn went on, and when: a turn still working is then busy
+    /// to the next request and never replaced (`VoiceSession.decide`), so a stray line can't end it and the notice it promised still comes.
+    private var abandoned: [UUID: Date] = [:]
     /// Whether an unopened voice session exists, for Settings' Show button.
     @Published private(set) var going = false
 
@@ -143,7 +146,8 @@ final class VoiceSessionHost: ObservableObject {
         }
         if let pane = current, !pane.readsOwnTurn { pane.checkTurn() }
         let heldNow = current.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
-        let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now)
+        let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now,
+                                           abandonedAt: current.flatMap { abandoned[$0.id] })
         let hint = VoiceHint.text(device: device, now: moment, timeZone: zone,
                                   units: units ?? .host, voiceMode: voiceMode)
         let line = VoicePaste.line(hint: hint, request: request)
@@ -160,6 +164,7 @@ final class VoiceSessionHost: ObservableObject {
             why = nil
             inFlight = id
             answered.remove(id)
+            abandoned[id] = nil
             VoiceSession.clearMarkers(for: id)
             sent = Date()
             let pasted = await Task.detached(priority: .userInitiated) { Zmx.paste(line, into: id) }.value
@@ -182,8 +187,10 @@ final class VoiceSessionHost: ObservableObject {
                 for old in panes where old.id != id && !isOpened(old) { endPane(old) }
             }
         }
+        var givenUp = false
         defer {
             if inFlight == id { inFlight = nil }
+            if givenUp { abandoned[id] = Date() }
             refreshGoing()
         }
         requestPane = id
@@ -195,13 +202,16 @@ final class VoiceSessionHost: ObservableObject {
         while !Task.isCancelled && !watch.finished {
             try? await Task.sleep(for: Self.pollEvery)
             // The switch was turned off meanwhile (which ends the session): the request ends quietly, with no failure line.
-            guard !Task.isCancelled, Settings.shared.voiceSessionOn else { return }
+            guard !Task.isCancelled else { givenUp = true; return }
+            guard Settings.shared.voiceSessionOn else { return }
             for event in watch.observe(observation(of: id, sent: sent, taken: watch.takenAt)) {
                 if case .answered = event { answered.insert(id) }
+                if case .deadline = event { givenUp = true }
                 if case .failed(.notTaken) = event { notTaken = true }
                 out.yield(.event(event))
             }
         }
+        if Task.isCancelled, !watch.finished { givenUp = true }
         // A session that did not take the request is stuck (a dialog, a login): an unopened one is ended, and the next request starts fresh.
         if notTaken, let pane = model.claudePane(id), !isOpened(pane) { endPane(pane) }
     }
@@ -282,6 +292,7 @@ final class VoiceSessionHost: ObservableObject {
             if VoiceSession.idleEnded(turn: pane.turn, startedAt: pane.record.startedAt, opened: false, now: now) { endPane(pane) }
         }
         answered = answered.filter { id in panes.contains { $0.id == id } }
+        abandoned = abandoned.filter { id, _ in panes.contains { $0.id == id } }
         refreshGoing()
     }
 
@@ -295,6 +306,7 @@ final class VoiceSessionHost: ObservableObject {
     private func endPane(_ pane: ClaudeSession) {
         let id = pane.id
         answered.remove(id)
+        abandoned[id] = nil
         pane.endSession()
         Task.detached(priority: .utility) {
             if let why = Zmx.endConfirmed(id) { NSLog("Varnick: a voice session's zmx session wasn't confirmed gone: \(why)") }

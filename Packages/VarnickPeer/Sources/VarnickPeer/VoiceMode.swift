@@ -30,20 +30,19 @@ public enum VoiceMode {
         case failed
     }
 
-    /// Whether voice mode is over once the request has ended. An answer, no answer, the deadline and busy keep it on. Needs you, a refusal and a
-    /// failure end it: the user has to go to the screen, or the next line would fail the same way. `endTool` is Claude's `end_voice_mode`, called in
-    /// this request's turn: it ends the mode whatever the outcome.
+    /// Whether voice mode is over once the request has ended: an answer, no answer and busy keep it on; the rest end it. `endTool` (Claude's
+    /// `end_voice_mode`, called in this request's turn) ends it whatever the outcome.
     public static func ends(after outcome: Outcome, endTool: Bool) -> Bool {
         if endTool { return true }
         switch outcome {
-        case .answered, .noAnswer, .deadline, .busy: return false
-        case .needsYou, .refused, .failed: return true
+        case .answered, .noAnswer, .busy: return false
+        case .needsYou, .refused, .failed, .deadline: return true
         }
     }
 
     /// Why voice mode ended, for the log: kinds only.
     public enum Ending: String, Equatable {
-        case key, menu, minute, call, claude, needsYou = "needs you", failure
+        case key, menu, minute, call, claude, needsYou = "needs you", failure, deadline
         /// Listening stopped, Hey Varnick was turned off, or the pipeline was chosen.
         case switchedOff = "switched off"
     }
@@ -51,12 +50,15 @@ public enum VoiceMode {
     /// The ending that follows an outcome for which `ends(after:endTool:)` is true.
     public static func ending(after outcome: Outcome, endTool: Bool) -> Ending {
         if endTool { return .claude }
-        return outcome == .needsYou ? .needsYou : .failure
+        switch outcome {
+        case .needsYou: return .needsYou
+        case .deadline: return .deadline
+        default: return .failure
+        }
     }
 
-    /// What the voice session is sent for a final mic line heard in voice mode. `afterWake` is what follows a leading wake phrase, from the wake
-    /// phrase's own reader (nil when the line has none): the phrase is dropped, and a line without one stays whole. Nil when nothing is left of it:
-    /// the line counts as the user's and goes nowhere.
+    /// What a final mic line sends in voice mode: what follows its wake phrase (`afterWake`, nil when it has none) or the whole line. Nil when
+    /// nothing is left of it: the line goes nowhere.
     public static func requestText(of line: String, afterWake: String?) -> String? {
         let punctuation = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.:;!?-–—"))
         let text = afterWake ?? line
@@ -89,5 +91,32 @@ public enum VoiceMode {
     public static func minuteOver(since: Date, volatile: Speech?, now: Date) -> Bool {
         let end = deadline(since: since)
         return now >= end && !speechUnderway(until: end, volatile: volatile, now: now)
+    }
+
+    /// How long Varnick's own words count as recently spoken, for `isEcho`.
+    public static let echoWindow: TimeInterval = 60
+
+    /// Whether a mic line is Varnick's own voice coming back late: three words or more, nearly all of them (`echoShare`) among what Varnick just
+    /// said, and three in a row as it said them. A comparison against Varnick's output, not a list of what the user says.
+    public static func isEcho(_ line: String, of said: [String]) -> Bool {
+        let words = tokens(line)
+        guard words.count >= 3 else { return false }
+        let spoken = said.map(tokens)
+        let known = Set(spoken.joined())
+        guard Double(words.filter { known.contains($0) }.count) / Double(words.count) >= echoShare else { return false }
+        let runs = Set(spoken.flatMap(triples))
+        return triples(words).contains { runs.contains($0) }
+    }
+
+    private static func triples(_ words: [String]) -> [String] {
+        guard words.count >= 3 else { return [] }
+        return (0...(words.count - 3)).map { words[$0...($0 + 2)].joined(separator: " ") }
+    }
+
+    /// The share of a line's words that must be among Varnick's for it to be taken as its echo.
+    public static let echoShare = 0.8
+
+    private static func tokens(_ text: String) -> [String] {
+        text.lowercased().split { !($0.isLetter || $0.isNumber) }.map(String.init)
     }
 }

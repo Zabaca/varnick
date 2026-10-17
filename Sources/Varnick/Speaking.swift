@@ -6,7 +6,8 @@ import SwiftUI
 /// actor, before the first sound and until the last; Listening's result loop reads it from another thread.
 final class SpeechSpans: @unchecked Sendable {
     static let shared = SpeechSpans()
-    /// How long after the last sound the mic can still be hearing it: the room's echo, and speech the transcriber is yet to place.
+    /// How long after the last sound the mic can still be hearing it: the room's echo, and speech the transcriber is yet to place. The output's own
+    /// latency (`OutputLatency`) is added to it per span, since a Bluetooth or AirPlay output plays a sound that much later.
     static let tail: TimeInterval = 0.5
     /// Spans are kept this long after they end, longer than a final result takes to arrive.
     private static let keep: TimeInterval = 60
@@ -15,6 +16,8 @@ final class SpeechSpans: @unchecked Sendable {
         let token: UUID
         let start: Date
         var end: Date?
+        /// `tail` plus the output's latency when the span opened.
+        let tail: TimeInterval
     }
 
     private let lock = NSLock()
@@ -22,12 +25,13 @@ final class SpeechSpans: @unchecked Sendable {
 
     /// Opens a span now; it stays open, covering everything after it, until `ended`.
     func began() -> UUID {
+        let tail = Self.tail + OutputLatency.seconds()
         lock.lock()
         defer { lock.unlock() }
         let now = Date()
         spans.removeAll { $0.end.map { now.timeIntervalSince($0) > Self.keep } ?? false }
         let token = UUID()
-        spans.append(Span(token: token, start: now))
+        spans.append(Span(token: token, start: now, tail: tail))
         return token
     }
 
@@ -41,7 +45,7 @@ final class SpeechSpans: @unchecked Sendable {
     func covers(_ date: Date) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return spans.contains { date >= $0.start && date <= ($0.end ?? .distantFuture).addingTimeInterval(Self.tail) }
+        return spans.contains { date >= $0.start && date <= ($0.end ?? .distantFuture).addingTimeInterval($0.tail) }
     }
 }
 

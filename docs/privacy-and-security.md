@@ -547,14 +547,14 @@ It also has Varnick's tools your other sessions have (Screen access and Panel ac
 which can click, type and press keys without asking. Settings › Listening says so beside Hey Varnick. If that is too much, turn on Settings › Experimental ›
 Answer with Varnick's own steps: that Hey Varnick only reads, searches and answers, and opens nothing (the voice session is then off, and so is Voice mode on the phone).
 
-- **In voice mode on a Mac, no wake phrase is needed.** "Hey Varnick" or its shortcut (⌃⌥V) starts it, and until it ends **every line the microphone hears
+- **In voice mode on a Mac, no wake phrase is needed.** "Hey Varnick" or its shortcut (Settings › Shortcuts) starts it, and until it ends **every line the microphone hears
   goes to the session as a request**, so a TV, a radio, a video through the speakers, a call on the other side of the desk or someone else in the room can
   run commands, and anything that keeps talking keeps it on. It ends on the shortcut or the menu, a minute after Varnick last finished speaking with
   nothing said, another app taking the microphone (a call: Varnick watches whether any other process is running audio input, reads no app's name and
   logs only that a call ended voice mode; it can't tell a TV, a call on another device or someone else in the room), Claude calling the end tool when you
-  are done or the line wasn't meant for it, the session needing your OK or failing, or Listening, Hey Varnick or the voice session being switched off.
-  A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when ("Voice mode on.", "Voice mode off."), so the file shows
-  which `[mic]` lines went to Claude. There is no limit on its length and no check that the voice is yours. Settings › Listening says so beside Hey Varnick,
+  are done or the line wasn't meant for it, the session needing your OK, failing or taking past its deadline, or Listening, Hey Varnick or the voice session being switched off.
+  A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when ("Voice mode on.", "Voice mode off."): the lines between them may have gone
+  to Claude. There is no limit on its length and no check that the voice is yours. Settings › Listening says so beside Hey Varnick,
   and the two change together. The phone's Voice mode (below) is separate.
 - **It is a session like any other in what it can reach:** Varnick's Accessibility and Screen Recording are inherited by the commands it runs
   (see Screen permissions reach every pane, above).

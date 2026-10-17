@@ -68,6 +68,21 @@ ended("one the user opened is never ended, whatever its turn", turn(.question, s
 ended("one with no known turn, started 10 minutes ago", nil, at: 600, is: true)
 ended("one with no known turn, started a minute ago", nil, at: 60, is: false)
 
+// A working turn whose request was given up on (the deadline, or a cancel) is busy, not replaceable: a new session would end it.
+func decideAbandoned(_ name: String, _ turn: PaneTurn?, abandoned: TimeInterval?, at seconds: TimeInterval, is expected: VoiceSession.Decision) {
+    let got = VoiceSession.decide(held: free, turn: turn, opened: false, now: after(seconds), abandonedAt: abandoned.map(after))
+    expect("decide: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+decideAbandoned("a working turn after the deadline is busy", turn(.working, since: 0), abandoned: 60, at: 90, is: .busy)
+decideAbandoned("a turn with background work after a cancel is busy", turn(.background, since: 0), abandoned: 10, at: 20, is: .busy)
+decideAbandoned("a turn that isn't known after a cancel is busy", nil, abandoned: 10, at: 20, is: .busy)
+decideAbandoned("busy for just under ten minutes", turn(.working, since: 0), abandoned: 0, at: 599, is: .busy)
+decideAbandoned("past ten minutes a working session is replaced", turn(.working, since: 0), abandoned: 0, at: 600, is: .start(.working))
+decideAbandoned("a working turn nobody gave up on is replaced as before", turn(.working, since: 0), abandoned: nil, at: 20, is: .start(.working))
+decideAbandoned("a turn that finished since is reused", turn(.waiting, since: 40), abandoned: 10, at: 50, is: .send)
+decideAbandoned("a turn waiting on the user is not made busy", turn(.question, since: 40), abandoned: 10, at: 50, is: .start(.needsUser))
+
 // MARK: The hint
 
 let moment = Date(timeIntervalSince1970: 1_760_626_800)   // Thursday 2025-10-16 15:00 UTC
@@ -417,7 +432,7 @@ func ends(_ name: String, _ outcome: VoiceMode.Outcome, endTool: Bool = false, i
 
 ends("an answer keeps it on", .answered, is: false)
 ends("no answer keeps it on", .noAnswer, is: false)
-ends("the deadline keeps it on", .deadline, is: false)
+ends("the deadline ends it: the turn is still working and a stray line must not meet it", .deadline, is: true)
 ends("busy keeps it on", .busy, is: false)
 ends("needs you ends it", .needsYou, is: true)
 ends("a refusal ends it", .refused, is: true)
@@ -428,7 +443,9 @@ for outcome in [VoiceMode.Outcome.answered, .noAnswer, .deadline, .busy, .needsY
 expect("ending: the end tool is Claude's", VoiceMode.ending(after: .answered, endTool: true) == .claude && VoiceMode.ending(after: .needsYou, endTool: true) == .claude)
 expect("ending: needs you, and the rest", VoiceMode.ending(after: .needsYou, endTool: false) == .needsYou && VoiceMode.ending(after: .refused, endTool: false) == .failure
        && VoiceMode.ending(after: .failed, endTool: false) == .failure)
-expect("ending: the log words", VoiceMode.Ending.needsYou.rawValue == "needs you" && VoiceMode.Ending.minute.rawValue == "minute")
+expect("ending: the deadline's own kind", VoiceMode.ending(after: .deadline, endTool: false) == .deadline)
+expect("ending: the log words", VoiceMode.Ending.needsYou.rawValue == "needs you" && VoiceMode.Ending.minute.rawValue == "minute"
+       && VoiceMode.Ending.deadline.rawValue == "deadline")
 
 // The minute runs from the end of Varnick's last line, or from entering.
 func over(_ name: String, since: TimeInterval = 0, speech: VoiceMode.Speech? = nil, at seconds: TimeInterval, is expected: Bool) {
@@ -463,6 +480,22 @@ line("the wake phrase alone is nothing", "Hey Varnick", afterWake: "", is: nil)
 line("the wake phrase and a stray full stop is nothing", "Hey Varnick.", afterWake: ".", is: nil)
 line("a line of punctuation is nothing", " . ", afterWake: nil, is: nil)
 line("an empty line is nothing", "", afterWake: nil, is: nil)
+
+// Varnick's own voice coming back is not a line (a long-delay output outlasts the tail after its last sound).
+let spokenLines = ["The weather in Paris is sunny and 72 degrees.", "I found two sessions about pantry."]
+func echo(_ name: String, _ line: String, is expected: Bool) {
+    let got = VoiceMode.isEcho(line, of: spokenLines)
+    expect("echo: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+echo("the same words", "the weather in Paris is sunny and 72 degrees", is: true)
+echo("a part of them", "weather in Paris is sunny", is: true)
+echo("one word misheard", "the weather in Paris is sunny and 70 degrees", is: true)
+echo("the user's own request", "and what about tomorrow", is: false)
+echo("a short line", "in Paris", is: false)
+echo("the same words in another order", "is Paris sunny and in the weather", is: false)
+echo("nothing said", "", is: false)
+expect("echo: nothing was said by Varnick", !VoiceMode.isEcho("the weather in Paris is sunny", of: []))
 
 // The voice hint, with and without voice mode.
 let modeHint = VoiceHint.text(device: .mac, now: moment, timeZone: utc, units: .us, voiceMode: true)

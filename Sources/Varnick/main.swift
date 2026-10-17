@@ -457,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         callRead?.cancel()
         guard let spoken, !spoken.voiceModeActive, spoken.cannotStartVoiceMode == nil else { return }
         callRead = Task { [weak self] in
-            guard await CallWatch.othersHoldMicrophoneNow(), !Task.isCancelled, let self, !(self.spoken?.voiceModeActive ?? false) else { return }
+            guard !(await CallWatch.othersHoldingMicrophoneNow()).isEmpty, !Task.isCancelled, let self, !(self.spoken?.voiceModeActive ?? false) else { return }
             self.voiceItem.title += " (a call is using the microphone)"
             self.voiceItem.isEnabled = false
         }
@@ -521,19 +521,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let look: FoldMark.MenuLook
         switch voiceLook {
         case .off: look = listeningNow ? .listening : .off
-        case .waiting: look = .voice(dimmed: false)
-        case .busy: look = .voice(dimmed: pulseDimmed)
+        case .waiting: look = .voiceWaiting
+        case .busy: look = .voiceBusy(dimmed: pulseDimmed)
         }
         statusItem.button?.image = FoldMark.menuBarImage(look)
         statusItem.button?.toolTip = look == .off ? nil : look.description
         let pulsing = voiceLook == .busy && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if pulsing, pulse == nil {
-            pulse = Timer.scheduledTimer(withTimeInterval: Self.pulseEvery, repeats: true) { [weak self] _ in
+            // In the common modes, so it goes on while the menu is open.
+            let timer = Timer(timeInterval: Self.pulseEvery, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.pulseDimmed.toggle()
                     self?.showIcon()
                 }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            pulse = timer
         } else if !pulsing, let timer = pulse {
             timer.invalidate()
             pulse = nil

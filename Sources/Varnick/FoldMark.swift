@@ -62,14 +62,17 @@ enum FoldMark {
         case off
         /// The halves lined up, with a bar under the V.
         case listening
-        /// Listening's mark in red. `dimmed` is the other half of the pulse while Varnick works or speaks.
-        case voice(dimmed: Bool)
+        /// Listening's mark in red, while it is the user's turn.
+        case voiceWaiting
+        /// The same while Varnick works or speaks; `dimmed` is the other half of the pulse.
+        case voiceBusy(dimmed: Bool)
 
         var description: String {
             switch self {
             case .off: "Varnick"
             case .listening: "Varnick, listening"
-            case .voice: "Varnick, in voice mode"
+            case .voiceWaiting: "Varnick, in voice mode, waiting for you"
+            case .voiceBusy: "Varnick, in voice mode, working"
             }
         }
     }
@@ -81,7 +84,8 @@ enum FoldMark {
         switch look {
         case .off: image = Self.image(.cutIdle, size: 16, template: true)
         case .listening: image = Self.image(.cutListening, size: 16, template: true)
-        case .voice(let dimmed): image = Self.image(.cutListening, size: 16, color: NSColor.systemRed.withAlphaComponent(dimmed ? 0.4 : 1))
+        case .voiceWaiting: image = Self.image(.cutListening, size: 16, color: .systemRed)
+        case .voiceBusy(let dimmed): image = Self.image(.cutListening, size: 16, color: NSColor.systemRed.withAlphaComponent(dimmed ? 0.4 : 1))
         }
         image.accessibilityDescription = look.description
         return image
