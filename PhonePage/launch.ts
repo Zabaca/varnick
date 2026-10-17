@@ -82,10 +82,7 @@ export interface SplitAsk {
   prompt: string;
 }
 
-/**
- * `POST /api/split`'s body: the tab, the pane shown, the kind (`claude` or `terminal`) and for Claude the agent and the prompt. No folder:
- * the host takes the split pane's. A terminal has no agent or prompt, and one sent is refused rather than dropped. Nothing else is read.
- */
+/** `POST /api/split`'s body: tab, pane, kind (`claude` or `terminal`) and for Claude the agent and prompt; a terminal with either is refused, and no folder is read. */
 export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
   if (typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
@@ -230,34 +227,25 @@ async function splittable(asker: Asker, device: Device, host: string, tab: strin
   return found ? { tab: shaped, pane: found } : failed(400, "That pane isn't in that tab");
 }
 
-/**
- * The folder a pane's agents are read from: the pane's own, else the first pane of the tab that has one (a page or a file has none). The host
- * lists it, never the page, and it needn't be one of the host's projects: it may be a worktree or Home.
- */
-const folderOf = (tab: HomeTab, pane: HomePane): string | null =>
-  isFolder(pane.folder) ? pane.folder : tab.panes.find((candidate) => isFolder(candidate.folder))?.folder ?? null;
+/** The shown pane's own folder, as the host lists it (a worktree or Home is not a project): the only place its agents are read from. */
+const folderOf = (pane: HomePane): string | null => (isFolder(pane.folder) ? pane.folder : null);
 
 /** `GET /api/split-agents`: the agents of the folder of a pane of a tab this phone controls, for the chips of Add pane. */
 export async function splitAgents(asker: Asker, device: Device, host: string, tab: string, pane: string): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
   if ("body" in found) return found;
-  const folder = folderOf(found.tab, found.pane);
+  const folder = folderOf(found.pane);
   if (folder === null) return { status: 200, body: { ok: true, folder: null, agents: [] } };
   const agents = shapeAgents(await asker.ask("agents", device.id, { folder }));
   return "error" in agents ? { status: 502, body: { ok: false, error: agents.error } } : { status: 200, body: { ok: true, folder: agents.folder, agents: agents.rows } };
 }
 
-/**
- * Add a Claude session or a terminal beside a pane of a tab this phone controls (option 03 of panes-open-only-by-hand-at-a-mac): the `start` a
- * Mac sends for a split of another machine's tab, naming the tab, the pane and the axis, with no folder (the host takes the split pane's). The
- * server picks the id and sends no `skipPermissions`, as a start does. The host's own check of who controls the tab holds whatever this says.
- * The answer names the tab asked for: it is the same tab, whether or not the host's reply came.
- */
+/** Add a Claude session or a terminal beside a pane of a tab the phone controls: the `start` a Mac sends for a split, with no folder and no `skipPermissions`. */
 export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string): Promise<Launched> {
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
   if (ask.agent !== null) {
-    const folder = folderOf(found.tab, found.pane);
+    const folder = folderOf(found.pane);
     const known = folder === null ? { rows: [] as AgentRow[] } : shapeAgents(await asker.ask("agents", device.id, { folder }));
     if ("error" in known) return failed(502, known.error);
     if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of that pane's folder on ${host}`);

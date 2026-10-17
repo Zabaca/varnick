@@ -16,6 +16,8 @@ import {
 const $ = (id) => document.getElementById(id);
 const visible = () => document.visibilityState === "visible";
 const refreshMs = 5_000;
+/** How long a pane this page just added is waited for in the host's listing before it is given up on. */
+const addedWaitMs = 60_000;
 
 /** The open tab, or null. One at a time. */
 let current = null;
@@ -56,7 +58,7 @@ function renderSwitcher(t) {
     if (!isOpenable(pane) && (pane.kind === "claude" || pane.kind === "terminal")) button.classList.add("idle");
     button.dataset.pane = pane.id;
     button.setAttribute("aria-pressed", String(pane.id === t.pane));
-    button.addEventListener("click", () => { if (current === t) { t.open = null; showPane(t, pane); } });
+    button.addEventListener("click", () => { if (current === t) { dropAdded(t); showPane(t, pane); } });
     nav.append(button);
   }
   t.add = offersAdd(t.data);
@@ -66,21 +68,29 @@ function renderSwitcher(t) {
   plus.setAttribute("aria-label", "Add pane");
   plus.addEventListener("click", () => {
     const beside = t.data.panes.find((pane) => pane.id === t.pane) ?? t.data.panes[0];
-    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: ({ session }) => added(t, session) });
+    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: ({ session }) => added(t, session),
+      failed: (error) => { if (current === t) $("session-sub").textContent = `Couldn't add the pane: ${error}`; },
+    });
   });
   nav.append(plus);
 }
 
+/** Gives up opening the pane this page added, and its one take with it. */
+function dropAdded(t) {
+  t.open = null;
+  t.take = null;
+}
+
 /**
  * The host added a session beside the pane shown: the tab is asked for again, and the new pane opens with take, once, as after a start. It may
- * not be listed yet, so it waits for the next asks for a minute.
+ * not be listed yet, so it waits for the next asks (`addedWaitMs`).
  */
 function added(t, session) {
   const pane = paneOfSession(session);
   if (t.closed || !pane) return;
   t.take = session;
   t.open = pane;
-  t.openUntil = Date.now() + 60_000;
+  t.openUntil = Date.now() + addedWaitMs;
   load(t);
 }
 
@@ -201,7 +211,7 @@ async function load(t) {
   // Add pane is the phone's only while it is in control: a form open when it isn't any more is closed.
   if (!t.add) closeAdd();
   const fresh = t.open && Date.now() < t.openUntil ? t.data.panes.find((pane) => pane.id === t.open) : null;
-  if (!fresh && t.open && Date.now() >= t.openUntil) t.open = null;
+  if (!fresh && t.open && Date.now() >= t.openUntil) dropAdded(t);
   // The pane stays unless it is gone, or it began or stopped running.
   // A page or an app is shown again when the host begins or stops proxying it; a new address of the same pane is the viewer's own browsing.
   const framingChanged = shown && Boolean(framedAddress(shown)) !== Boolean(framedAddress(now ?? shown));

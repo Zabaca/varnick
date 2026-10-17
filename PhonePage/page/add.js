@@ -61,7 +61,11 @@ async function add(s) {
   }
   // The host may have added it all the same: the switcher shows the pane when it has.
   const result = await postJSON("/api/split", body, "The host didn't answer. If it was added, the pane is in the switcher.");
-  if (s.closed) return;
+  // The dialog can be closed under a request (the phone lost control of the tab): the error then goes to the page's own status line.
+  if (s.closed) {
+    if (!result.ok) s.failed(result.error);
+    return;
+  }
   s.busy = false;
   if (!result.ok) {
     render(s);
@@ -74,10 +78,11 @@ async function add(s) {
 
 /**
  * Opens Add pane beside `pane` of `tab`. `added({session})` says the host added a session: the tab view then opens it with take.
+ * `failed(error)` says an add failed after the dialog was closed.
  */
-export function openAdd({ tab, pane, host, added }) {
+export function openAdd({ tab, pane, host, added, failed }) {
   closeAdd();
-  const s = { closed: false, busy: false, tab, pane, kind: "claude", agents: [], agentsError: null, agent: null, added };
+  const s = { closed: false, busy: false, tab, pane, kind: "claude", agents: [], agentsError: null, agent: null, added, failed };
   current = s;
   $("add-host").textContent = host || "";
   $("add-prompt").value = "";

@@ -512,12 +512,13 @@ describe("adding a pane", () => {
     expect(calls[1].fields).toEqual({ start: { id: fixedID, prompt: "", kind: "terminal" }, tab, pane: second, axis: "sideBySide" });
   });
 
-  test("the pane may be a page: the agents come from a pane of the tab that has a folder", async () => {
+  test("a pane with no folder has no agents, and an agent for it is refused", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({ tab }) });
-    const launched = await splitTab(asker, device, "linux box", { ...ask, pane: page }, () => fixedID);
-    expect(launched.status).toBe(200);
-    expect(calls.find((call) => call.op === "agents")!.fields).toEqual({ folder: worktree });
-    expect(calls.find((call) => call.op === "start")!.fields).toMatchObject({ pane: page });
+    expect(await splitAgents(asker, device, "linux box", tab, page)).toEqual({ status: 200, body: { ok: true, folder: null, agents: [] } });
+    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page }, () => fixedID)).status).toBe(400);
+    expect(calls.some((call) => call.op === "agents" || call.op === "start")).toBe(false);
+    // Without an agent a page can still be split beside.
+    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page, agent: null }, () => fixedID)).status).toBe(200);
   });
 
   test("a tab that isn't listed starts nothing", async () => {
