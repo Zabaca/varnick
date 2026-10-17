@@ -6,7 +6,7 @@ import { buildRequest, relayEnvironment } from "./relay";
 import {
   attachEnvironment, clampGrid, closeCode, decideExit, decideOpen, recheckControl, takenReason, endText, firstOutput, fitReason, isSessionName, parseClient, parseOpen, refusal,
 } from "./terminal";
-import { closeAction, ctrlCode, dragLines, gridFor, keys, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "./page/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, layoutChanged, layoutSettleMs, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "./page/rules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
@@ -295,6 +295,21 @@ describe("the page's rules", () => {
     expect(reattachOnReturn(CONNECTING)).toBe(false);
     expect(reattachOnReturn(CLOSING)).toBe(true);
     expect(reattachOnReturn(CLOSED)).toBe(true);
+  });
+
+  test("only a change of width counts as a layout change", () => {
+    const portrait = { window: 412, box: 408 };
+    expect(layoutChanged(portrait, { window: 915, box: 911 })).toBe(true);
+    expect(layoutChanged(portrait, { window: 412, box: 300 })).toBe(true);
+    expect(layoutChanged(portrait, { window: 300, box: 408 })).toBe(true);
+    // The keyboard changes the height alone, and the widths stay: no rebuild.
+    expect(layoutChanged(portrait, { ...portrait })).toBe(false);
+    // A box that measures zero (hidden) or a measurement not taken says nothing.
+    expect(layoutChanged(portrait, { window: 412, box: 0 })).toBe(false);
+    expect(layoutChanged({ window: 412, box: 0 }, { window: 412, box: 408 })).toBe(false);
+    expect(layoutChanged(null, portrait)).toBe(false);
+    expect(layoutChanged(portrait, null)).toBe(false);
+    expect(layoutSettleMs).toBe(400);
   });
 
   test("the screen is repainted as the layout settles, soonest first", () => {

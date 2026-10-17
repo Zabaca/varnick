@@ -71,6 +71,20 @@ export function dragLines(pixels, rowHeight) {
  */
 export const redrawDelays = [0, 150, 600];
 
+/** Milliseconds of quiet after the last layout event before the screen is rebuilt: a rotation or fold sends several, and one rebuild follows them all. */
+export const layoutSettleMs = 400;
+
+/**
+ * Whether the layout changed in width between two measurements, `{window, box}` (the window's inner width and the screen's own box
+ * width; null when none was taken). Height is left out on purpose: the keyboard opening and closing changes only the height, and must
+ * never rebuild the screen. A width of zero (a hidden box) says nothing.
+ */
+export function layoutChanged(before, after) {
+  if (!before || !after) return false;
+  const differs = (a, b) => a > 0 && b > 0 && a !== b;
+  return differs(before.window, after.window) || differs(before.box, after.box);
+}
+
 /**
  * The grid the terminal should have: `size` is what the fit addon proposed (undefined while the box measures zero), `current` the
  * terminal's own grid. Null leaves it alone. With the keyboard up the grid never loses rows (it keeps its height and shows its bottom

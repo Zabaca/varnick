@@ -10,7 +10,7 @@ import { Terminal } from "/vendor/xterm.mjs";
 import { FitAddon } from "/vendor/addon-fit.mjs";
 import { createLive } from "/live.js";
 import { parseFrame } from "/liverules.js";
-import { closeAction, ctrlCode, dragLines, gridFor, keys, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, layoutChanged, layoutSettleMs, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "/rules.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -40,6 +40,13 @@ function showView(s, view) {
   $("end").hidden = view !== "terminal";
   $("redraw").hidden = view !== "terminal" && view !== "other";
   if (view !== "other") stopLive(s);
+  s.layout = measureLayout(view);
+}
+
+/** The widths `layoutChanged` compares: the window's and the shown screen's box. Null over any other view. */
+function measureLayout(view) {
+  const box = view === "terminal" ? $("term") : view === "other" ? $("live") : null;
+  return box ? { window: innerWidth, box: box.clientWidth } : null;
 }
 
 function showCard(s, view, text, { take = false, retry = false } = {}) {
@@ -275,7 +282,10 @@ function ensureTerminal(s, grid = {}) {
   term.onBinary((data) => send(s, { t: "bin", d: data }));
   term.onResize(({ cols, rows }) => send(s, { t: "resize", cols, rows }));
   // A refit that ends at the same grid still repaints: the renderer is not told when only the box changed.
-  s.observer = new ResizeObserver(() => { if (!refit(s)) repaintRows(s); });
+  s.observer = new ResizeObserver(() => {
+    if (!refit(s)) repaintRows(s);
+    layoutEvent(s);
+  });
   s.observer.observe($("term"));
 }
 
@@ -335,8 +345,31 @@ function scheduleRepaint(s) {
 }
 
 /**
+ * A layout event: the window or the screen's box resized, or the phone rotated. After `layoutSettleMs` of quiet the width is compared with
+ * the last one taken, and a change in it (or a rotation) rebuilds the screen as the Redraw button does; a height-only change, which is the
+ * keyboard, does not. Every source shares the one timer, so events in a row give one rebuild.
+ */
+function layoutEvent(s, rotated = false) {
+  if (rotated) s.rotated = true;
+  clearTimeout(s.layoutTimer);
+  s.layoutTimer = setTimeout(() => settleLayout(s), layoutSettleMs);
+}
+
+function settleLayout(s) {
+  s.layoutTimer = null;
+  // Hidden: the widths are compared when the page is shown again (`comeBack`), with the baseline untouched.
+  if (s.closed || !visible()) return;
+  const rotated = s.rotated;
+  s.rotated = false;
+  if (!rotated && !layoutChanged(s.layout, measureLayout(s.view))) return;
+  for (const id of s.repaints) clearTimeout(id);
+  redrawNow(s);
+}
+
+/**
  * The Redraw button, the strongest local recovery: the renderer is thrown away and made again, fitted, and the host sends the screen
  * again (the terminal attaches afresh, the live screen's channel opens afresh). Nothing is typed and nothing about control changes.
+ * A change of width runs it by itself (`layoutEvent`).
  */
 function redrawNow(s) {
   if (s.closed) return;
@@ -451,7 +484,7 @@ export function openSession({ name, title, host, done, take = false, tab = null 
   const s = {
     name, title: title || "Claude session", host: host || "", done, tab,
     lv: newLive(),
-    view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], tries: 0, generation: 0, ctrlOn: false, closed: false,
+    view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], layout: null, layoutTimer: null, rotated: false, tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
     mine: false, note: "", error: "", openedAt: 0,
   };
@@ -481,6 +514,7 @@ export function releaseSession() {
   s.closed = true;
   clearTimeout(s.timer);
   for (const id of s.repaints) clearTimeout(id);
+  clearTimeout(s.layoutTimer);
   stopLive(s);
   if (s.ws) {
     const ws = s.ws;
@@ -665,10 +699,12 @@ function comeBack(s) {
     connect(s, false);
   }
   scheduleRepaint(s);
+  // The width changed while the page was hidden: the full redraw, once.
+  if (layoutChanged(s.layout, measureLayout(s.view))) layoutEvent(s);
 }
 
 // A page restored from the back/forward cache may show no visibilitychange; and a rotation, a split-screen or a fold change moves the
 // box without the terminal's own box necessarily changing size.
 window.addEventListener("pageshow", (event) => { if (event.persisted && current && visible()) comeBack(current); });
-window.addEventListener("resize", () => { if (current) scheduleRepaint(current); });
-window.addEventListener("orientationchange", () => { if (current) scheduleRepaint(current); });
+window.addEventListener("resize", () => { if (current) { scheduleRepaint(current); layoutEvent(current); } });
+window.addEventListener("orientationchange", () => { if (current) { scheduleRepaint(current); layoutEvent(current, true); } });
