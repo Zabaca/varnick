@@ -1,0 +1,36 @@
+# A spoken request is answered by the host's voice session: one hidden Claude session in Home, with permissions skipped
+
+Builds on [ADR 0004](0004-pane-processes-live-in-zmx.md) (a pane's process lives in zmx), [ADR 0010](0010-a-panes-turn-comes-from-hooks-that-write-to-the-pane-folder.md) (the turn and the notices come from hooks that write to the pane folder) and [ADR 0040](0040-automations-are-fired-by-the-host-that-keeps-them-and-a-run-is-a-pane-kept-out-of-sight-until-opened.md) (a pane kept out of sight until it is opened). Option 09 of `listening-never-answers` is the spec.
+
+With **Voice session** on (Settings › Experimental, off by default), a spoken request is no longer answered by Varnick's own steps. It is answered by the host's **Voice session** (`CONTEXT.md`): one Claude session in the host's Home, started and kept out of sight as a run is, fed a later request with `zmx send`, and read back from the Stop hook's input. It is a pane like any other, so it has everything a pane has.
+
+- **One session, reused for 10 minutes.** The first request is its first prompt, with the voice hint in front. A later request is typed into the session while it waits, as a bracketed paste and then a Return (`zmx send`, in two calls). It is reused only while it is unopened, waiting for a prompt, 10 minutes or less past its last turn, and not busy with another request; anything else starts a new one. An unopened session is ended 10 minutes after its last turn. A session the user opened is theirs: it is never typed into or ended.
+- **Taken, answered and failed are read from files the hooks write.** The voice session's settings add two hooks to a pane's: `UserPromptSubmit` marks the request taken and `PreToolUse` for the web tools marks "Looking that up.". The answer is `last_assistant_message` in the Stop input Varnick's hook already saves, believed only when it is newer than the request and names the session's conversation; the transcript is the fallback for an older Claude Code. A question or a plan ends the request with Needs you; the deadline ends the request and not the turn.
+- **The decision, the hint, the paste, the reply's cleaning and the events are in the shared package** (`VoiceSession.swift`) as pure functions of what a host observed, so a host's relay can reuse them for the phone's Voice mode (option 05 of `phone-page-is-only-a-browser-tab`). The Mac app is the first host (`VoiceSessionHost`) and Hey Varnick the first surface.
+- **It runs in Home itself, with permissions skipped** (the user's decisions of 2026-10-16). Home is already trusted, so no second trusted folder is added, and the session's transcripts are found by session search like any session's; its `search` tool, which is its own MCP set (`Varnick --mcp --search`) listed for this pane only, leaves out the calling session's own conversation. Permissions are skipped whatever Skip permissions says, so it never asks.
+- **A fresh session's request is the hint and the request on one line with no control byte,** so nothing a transcriber wrote can end the paste or press a key.
+
+## Amends, for this mode
+
+- [ADR 0015](0015-spoken-requests-are-answered-locally-aloud-only-through-listening.md): Varnick's own steps answer → the voice session answers; still only spoken, and still through Listening.
+- [ADR 0016](0016-a-spoken-requests-decide-step-asks-typesafe-jev.md) and [ADR 0037](0037-every-decision-in-a-spoken-request-is-asked-of-jev-then-of-the-text-generation-model-never-of-word-lists.md): no decision of a spoken request is asked of Jev or of the Text generation model; Claude decides.
+- [ADR 0017](0017-a-spoken-request-is-filtered-as-a-typed-search-is.md): the search tool's rows are not filtered or judged.
+- [ADR 0036](0036-a-spoken-request-searches-every-source-and-is-answered-from-the-rows-or-the-web.md): no fused search and judge, and the web is the session's own.
+- [ADR 0040](0040-automations-are-fired-by-the-host-that-keeps-them-and-a-run-is-a-pane-kept-out-of-sight-until-opened.md): a pane kept out of sight until opened can be a host's voice session as well as a run. It is not a run: it has a pane's full MCP set.
+- [ADR 0023](0023-sessions-reach-the-screen-through-varnick-which-relays-look-point-and-click-on-its-socket.md): nothing asks in the voice session, `look` and `point` included, since permissions are skipped.
+
+## Considered Options
+
+- **The text helper with the user's settings loaded (the first draft of the option):** not chosen. The Agent SDK has no permission surface, so an ask needs an approval UI of Varnick's or is refused; the turn, Needs you, message and work-link hooks would be plumbed in again; it can't be opened or typed into without resuming it in a pane (two processes on one conversation); and it runs on a Mac only.
+- **A Voice folder inside Home, kept out of session search (the recommendation):** not chosen. The user chose Home itself, so spoken exchanges are found like any session and no second trusted entry is written. The cost is that the search tool could find its own question, which it avoids by leaving the calling session's conversation out.
+- **The user's own permission mode, with `look` and `point` allowed (the recommendation):** not chosen. The user chose never to ask, so a spoken request is never stopped at a dialog.
+- **Writing through the pane's terminal view, or restarting the pane with `--resume` for each request:** not chosen. The first works on a Mac with a client attached only; the second starts `claude`, its plugins and its MCP server for every request.
+- **A fallback to Varnick's own pipeline when Claude Code fails:** not built. A failure gets a spoken failure line.
+
+## Consequences
+
+- **Anything the microphone hears can run commands on the Mac, unasked.** A misheard request, a video through the speakers or another person's "Hey Varnick" reaches Bash, the files, the web and (with the switches on) the screen tools. The Settings text and `docs/privacy-and-security.md` say so beside the switch. This is the price of a request that is never stopped at a dialog.
+- **Everything the session reads goes to Anthropic with it,** on the user's plan: the request, the hint's date, time and units, the search tool's rows, files and command output, and screen pictures. Nothing of a spoken request goes to TypeSafe or Text generation while it is on.
+- **Slower and dearer than the pipeline,** which the user accepted: a new session starts a login shell, `claude`, its plugins and its MCP server, and a request is at least one model turn.
+- **zmx has a new use** (`zmx send`), and the spike found a sharp edge in it: a process inside a pane inherits `ZMX_SESSION` and `ZMX_DIR`, so a zmx command run from there with the inherited environment acts on that pane's own session. Varnick's own zmx commands build their environment and a pane's client is started with a clean one; `docs/agents/where-it-breaks.md` records it.
+- **The hidden tab stays out of the listing to other Macs and the phone** until option 05 lists it. A headless host has no voice session at first.

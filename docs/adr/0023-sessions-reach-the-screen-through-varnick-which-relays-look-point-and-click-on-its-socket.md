@@ -77,3 +77,7 @@ Every process in a Varnick pane gets Varnick's grants (the correction in ADR 001
   - **The largest privacy change yet, and the plainest.** A screen picture shows everything on every display: Varnick's panel and other sessions' text, typed text, password fields. Nothing is blacked out, because Varnick reads none of the windows on the screen, so the gap that option 07 listed for a window is the whole of it. It goes to Anthropic with the session and stays in its transcript on this Mac, and nothing on this path goes to TypeSafe. The reply says so every time. `docs/privacy-and-security.md`, the README, the guide and the switch's detail say so.
   - **It fits the socket.** All the pictures and the text share the line cap, which is unchanged. Each display's picture starts smaller the more displays there are, and the encoding falls back as for option 07; each picture gets an equal share of the bytes left.
   - **The log** holds the number of pictures and each one's format, pixel size and byte count. Never a picture or a frame.
+
+## Amendment, 2026-10-16: the voice session
+
+In the voice session nothing asks, `look` and `point` included, since it runs with permissions skipped. See [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md).

@@ -51,3 +51,7 @@ A headless host keeps and fires the automations a Mac saved on it, with every Ma
 - **Consequence:** one ssh channel per run going, on the connection the panes share, for the unseen views.
 
 - Amended by ADR 0041: an Automation is a trigger (a cadence, a Task and its input), and its Runs are kept in a runs file of their own.
+
+## Amendment, 2026-10-16: the voice session
+
+A pane kept out of sight until it is opened can also be the host's voice session, which is not a run: it has a pane's full MCP set. See [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md).

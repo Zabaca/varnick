@@ -221,6 +221,16 @@ where the answer came from. It needs Hey Varnick, the relevance filter on TypeSa
 and logged in. A request that names a project, or that only your own things can answer, never goes to the web: Varnick says it found no
 sessions then. What is sent is in [privacy and security](privacy-and-security.md#anthropic-and-a-search-provider-through-answer-from-the-web).
 
+Settings › Experimental › **Voice session** (off by default) hands every Hey Varnick request to a Claude Code session of yours instead:
+one hidden session in Varnick's Home, with everything your sessions have (your settings, CLAUDE.md files and plugins, Bash, the web,
+Varnick's tools) and a search of your history, bookmarks and Claude sessions. The first request starts it, later ones are typed into it, and
+it is kept until 10 minutes after your last request; Varnick says "Let me check." when it has the request and "Looking that up." when Claude
+goes to the web, then speaks the answer. **It runs with permissions skipped, so anything the microphone hears, a video or another voice in
+the room included, can run commands on your Mac without asking.** A question it asks raises Needs you ("Claude needs your OK in Varnick."), and
+the session opens from the notice or Settings › Experimental › Show; once you have opened it, Varnick never types into it. It needs Hey Varnick,
+Keep sessions running and Claude Code logged in. While it is on, nothing of a spoken request goes to TypeSafe or Text generation, and Point
+at the screen and Answer from the web aren't used. What is sent is in [privacy and security](privacy-and-security.md#anthropic-through-the-voice-session).
+
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
 save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
 permissions) and pick one of your account's voices in the same Voice list. That sends everything Varnick speaks to

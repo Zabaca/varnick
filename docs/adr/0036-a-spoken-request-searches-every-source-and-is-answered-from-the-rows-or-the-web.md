@@ -32,3 +32,7 @@ This amends ADR 0015 (the answer comes from every source or the web, not only th
 - **The voice has a queue.** Lines are said one after another, each with a speech span of its own, so the mic is heard while Varnick waits for the writer or the web.
 - **`SessionFilter` and `sessions_by_id`.** The store's session filter gains folder names and a window; the window reads a session's first and last prompt from `sessions` or `peer_sessions`, and an index on `sessions (session_id, directory)` keeps that a lookup per row.
 - **Measured only on made-up rows.** The two evals used a store of 101 pages and 17 sessions. In use the user's own History and sessions decide what is found, so the hand check on the user's machine counts what stays local and what reaches the web.
+
+## Amendment, 2026-10-16: the voice session
+
+With Voice session on, a spoken request is not searched and judged by Varnick's own steps, and the web is the voice session's own tools, not Answer from the web. See [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md).
