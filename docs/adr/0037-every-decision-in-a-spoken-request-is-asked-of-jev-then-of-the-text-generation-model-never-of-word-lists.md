@@ -66,4 +66,4 @@ So a choice among the user's folder names, or among the past week's times, is on
   - Haiku passed every bar as the fallback, at a p90 of 3.2 s. This Mac's Gemma was unusable as a decider, and the user chose to leave it so.
 - **Amends** ADR 0016: the decide step's Text generation fallback returns, as the fallback for every question. **Amends** ADR 0036: the clock and can't-do lists, and the folder and time rules, are replaced by these questions. The problem and the full specification are option 07 of `docs/problems/listening-never-answers/`.
 
-- Amended by ADR 0042: With Voice session on, no decision of a spoken request is asked of Jev or of the Text generation model: Claude decides in the voice session. Nothing of a spoken request is decided by a word list either.
+- Amended by ADR 0042 (see its amendment of 2026-10-17: the voice session is the default, and Varnick's own steps are experimental): By default, no decision of a spoken request is asked of Jev or of the Text generation model: Claude decides in the voice session. Nothing of a spoken request is decided by a word list either.
