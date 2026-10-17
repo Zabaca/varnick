@@ -6,7 +6,7 @@ import { buildRequest, relayEnvironment } from "./relay";
 import {
   attachEnvironment, clampGrid, closeCode, decideExit, decideOpen, recheckControl, takenReason, endText, firstOutput, fitReason, isSessionName, parseClient, parseOpen, refusal,
 } from "./terminal";
-import { closeAction, ctrlCode, dragLines, gridFor, keys, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, staleAfterHiddenMs, takenController } from "./page/rules.js";
+import { closeAction, ctrlCode, dragLines, gridFor, keys, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "./page/rules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const device: Device = { id: "5f0f3a4e-2b6e-4c0a-9d58-0a2f6f8d1c11", node: "nEXAMPLE4CNTRL", name: "Phone" };
@@ -288,13 +288,13 @@ describe("the page's rules", () => {
 
   test("a socket is replaced on return only when it can't be trusted", () => {
     const CONNECTING = 0, OPEN = 1, CLOSING = 2, CLOSED = 3;
-    expect(reattachOnReturn(null, 999_999)).toBe(false);
-    expect(reattachOnReturn(OPEN, 2_000)).toBe(false);
-    expect(reattachOnReturn(OPEN, staleAfterHiddenMs - 1)).toBe(false);
-    expect(reattachOnReturn(OPEN, staleAfterHiddenMs)).toBe(true);
-    expect(reattachOnReturn(CONNECTING, staleAfterHiddenMs * 10)).toBe(false);
-    expect(reattachOnReturn(CLOSING, 0)).toBe(true);
-    expect(reattachOnReturn(CLOSED, 0)).toBe(true);
+    expect(reattachOnReturn(null)).toBe(false);
+    expect(reattachOnReturn(undefined)).toBe(false);
+    // An open socket is kept however long the page was away: attaching again clears the scrollback.
+    expect(reattachOnReturn(OPEN)).toBe(false);
+    expect(reattachOnReturn(CONNECTING)).toBe(false);
+    expect(reattachOnReturn(CLOSING)).toBe(true);
+    expect(reattachOnReturn(CLOSED)).toBe(true);
   });
 
   test("the screen is repainted as the layout settles, soonest first", () => {

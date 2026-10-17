@@ -38,7 +38,6 @@ function showView(s, view) {
   $("live").hidden = view !== "other";
   $("terminal-view").hidden = view !== "terminal";
   $("end").hidden = view !== "terminal";
-  // Redraw belongs to what draws a screen: the terminal and the live screen.
   $("redraw").hidden = view !== "terminal" && view !== "other";
   if (view !== "other") stopLive(s);
 }
@@ -251,11 +250,11 @@ async function settle(s, refusal) {
   scheduleReconnect(s);
 }
 
-function ensureTerminal(s) {
+function ensureTerminal(s, grid = {}) {
   showView(s, "terminal");
   if (s.term) return;
   const term = new Terminal({
-    fontSize: 13, cursorBlink: true, scrollback: 2000, theme: { background: "#111" },
+    ...grid, fontSize: 13, cursorBlink: true, scrollback: 2000, theme: { background: "#111" },
     // A link a program printed (OSC 8) opens only as http(s): never a javascript:, data: or file: address.
     linkHandler: {
       allowNonHttpProtocols: false,
@@ -308,7 +307,6 @@ function refit(s) {
   return true;
 }
 
-/** Every row of the terminal drawn again. */
 function repaintRows(s) {
   if (s.term) s.term.refresh(0, s.term.rows - 1);
 }
@@ -343,18 +341,24 @@ function scheduleRepaint(s) {
 function redrawNow(s) {
   if (s.closed) return;
   if (s.view === "terminal") {
+    // The new terminal keeps the old one's grid and focus, so the keyboard stays up and nothing resizes before the host's screen arrives.
+    const { cols, rows } = s.term;
+    const focused = s.term.textarea === document.activeElement;
     s.observer?.disconnect();
-    s.term?.dispose();
+    s.term.dispose();
     $("term").replaceChildren();
     s.term = null;
     s.fit = null;
-    ensureTerminal(s);
+    ensureTerminal(s, { cols, rows });
     refit(s);
+    if (focused) s.term.focus();
     reattach(s);
   } else if (s.view === "other") {
     stopLive(s);
     startWatch(s);
     liveSub(s);
+    // The new channel starts without the "too large" notice, which its first frame sets again if it still holds.
+    showNotice(s);
   }
 }
 
@@ -447,7 +451,7 @@ export function openSession({ name, title, host, done, take = false, tab = null 
   const s = {
     name, title: title || "Claude session", host: host || "", done, tab,
     lv: newLive(),
-    view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], hiddenAt: 0, tries: 0, generation: 0, ctrlOn: false, closed: false,
+    view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
     mine: false, note: "", error: "", openedAt: 0,
   };
@@ -638,7 +642,6 @@ document.addEventListener("visibilitychange", () => {
   if (!s) return;
   announceVisibility(s);
   if (!visible()) {
-    s.hiddenAt = Date.now();
     clearTimeout(s.timer);
     s.timer = null;
     // Nothing arrives while the page is hidden: the live screen's channel closes, and the host's reader goes with it.
@@ -654,10 +657,8 @@ document.addEventListener("visibilitychange", () => {
  * that was not painting does not catch up by itself.
  */
 function comeBack(s) {
-  const hidden = s.hiddenAt ? Date.now() - s.hiddenAt : 0;
-  s.hiddenAt = 0;
   s.tries = 0;
-  if (s.ws && reattachOnReturn(s.ws.readyState, hidden)) {
+  if (s.ws && reattachOnReturn(s.ws.readyState)) {
     reattach(s);
   } else if (!s.ws && s.view !== "gone") {
     // Back from another app: reconnect at once, asking the status first, unless the socket is still up or the session is over.

@@ -34,6 +34,12 @@ function header(t, sub) {
   $("session-sub").textContent = sub ? `${t.host} · ${sub}` : t.host;
 }
 
+/** Whether End is hidden over a pane that is not a session's screen. Redraw is never shown there: session.js shows it with the screens it redraws. */
+function setEnd(hidden) {
+  $("end").hidden = hidden;
+  $("redraw").hidden = true;
+}
+
 /** Shows the switcher, a button per pane, when the tab has more than one. */
 function renderSwitcher(t) {
   const nav = $("panes");
@@ -90,8 +96,7 @@ function hideFrame() {
 /** Frames the host's proxied address of a page or an app. Navigating in it is the viewer's own browsing, and the host's pane keeps its address. */
 function showFrame(t, pane) {
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
-  $("end").hidden = !t.data.mine;
-  $("redraw").hidden = true;
+  setEnd(!t.data.mine);
   header(t, kindWord(pane.kind));
   const address = framedAddress(pane);
   $("frame").hidden = false;
@@ -105,8 +110,7 @@ function showNote(t, pane) {
   for (const id of ["card", "live", "terminal-view"]) $(id).hidden = true;
   $("note").hidden = false;
   // End is the phone's to offer only while it holds the tab; otherwise Take over comes first.
-  $("end").hidden = !t.data.mine;
-  $("redraw").hidden = true;
+  setEnd(!t.data.mine);
   header(t, pane ? kindWord(pane.kind) : "");
   const note = pane ? paneNote(pane, t.host) : { text: "This tab has no pane.", detail: "" };
   $("note-text").textContent = note.text;
@@ -174,7 +178,7 @@ async function load(t) {
     showPane(t, now);
   } else if (!t.session) {
     header(t, kindWord(now.kind));
-    $("end").hidden = !t.data.mine;
+    setEnd(!t.data.mine);
     if (!framedAddress(now)) paintControl(t);
   }
 }
@@ -190,8 +194,7 @@ function failed(t, error) {
   $("note-link").hidden = true;
   $("note-text").hidden = false;
   $("note-text").textContent = error;
-  $("end").hidden = true;
-  $("redraw").hidden = true;
+  setEnd(true);
   header(t, "");
 }
 
@@ -207,8 +210,7 @@ export function openTab({ tab, pane, host, done, take = null }) {
   $("panes").hidden = true;
   // Nothing of the session or tab shown before: its card, live screen and terminal are gone from view until a pane is chosen.
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
-  $("end").hidden = true;
-  $("redraw").hidden = true;
+  setEnd(true);
   header(t, "Opening…");
   load(t);
   t.timer = setInterval(() => { if (visible()) load(t); }, refreshMs);

@@ -82,16 +82,11 @@ export function gridFor(size, current, keyboardUp) {
   return { cols: size.cols, rows };
 }
 
-/** How long a page may be hidden before its socket is not trusted: Android keeps one for about 90 s, and a network change leaves it half open. */
-export const staleAfterHiddenMs = 60_000;
-
 /**
- * Whether the terminal's socket is replaced when the page is shown again (the host then sends the whole screen): it is closing or closed
- * without the page having heard (a frozen page, or one restored from the back/forward cache), or the page was away long enough that an
- * open socket may be dead without saying so. `readyState` is WebSocket's (0 connecting, 1 open, 2 closing, 3 closed); null is no socket.
+ * Whether the terminal's socket is replaced when the page is shown again (the host then sends the whole screen): only when it is closing
+ * or closed without the page having heard (a frozen page, or one restored from the back/forward cache). An open socket is kept, since
+ * attaching again clears the scrollback. `readyState` is WebSocket's (0 connecting, 1 open, 2 closing, 3 closed); null is no socket.
  */
-export function reattachOnReturn(readyState, hiddenMs) {
-  if (readyState === null || readyState === undefined) return false;
-  if (readyState >= 2) return true;
-  return readyState === 1 && hiddenMs >= staleAfterHiddenMs;
+export function reattachOnReturn(readyState) {
+  return typeof readyState === "number" && readyState >= 2;
 }
