@@ -628,9 +628,10 @@ final class SpokenRequests: ObservableObject {
     }
 
     /// With the voice session on (option 09 of `listening-never-answers`), the request goes to the host's voice session and its lines are said as the
-    /// session's request goes through them, each when the one before it ends (`Speaker.queue`): "Let me check." when the session has taken it,
-    /// "Looking that up." when Claude goes to the web, then the answer, cleaned and cut to two sentences. Nothing of the request, the answer or what
-    /// Claude does is logged: the timing line holds durations and kinds.
+    /// session's request goes through them, each when the one before it ends (`Speaker.queue`): the answer, cleaned and cut to two sentences, or the line for
+    /// what ended the request instead. It says nothing when the session takes the request or goes to the web (the menu bar's mark shows it is working; the
+    /// user found "Let me check." and "Looking that up." awkward here, 2026-10-17). Nothing of the request, the answer or what Claude does is logged: the
+    /// timing line holds durations and kinds.
     /// A request with the wake phrase turns voice mode on first, unless a call holds the microphone or the session can't answer; it returns how it ended.
     private func answerByVoiceSession(_ request: Request) async -> VoiceMode.Outcome {
         let inMode = modeOn
@@ -675,10 +676,8 @@ final class SpokenRequests: ObservableObject {
                 switch event {
                 case .taken:
                     tookAfter = Date().timeIntervalSince(began)
-                    say("let me check", VoiceLines.taken)
                 case .lookingUp:
                     looked = true
-                    say("looking that up", VoiceLines.lookingUp)
                 case .needsYou:
                     ending = "needs you"
                     outcome = .needsYou
@@ -795,8 +794,6 @@ final class SpokenRequests: ObservableObject {
 
 /// The lines Hey Varnick says for the voice session (option 09 of `listening-never-answers`); another surface words its own.
 enum VoiceLines {
-    static let taken = "Let me check."
-    static let lookingUp = WebAnswer.looking
     static let needsYou = "Claude needs your OK in Varnick."
     static let noAnswer = "I couldn't answer that."
     static let failed = "Claude Code isn't answering."
