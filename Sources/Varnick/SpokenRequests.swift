@@ -533,7 +533,10 @@ enum VoiceLines {
     static let slow = "That's taking a while. I'll let you know when it's done."
     static let wakeAlone = "Ask me something."
     static let off = "The voice session is off."
+    static let needsHeyVarnick = "Turn on Hey Varnick on the Mac."
     static let needsKeepSessions = "The voice session needs Keep sessions running."
+    static let needsZmx = "The voice session needs zmx, which isn't installed."
+    static let notLoggedIn = "Claude Code isn't logged in. Open a Claude pane and log in."
     static let busy = "I'm still on your last request."
     static let needsSkipAccepted = "Run claude with the dangerously skip permissions flag once in a pane, accept its warning, and ask again."
 }
@@ -543,11 +546,14 @@ extension VoiceSessionHost.Refusal {
     var spoken: String {
         switch self {
         case .off: VoiceLines.off
+        case .needsHeyVarnick: VoiceLines.needsHeyVarnick
         case .needsKeepSessions: VoiceLines.needsKeepSessions
+        case .needsZmx: VoiceLines.needsZmx
         case .busy: VoiceLines.busy
         case .needsSkipAccepted: VoiceLines.needsSkipAccepted
         case .notSent: VoiceLines.notTaken
-        case .couldntStart, .notLoggedIn: VoiceLines.failed
+        case .notLoggedIn: VoiceLines.notLoggedIn
+        case .couldntStart: VoiceLines.failed
         }
     }
 }
@@ -557,7 +563,9 @@ extension VoiceSessionHost.Refusal {
     var logKind: String {
         switch self {
         case .off: "off"
+        case .needsHeyVarnick: "needs hey varnick"
         case .needsKeepSessions: "needs keep sessions"
+        case .needsZmx: "needs zmx"
         case .needsSkipAccepted: "needs skip accepted"
         case .notLoggedIn: "not logged in"
         case .busy: "busy"
