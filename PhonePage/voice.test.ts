@@ -374,12 +374,16 @@ describe("the view the host's events make", () => {
   test("a request, its answer and the voice to play", () => {
     let view = applyEvents(newView(), [{ kind: "heard", text: "what time is it" }, { kind: "taken" }]);
     expect(view.state).toBe("working");
-    expect(view.exchange).toEqual([{ who: "you", text: "what time is it" }]);
+    expect(view.exchange).toEqual([{ who: "you", text: "what time is it" }, { who: "varnick", text: "Let me check." }]);
     view = applyEvents(view, [{ kind: "lookingUp" }]);
     expect(stateLine[view.state]).toBe("Looking that up.");
     view = applyEvents(view, [{ kind: "answered", text: "It is noon.", spoken: "It is noon.", audio: "AAAA" }]);
     expect(view).toMatchObject({ state: "speaking", play: "AAAA", done: true });
-    expect(view.exchange.at(-1)).toEqual({ who: "varnick", text: "It is noon." });
+    // As the Mac's transcript has them: the request, "Let me check.", "Looking that up.", then the answer.
+    expect(view.exchange).toEqual([
+      { who: "you", text: "what time is it" }, { who: "varnick", text: "Let me check." },
+      { who: "varnick", text: "Looking that up." }, { who: "varnick", text: "It is noon." },
+    ]);
   });
 
   test("an answer with no audio leaves the page listening, with its words shown", () => {

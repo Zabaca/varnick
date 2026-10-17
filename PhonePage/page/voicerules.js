@@ -294,11 +294,14 @@ export function applyEvents(view, events) {
       case "heard":
         next.exchange.push({ who: "you", text: event.text ?? "" });
         break;
+      // The Mac's transcript keeps "Let me check." and "Looking that up." beside the answer; so does this view, in the order they came.
       case "taken":
         next.state = "working";
+        next.exchange.push({ who: "varnick", text: stateLine.working });
         break;
       case "lookingUp":
         next.state = "lookingUp";
+        next.exchange.push({ who: "varnick", text: stateLine.lookingUp });
         break;
       case "needsYou":
         next.state = "needsYou";

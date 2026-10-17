@@ -36,7 +36,7 @@ What still holds, and 07 builds on:
 | The screen | "Looking at your screen." |
 | The web (Answer from the web on) | "Looking that up." |
 
-The answer, a "found nothing" line or a failure line follows the acknowledgement. It never cuts the acknowledgement off, and it is prepared while the acknowledgement plays. Acknowledgements are not written to the transcript.
+The answer, a "found nothing" line or a failure line follows the acknowledgement. It never cuts the acknowledgement off, and it is prepared while the acknowledgement plays. Acknowledgements are written to the transcript as they are said (changed 2026-10-17; they were left out).
 
 Some requests get no acknowledgement, because their one line is ready at once:
 - "what time is it", answered from the clock;
@@ -132,7 +132,7 @@ Both are needed because the eval of 2026-10-14 found that "other" catches only a
   The answer, a "found nothing" line, a screen note or miss, and a failure line are all queued behind the acknowledgement.
 - **A request that falls back to the web** gets a second line, "Looking that up.", queued behind the first, which is unchanged (Nothing found locally, below).
 - **Length:** each line is three or four words, about 1 s spoken (estimated; hand check 4). If the answer is held back noticeably, the lines get shorter. Their audio is not cached (Later).
-- Not written to the transcript: it says nothing the answer doesn't. The answer still is.
+- Written to the transcript as it is said, with the answer after it (changed 2026-10-17; it was left out as saying nothing the answer doesn't).
 - Turning Hey Varnick or Answer from the web off, or stopping Listening, stops the acknowledgement and anything queued, as it stops the voice today.
 
 **Before routing: the clock**
@@ -349,7 +349,7 @@ Claude Code not found or not logged in before the call gets that same "isn't ans
   - Filter On this Mac: a request is still acknowledged once Text generation has decided. The web switch shows its need and acts as off.
   - Text generation On this Mac, web switch on: local requests stay on this Mac, and web questions still go to the web.
   - Turn Listening off during an acknowledgement, and the web switch off during a lookup. The voice stops, nothing queued plays, and no `claude` from the helper is left running.
-  - The transcript holds the `[mic]` request and one `[varnick]` answer, with no acknowledgement. Varnick's log holds no words of a question or an answer.
+  - The transcript holds the `[mic]` request, the acknowledgements as they were said ("Let me check.", "Looking that up.") and one `[varnick]` answer. Varnick's log holds no words of a question or an answer.
 - **Hand checks for the builder.** These are unverified. Run them with the user, and keep figures and anything personal in `.scratch/listening-never-answers/`.
   1. **WebSearch works on the user's plan and in their region** through the helper: one question with `--ask`, which shows the turns.
   2. **The spoken form holds** against the tool's "Sources" demand: `--ask` on a dozen made-up questions, reading the `says:` lines for links, lists and symbols.

@@ -306,7 +306,7 @@ Text generation as it writes the answer to a **Spoken request** from the rows th
 _Avoid_: Answerer, model
 
 **Acknowledgement**:
-The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and not written to the transcript. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
 _Avoid_: Cue, earcon (the wake sound is a sound, not a line)
 
 **Answer from the web**:

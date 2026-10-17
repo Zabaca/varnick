@@ -23,7 +23,7 @@ A new switch in Settings › Experimental, working name **Voice session**, off b
 4. **Claude works.** It may search the user's things, search or fetch the web, run commands, or look at and point on the screen.
    - The first web search or fetch of the request queues "Looking that up.".
    - A question or a plan (permissions are skipped, so no tool asks) is said as "Claude needs your OK in Varnick.". The request ends there, and the session raises Needs you as any pane does. Opening its notice shows the tab.
-5. **The turn ends.** The answer is `last_assistant_message`, which Claude Code puts in the Stop hook's input and Varnick's Stop hook already saves into the pane folder. It goes through today's cleanup (the "Sources" list, links and addresses out, then the first two sentences) and is spoken in the Voice setting. The transcript gets it as a `[varnick]` line.
+5. **The turn ends.** The answer is `last_assistant_message`, which Claude Code puts in the Stop hook's input and Varnick's Stop hook already saves into the pane folder. It goes through today's cleanup (the "Sources" list, links and addresses out, then the first two sentences) and is spoken in the Voice setting. The transcript gets it as a `[varnick]` line, after "Let me check." and "Looking that up." when they were said.
 
 The **voice hint** goes in front of every spoken request. It says the request was said aloud, and when, on which device, in which units. It asks for one or two spoken sentences with no lists, links, paths, code or Markdown, and names the search tool for the user's own things.
 
@@ -224,7 +224,7 @@ It goes on every spoken request, not only the first, for two reasons: the time m
   7. Restart Varnick within the 10 minutes: the next request is answered in the same session.
   8. `?` search for a word from a spoken request: the voice session is listed like any session.
   9. Switch off: today's pipeline answers as before, and an unopened voice session is ended.
-  10. The transcript holds the `[mic]` request and one `[varnick]` answer for each request, and Varnick's log holds none of their words.
+  10. The transcript holds the `[mic]` request, the lines said ("Let me check.", "Looking that up.") as they were said, and one `[varnick]` answer for each request, and Varnick's log holds none of their words.
 
 ## Out of Scope
 

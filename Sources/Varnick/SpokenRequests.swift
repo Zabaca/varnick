@@ -279,9 +279,12 @@ final class SpokenRequests {
         let voice = Speaker.shared.queue()
         /// The lines said, by kind: fixed lines are named, the answer is "answer". Never what was said.
         var lines: [(kind: String, said: Date)] = []
+        /// Each line is written to the transcript as it is handed to the voice, so the file keeps the order they are said in: the `[mic]` request already
+        /// there, "Let me check.", "Looking that up.", then the answer.
         func say(_ kind: String, _ text: String) {
             guard !text.isEmpty else { return }
             lines.append((kind, Date()))
+            record(text)
             voice.say(text)
         }
 
@@ -351,8 +354,7 @@ final class SpokenRequests {
                 run?.screen?.miss = .gone
             }
         }
-        // The answer or the closing line is written to the transcript; "Let me check." and "Looking that up." say nothing it doesn't.
-        record(saying)
+        // The answer or the closing line is written to the transcript, as "Let me check." and "Looking that up." were when they were said.
         say("answer", saying)
         let speeches = await voice.finished()
         if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
@@ -387,15 +389,12 @@ final class SpokenRequests {
         let began = Date()
         let voice = Speaker.shared.queue()
         var lines: [(kind: String, said: Date)] = []
+        /// Every line goes to the transcript as it is handed to the voice (`record`), so the file keeps the order they are said in.
         func say(_ kind: String, _ text: String) {
             guard !text.isEmpty else { return }
             lines.append((kind, Date()))
-            voice.say(text)
-        }
-        /// The closing line of a request goes to the transcript as the answer does (`record`); "Let me check." and "Looking that up." say nothing it doesn't.
-        func close(_ kind: String, _ text: String) {
             record(text)
-            say(kind, text)
+            voice.say(text)
         }
         var how = "-"
         var tookAfter: TimeInterval?
@@ -408,7 +407,7 @@ final class SpokenRequests {
                 how = why.map { "started, \($0.rawValue)" } ?? "reused"
             case .refused(let refusal):
                 ending = "refused, \(refusal.logKind)"
-                close("failed", refusal.spoken)
+                say("failed", refusal.spoken)
             case .event(let event):
                 switch event {
                 case .taken:
@@ -419,20 +418,20 @@ final class SpokenRequests {
                     say("looking that up", VoiceLines.lookingUp)
                 case .needsYou:
                     ending = "needs you"
-                    close("needs you", VoiceLines.needsYou)
+                    say("needs you", VoiceLines.needsYou)
                 case .answered(let text):
                     ending = "answered"
                     let saying = VoiceReply.speakable(text) ?? VoiceLines.noAnswer
-                    close("answer", saying)
+                    say("answer", saying)
                 case .noAnswer:
                     ending = "no answer"
-                    close("answer", VoiceLines.noAnswer)
+                    say("answer", VoiceLines.noAnswer)
                 case .failed(let failure):
                     ending = "failed, \(failure.logKind)"
-                    close("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
+                    say("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
                 case .deadline:
                     ending = "deadline"
-                    close("slow", VoiceLines.slow)
+                    say("slow", VoiceLines.slow)
                 }
                 if ending != "-", endedAfter == nil { endedAfter = Date().timeIntervalSince(began) }
             }
