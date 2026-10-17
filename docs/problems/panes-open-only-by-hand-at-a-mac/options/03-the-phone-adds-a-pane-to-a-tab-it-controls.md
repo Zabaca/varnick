@@ -1,8 +1,8 @@
 ---
 problem: panes-open-only-by-hand-at-a-mac
 title: The phone adds a Claude session or a terminal beside the pane it shows, in a tab it controls
-summary: An Add pane button at the end of the tab's switcher, there while the phone is in control of the tab, opens a small form: Claude, with the folder's agents and a prompt as New session has them, or Terminal. The page server sends the host the `start` a Mac sends for a split, naming the tab, the pane shown and side by side. Protocol 30 has every field, and Mac and headless hosts already take it from a device in control, so there is no bump and no change to either host. The new pane becomes a switcher button and shows at once; on the host it sits beside that pane.
-status: proposed
+summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), with option 01. An Add pane button at the end of the tab's switcher, there while the phone is in control of the tab, opens a small form: Claude, with the folder's agents and a prompt as New session has them, or Terminal. The page server sends the host the `start` a Mac sends for a split, naming the tab, the pane shown and side by side. Protocol 30 has every field, and Mac and headless hosts already take it from a device in control, so there is no bump and no change to either host. The new pane becomes a switcher button and shows at once; on the host it sits beside that pane.
+status: accepted
 ---
 
 ## Solution
@@ -66,9 +66,4 @@ status: proposed
 
 - **Verified in the code at 11762e0:** the relay forwards `start` from a listed device, and the Mac and the headless host each take one naming a tab, a pane and an axis when every running pane of the tab names the asker; the phone's tab listing carries each pane's folder and agent; `apps` and `arrange` are refused to devices; End names a tab or a session.
 - **Verified on a Mac host, inferred on a headless one:** the reply to a split names the tab, as for a start, so the page opens the new pane from it.
-- **Open questions,** the recommendation first:
-  1. **Kinds.** Recommended: Claude and terminal. Otherwise also a page and a custom app on a Mac host, which needs `apps` for devices (a rule of the relay's, not a change of shape) and frames them through the port proxy as the tab view does now.
-  2. **Control.** Recommended: only on a tab the phone controls, Take over its own press. Otherwise a + on every tab that takes the tab over first, after a sentence saying it does.
-  3. **Placement on the host.** Recommended: side by side beside the pane the phone showed. Otherwise stacked, or chosen by that pane's shape.
-  4. **Protocol.** Recommended: no bump; protocol 30 has every field. A page or an app later would stay protocol 30 too (inferred).
-  5. **Headless host.** Recommended: yes, for Claude and terminals, as it splits for a Mac.
+- **The user's decisions of 2026-10-17** (relayed by the coordinator): this option is accepted with option 01. Left to the recommendation, the user not answering: Claude and terminal only; only on a tab the phone controls, Take over its own press; side by side beside the pane the phone showed; no protocol bump; on a headless host too, for Claude and terminals.

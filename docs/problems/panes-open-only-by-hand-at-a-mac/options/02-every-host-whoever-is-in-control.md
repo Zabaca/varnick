@@ -12,7 +12,7 @@ Option 01, with two changes:
 - **On a Mac, a tab another machine controls.** A call from a session whose tab another Mac or the phone controls is taken, not refused. The host adds the pane where the session asked, labelled for the machine in control, so that machine attaches to it. That machine shows the pane at its next listing of the tab, about every 5 s while it shows, on a Mac and on the phone alike.
 - **On a headless host.** The relay's MCP server, which lists `notify` alone today, lists `pane_open` and `pane_close` beside it. The host adds the pane through its own `start`, in the place the session asked, labelled for the machine in control. Only terminal and Claude, since a headless host runs no browser, custom apps or files. The switch is a flag of the host's configuration, off by default, since a headless host has no Settings.
 
-Everything else is option 01's: placement, the cap, focus, permissions capped by the caller, closing.
+Everything else is option 01's: placement, focus, permissions capped by the caller, closing.
 
 ## Trade-offs
 
