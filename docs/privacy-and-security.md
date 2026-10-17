@@ -53,7 +53,7 @@ Mac** or leave it off (it is off by default): then none of this happens.
 
 - **Searches.** Each search, with the title, site and page description of up to 20 results. Never full addresses
   or tags.
-- **Hey Varnick.** Two calls. The text you say after "Hey Varnick" goes to TypeSafe's Jev, with today's date and time and
+- **Hey Varnick, with Varnick's own steps on** (Settings › Experimental; off by default, and Hey Varnick then goes to the voice session instead, below). Two calls. The text you say after "Hey Varnick" goes to TypeSafe's Jev, with today's date and time and
   **a list of your projects**, to decide what you mean: the time, something Varnick can't do, the screen, which project
   and which time it names, whether only your own things can answer it, and which of its words to search for. Each
   project in the list (up to 40, most recently used first) has its folder name, its other names (from its git remote
@@ -68,7 +68,7 @@ Mac** or leave it off (it is off by default): then none of this happens.
   Never an address or a paired Mac's name. A time window's hours are worked out on this Mac from the label chosen.
   Both calls start before you have quite finished, so words said so far may be sent and then discarded. If TypeSafe
   doesn't answer in time, the first call's questions go to Text generation instead (below).
-- **Point at the screen** (off by default). A request about the screen also sends the title of the window in
+- **Point at the screen** (Settings › Experimental; off by default, and only with Varnick's own steps on). A request about the screen also sends the title of the window in
   front and, for each of its first 255 elements, the label, kind, nearby text and whether it is dimmed. That is
   the window's visible text, not only the text near its controls: a message list's subjects and senders, an open
   mail's body, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. With Varnick's
@@ -119,7 +119,7 @@ lines private, leave the voice on one installed on this Mac, which is the defaul
 
 ### Anthropic, through Text generation
 
-Text generation writes Hey Varnick's answers. Choosing **Claude Code** for it (Settings › Models; the default for an install that never chose) is consent to send what it
+Text generation writes Hey Varnick's answers when Settings › Experimental › Answer with Varnick's own steps is on (otherwise the voice session answers, and nothing here is used). Choosing **Claude Code** for it (Settings › Models; the default for an install that never chose) is consent to send what it
 needs to Anthropic, under your own Claude account and on your plan. Hey Varnick is off until you turn it on, and its
 setting says so; nothing is sent before that. To keep the text on this Mac, choose **On this Mac**. An install that
 already answered with it stays there when it upgrades.
@@ -155,7 +155,7 @@ it, and nothing is sent for that.
 
 ### Anthropic, and a search provider, through Answer from the web
 
-Settings › Listening › **Answer from the web** (off by default; it needs Hey Varnick, the relevance filter on
+Settings › Experimental › **Answer from the web** (off by default; shown, and used, only while Answer with Varnick's own steps is on; it needs Hey Varnick, the relevance filter on
 TypeSafe with a key, and Claude Code found and logged in) answers what your pages, bookmarks and Claude sessions can't,
 such as when a shop opens, from the web. Turning it on is the consent: there is no prompt per request. A request goes
 to the web when nothing Varnick found helps answer it, or when the writer finds what it found too thin and no
@@ -234,8 +234,8 @@ in the conversation; the tools send nothing else, and the list never leaves this
 
 ### Anthropic, through the Voice session
 
-With Settings › Experimental › **Voice session** on (off by default), every "Hey Varnick" request goes to a Claude Code session of yours in
-Home, out of sight until you open it, in place of Varnick's own steps. It is a session like one you type, so everything it reads goes to
+Every "Hey Varnick" request goes to a Claude Code session of yours in Home, out of sight until you open it (the default; Settings › Experimental ›
+Answer with Varnick's own steps turns it off and answers the older way, above). It is a session like one you type, so everything it reads goes to
 Anthropic on your plan with it, and the transcripts are kept in Claude Code's own folders on this Mac and are found by session search like any
 session's:
 
@@ -254,9 +254,11 @@ session's:
 - **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
   last request.
 
-While it is on, nothing of a spoken request goes to TypeSafe, and Text generation, the relevance filter's part in a spoken request, Answer from the
-web and Point at the screen are not used for it. The Voice session needs Hey Varnick, Keep sessions running and Claude Code found and logged in.
-What the session does is shown in its tab (Settings › Experimental › Show, or its Needs you notice); Varnick's log says only how long a
+Nothing of a spoken request goes to TypeSafe, and Text generation, the relevance filter's part in a spoken request, Answer from the
+web and Point at the screen are not used for it. The Voice session needs Keep sessions running and Claude Code found and logged in, and
+Claude Code's one-time warning for skip-permissions mode accepted; when one is missing Hey Varnick says so and the setting shows it beside Hey Varnick, and
+nothing falls back to Varnick's own steps, so nothing is sent by another route.
+What the session does is shown in its tab (Settings › Listening › Show beside Hey Varnick, or its Needs you notice); Varnick's log says only how long a
 request took, whether the session was started or reused, and how it ended, never a word of the request, the answer or what Claude did.
 
 ### Anthropic, through Screen access
@@ -542,8 +544,8 @@ permissions says (that was the choice made for it, so a spoken request is not st
 microphone hears that starts "Hey Varnick" can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
 your own voice misheard, a video or a call played through the speakers (Listening hears the Mac's audio too), or another person in the room.
 It also has Varnick's tools your other sessions have (Screen access and Panel access when they are on, notifications, automations and Tasks),
-which can click, type and press keys without asking. Settings › Experimental says so beside the switch. If that is too much, leave the switch off:
-today's Hey Varnick only reads, searches and answers, and opens nothing.
+which can click, type and press keys without asking. Settings › Listening says so beside Hey Varnick. If that is too much, turn on Settings › Experimental ›
+Answer with Varnick's own steps: that Hey Varnick only reads, searches and answers, and opens nothing (the voice session is then off, and so is Voice mode on the phone).
 
 - **It is a session like any other in what it can reach:** Varnick's Accessibility and Screen Recording are inherited by the commands it runs
   (see Screen permissions reach every pane, above).
@@ -554,7 +556,7 @@ today's Hey Varnick only reads, searches and answers, and opens nothing.
 
 ### Voice mode on the phone
 
-Voice mode (the Phone page, on a Mac's page, with the Voice session switch on) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
+Voice mode (the Phone page, on a Mac's page, while Answer with Varnick's own steps is off) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
 
 - **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches it takes for a request (it listens for speech and sends from the first word to a pause, with the 300 ms before the first word, which it keeps in memory while it listens), never continuously. The browser's own microphone indicator is on the whole time.
 - **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.

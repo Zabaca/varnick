@@ -195,7 +195,7 @@ off it, only the host. Tapping it opens that session. As on the Mac (Notices, ab
 no Done until they have ended, so a shell forgotten in a session keeps its Done from the phone too. Every Mac and a headless host must run the same Varnick commit (protocol 28). Settings › Peers
 says which of your devices get notifications from a Mac.
 
-On a Mac's page, **Voice mode** (under New session) talks to that Mac's Voice session (Settings › Experimental › Voice session, which has to be on) by voice. Tap Start and allow the microphone; say a request, and the page sends it to the Mac when you stop, shows it as text as the Mac heard it, shows the state ("Let me check.", "Looking that up.") and plays the answer, which is also written out. It is the session Hey Varnick reaches, so you can follow up at the Mac within the 10 minutes. A question Claude asks shows "Claude needs your OK" with an Open button that opens the session's terminal on the phone (which ends Voice mode). Voice mode plays a quiet tone for as long as it runs: Chrome freezes a page that is hidden and silent, and does not freeze one that plays, so the conversation survives your going to another app. It also keeps the screen on while it is shown. A locked phone is untested. If the page is frozen anyway, it reconnects when it wakes and says so. If the microphone goes silent for 5 seconds (another app or the system muted it), Voice mode ends and says why. A headless host has no Voice mode. What is sent is in [privacy and security](privacy-and-security.md#voice-mode-on-the-phone). Every Mac, a headless host and each phone page must run the same Varnick commit (protocol 30).
+On a Mac's page, **Voice mode** (under New session) talks to that Mac's Voice session (the one Hey Varnick uses; it is off while Settings › Experimental › Answer with Varnick's own steps is on) by voice. Tap Start and allow the microphone; say a request, and the page sends it to the Mac when you stop, shows it as text as the Mac heard it, shows the state ("Let me check.", "Looking that up.") and plays the answer, which is also written out. It is the session Hey Varnick reaches, so you can follow up at the Mac within the 10 minutes. A question Claude asks shows "Claude needs your OK" with an Open button that opens the session's terminal on the phone (which ends Voice mode). Voice mode plays a quiet tone for as long as it runs: Chrome freezes a page that is hidden and silent, and does not freeze one that plays, so the conversation survives your going to another app. It also keeps the screen on while it is shown. A locked phone is untested. If the page is frozen anyway, it reconnects when it wakes and says so. If the microphone goes silent for 5 seconds (another app or the system muted it), Voice mode ends and says why. A headless host has no Voice mode. What is sent is in [privacy and security](privacy-and-security.md#voice-mode-on-the-phone). Every Mac, a headless host and each phone page must run the same Varnick commit (protocol 30).
 
 ## Listening
 
@@ -210,29 +210,17 @@ the run started. A run longer than 15 minutes goes on in new files named by thei
 loses at most the last 15 minutes. A source that delivered no audio leaves no file. The setting is read each time
 Listening starts or restarts. The files stay on this Mac and Varnick never deletes them.
 
-Hey Varnick asks TypeSafe's Jev (or, without it, your Text generation model) what each request means, then searches your
-History, Bookmarks and Claude sessions together, judges which rows help, and answers from those out loud, saying "Let
-me check." first when the answer isn't ready. A project you name or mean ("what did I do in <project>"; Varnick knows
-each project's other names and what it does from its remote, `CLAUDE.md` and README) keeps the sessions to that
-project's, and a time ("this morning", "yesterday evening", "last week", "on Monday") keeps them to the sessions used
-then when only your own things can answer. "What time is it" and "what's the date" are answered from the Mac's clock,
-and "set a timer" is told plainly that Varnick can't.
-
-Settings › Listening › **Answer from the web** (off by default) answers from the web what none of that can, such as
-when a shop opens: your own Claude Code searches for it, on your plan, and Varnick says "Looking that up." and then
-where the answer came from. It needs Hey Varnick, the relevance filter on TypeSafe with a key, and Claude Code found
-and logged in. A request that names a project, or that only your own things can answer, never goes to the web: Varnick says it found no
-sessions then. What is sent is in [privacy and security](privacy-and-security.md#anthropic-and-a-search-provider-through-answer-from-the-web).
-
-Settings › Experimental › **Voice session** (off by default) hands every Hey Varnick request to a Claude Code session of yours instead:
-one hidden session in Varnick's Home, with everything your sessions have (your settings, CLAUDE.md files and plugins, Bash, the web,
-Varnick's tools) and a search of your history, bookmarks and Claude sessions. The first request starts it, later ones are typed into it, and
-it is kept until 10 minutes after your last request; Varnick says "Let me check." when it has the request and "Looking that up." when Claude
-goes to the web, then speaks the answer. **It runs with permissions skipped, so anything the microphone hears, a video or another voice in
-the room included, can run commands on your Mac without asking.** A question it asks raises Needs you ("Claude needs your OK in Varnick."), and
-the session opens from the notice or Settings › Experimental › Show; once you have opened it, Varnick never types into it. It needs Hey Varnick,
-Keep sessions running and Claude Code logged in. While it is on, nothing of a spoken request goes to TypeSafe or Text generation, and Point
-at the screen and Answer from the web aren't used. What is sent is in [privacy and security](privacy-and-security.md#anthropic-through-the-voice-session).
+Hey Varnick hands every request to a Claude Code session of yours: one hidden session in Varnick's Home, with everything your
+sessions have (your settings, CLAUDE.md files and plugins, Bash, the web, Varnick's tools) and a search of your history, bookmarks and
+Claude sessions. This is how it works unless you turn on Settings › Experimental › Answer with Varnick's own steps. The first request
+starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request; Varnick says "Let me check."
+when it has the request and "Looking that up." when Claude goes to the web, then speaks the answer. **It runs with permissions skipped,
+so anything the microphone hears, a video or another voice in the room included, can run commands on your Mac without asking.** A
+question it asks raises Needs you ("Claude needs your OK in Varnick."), and the session opens from the notice or Settings › Listening ›
+Show beside Hey Varnick; once you have opened it, Varnick never types into it. It needs Keep sessions running and Claude Code logged in,
+and Claude Code's one-time warning for skip-permissions mode accepted: Settings shows what is missing beside Hey Varnick, and Hey Varnick
+says it when you ask, and does not fall back to the other way. Nothing of a spoken request goes to TypeSafe or Text generation. What is
+sent is in [privacy and security](privacy-and-security.md#anthropic-through-the-voice-session).
 
 Hey Varnick speaks in a voice installed on your Mac (Settings › Listening › Voice). To hear a natural one instead,
 save an ElevenLabs API key under Settings › Models › Keys (it needs the Text to Speech and Voices Read
@@ -240,18 +228,9 @@ permissions) and pick one of your account's voices in the same Voice list. That 
 ElevenLabs ([privacy and security](privacy-and-security.md#elevenlabs)). The installed voice you had stays as the
 Fallback voice and speaks when ElevenLabs fails or takes more than 1.5 seconds to start.
 
-With Text generation on **Claude Code** (Settings › Models; the default for a new install, while installs that already
-answered with Gemma stay on On this Mac), your own `claude` writes Hey Varnick's answers on your Claude subscription,
-with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved, so
-these calls never show as sessions. Turning Hey Varnick on needs `claude` found and logged in (Settings › Models
-shows it, and Check times a call); no model has to download. That sends what you say and the few results it reads
-to Anthropic ([privacy and security](privacy-and-security.md#anthropic-through-text-generation)), and each answer
-counts toward your plan's usage limits. When Claude Code can't answer, or takes more than a few seconds, Gemma writes the text
-if you have installed it (the **Fallback on this Mac** row), and Claude Code rests for a minute.
-
 ## Point at the screen
 
-With Hey Varnick on, Settings › Listening › **Point at the screen** lets you ask about what is in front of
+With Hey Varnick answering with Varnick's own steps (Settings › Experimental › Answer with Varnick's own steps), Settings › Experimental › **Point at the screen** lets you ask about what is in front of
 you ("Hey Varnick, where's the Allow button"). Varnick reads the elements of the window that has focus
 through macOS Accessibility, in its own process, asks TypeSafe's Jev which one you mean, draws a big arrow
 and a sign on it that never takes focus or clicks, says what it is, and takes the arrow away a few seconds
@@ -491,6 +470,31 @@ check it"), and Varnick checks the file as it is read, so a mistake is named bef
 - **A session can list, check and start Tasks** through four Varnick tools while Tasks is on (`tasks_list`, `task_check`, `task_run`,
   `task_run_status`), with no approval step of Varnick's; a Run's own sessions never have them. It polls `task_run_status` for the result.
 - Not in this build: a Task step on a website, and a saved Task as an automation's work.
+
+**Answer with Varnick's own steps (Jev)** is the way Hey Varnick answered before the voice session was the default, now an experiment. On, the voice session is off and every request is answered as follows; Settings › Experimental then shows **Point at the screen** and **Answer from the web**, which only this way uses.
+
+With this on, Hey Varnick asks TypeSafe's Jev (or, without it, your Text generation model) what each request means, then searches your
+History, Bookmarks and Claude sessions together, judges which rows help, and answers from those out loud, saying "Let
+me check." first when the answer isn't ready. A project you name or mean ("what did I do in <project>"; Varnick knows
+each project's other names and what it does from its remote, `CLAUDE.md` and README) keeps the sessions to that
+project's, and a time ("this morning", "yesterday evening", "last week", "on Monday") keeps them to the sessions used
+then when only your own things can answer. "What time is it" and "what's the date" are answered from the Mac's clock,
+and "set a timer" is told plainly that Varnick can't.
+
+Settings › Experimental › **Answer from the web** (off by default) answers from the web what none of that can, such as
+when a shop opens: your own Claude Code searches for it, on your plan, and Varnick says "Looking that up." and then
+where the answer came from. It needs Hey Varnick, the relevance filter on TypeSafe with a key, and Claude Code found
+and logged in. A request that names a project, or that only your own things can answer, never goes to the web: Varnick says it found no
+sessions then. What is sent is in [privacy and security](privacy-and-security.md#anthropic-and-a-search-provider-through-answer-from-the-web).
+
+With Text generation on **Claude Code** (Settings › Models; the default for a new install, while installs that already
+answered with Gemma stay on On this Mac), your own `claude` writes Hey Varnick's answers on your Claude subscription,
+with Claude Haiku: no tools, none of your settings, hooks, plugins, CLAUDE.md or memory, and no transcript saved, so
+these calls never show as sessions. Turning Hey Varnick on needs `claude` found and logged in (Settings › Models
+shows it, and Check times a call); no model has to download. That sends what you say and the few results it reads
+to Anthropic ([privacy and security](privacy-and-security.md#anthropic-through-text-generation)), and each answer
+counts toward your plan's usage limits. When Claude Code can't answer, or takes more than a few seconds, Gemma writes the text
+if you have installed it (the **Fallback on this Mac** row), and Claude Code rests for a minute.
 
 ## TypeSafe
 
