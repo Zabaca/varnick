@@ -699,7 +699,7 @@ if CommandLine.arguments.contains("--hook-settings") {
 }
 
 // `Varnick --problems [--work <pane folder>]… [--ended <pane folder>]… [--sent <pane folder>]… [--sent-json <file>]… [folder…]` prints the Problems tab's columns, each card's evidence and
-// chips and each pane folder's links, for those project folders (main checkouts) or the projects Varnick lists, and exits (to check the rules
+// chips and each pane folder's links, for those project folders (main checkouts) or the projects Varnick lists and Home, and exits (to check the rules
 // and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed; `--sent`
 // reads it as a host would for a paired Mac (printing the `sessions` entry it sends) and shows it as that Mac's open session; `--sent-json`
 // takes such an entry from a file (one line, as a host sent it, with or without `work`).
@@ -715,7 +715,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--problems") {
     }
     MainActor.assumeIsolated {
         Task { @MainActor in
-            let roots = folders.isEmpty ? Project.scan(roots: Settings.shared.projectFolders).map(\.path) : folders
+            let roots = folders.isEmpty ? ProblemsReader.roots(of: Project.scan(roots: Settings.shared.projectFolders).map(\.path)) : folders
             print(await ProblemsReader.report(roots, open: open, ended: ended, sent: sent, sentJSON: sentJSON), terminator: "")
             exit(0)
         }

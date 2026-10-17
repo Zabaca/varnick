@@ -2,7 +2,7 @@ import AppKit
 import Carbon
 import SwiftUI
 
-/// The session board's Problems tab: a card per problem of every project with a `docs/problems` folder, in Backlog, Decided, Building,
+/// The session board's Problems tab: a card per problem of every project, and of Home, with a `docs/problems` folder, in Backlog, Decided, Building,
 /// Shipped and Closed (`ProblemRules`). The files and the branches tied to options are read off the main actor, when the tab shows and
 /// every 5 s after; nothing is read while it is hidden, and nothing in its view reads anything. Its chips and live links come from the
 /// Sessions cards (`SessionBoard.refresh`, kept up to date on both tabs), not from files of its own.
@@ -38,7 +38,7 @@ final class ProblemsBoard: ObservableObject {
     /// What an empty board says, once the first read is back: no project has the folder, or the folders hold no problem.
     var emptyNote: String? {
         guard loaded, cards.isEmpty else { return nil }
-        return sources.isEmpty ? "No project has a docs/problems folder" : "docs/problems has no problem.md yet"
+        return sources.isEmpty ? "No project, nor Home, has a docs/problems folder" : "docs/problems has no problem.md yet"
     }
 
     // MARK: Reading
@@ -73,7 +73,7 @@ final class ProblemsBoard: ObservableObject {
     private func read() async {
         guard let model else { return }
         let projects = model.projects
-        let paths = projects.map(\.path)
+        let paths = ProblemsReader.roots(of: projects.map(\.path))
         let work = Task.detached(priority: .userInitiated) { await ProblemsReader.read(paths) }
         reading = work
         let found = await work.value
@@ -83,7 +83,9 @@ final class ProblemsBoard: ObservableObject {
         guard found != sources else { return }
         sources = found
         let several = found.filter { !$0.problems.isEmpty }.count > 1
-        let named = several ? Dictionary(projects.map { ($0.path, model.projectPill($0)) }, uniquingKeysWith: { first, _ in first }) : [:]
+        var named = several ? Dictionary(projects.map { ($0.path, model.projectPill($0)) }, uniquingKeysWith: { first, _ in first }) : [:]
+        // Home is no project, so it has no `#name` word; its pill reads "Home".
+        if several, named[HomeFolder.path] == nil { named[HomeFolder.path] = "Home" }
         if named != pills { pills = named }
         rebuild()
     }

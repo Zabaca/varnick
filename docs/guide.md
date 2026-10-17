@@ -392,7 +392,7 @@ Settings › **Experimental** holds a switch for each feature that is still bein
 **Problems board** is for a project that plans its work in `docs/problems/` the way Varnick's own repository
 does (problems, options, the `/work` skill and the planner and builder agents, which live in that
 repository's `.claude/`). On, the session board has a Problems tab beside Sessions (`!problems`, and Tab switches
-between them) and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
+between them) that reads your projects and Home (a `docs/problems/` in Home shows too, its cards marked Home), and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
 or option it works on. Off, the board shows Sessions only, `!problems` is not listed, and sessions started
 after that get none of those hooks; sessions already running keep the hooks they started with. Links already
 recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
