@@ -36,13 +36,19 @@ An accepted option is the spec: when work starts, its tickets go under `.scratch
 
 The Problems tab on the session board reads these statuses, so they are kept true:
 
-- `proposed`, `accepted`, `rejected`, `abandoned`: the user's choice; the planner writes it.
-- `in-progress`: set by hand when work starts that no branch shows yet.
-- `shipped`: set by the merge that finishes the option, in the merge commit itself: `git merge --no-ff --no-commit <branch>`, edit the option's `status` to `shipped`, then `git commit` with the merge message. A merge that leaves the option unfinished sets nothing. The branch's tie says which option it built.
+- `proposed`, `accepted`, `rejected`, `abandoned`: the user's choice; the planner writes it. An option the user decides against, built or not, is set `rejected` or `abandoned` with the user's reason, and its branch is deleted, which drops the branch's tie. A branch that shows Building with no one working on it means its option's status is wrong; fix the status, not the board.
+- `in-progress`: set by hand when work starts that no branch shows yet, and by a merge that leaves part of the option unbuilt (below).
+- `shipped`: set by the merge that finishes the option.
 
-**Branch tie.** A builder's first step, on a branch other than main, is `/work option <problem-slug>/<NN>`, which runs `git config branch.<branch>.varnick-option <problem-slug>/<NN>` and links the session or subagent to the option (ADR 0020). Without the skill, run the git command. Every worktree shares the config, and deleting the branch drops the entry. The tab shows the option Building while the branch has commits that main lacks, so no `in-progress` is needed.
+**The merge sets the status.** Every merge of a branch that builds an option sets that option's status in the merge commit itself: `git merge --no-ff --no-commit <branch>`, edit the option's `status`, then `git commit` with the merge message. It is `shipped` when nothing of the option is left; else `in-progress`, with what is left named in the merge message. A built option is never left `accepted`. The branch's tie says which option it built.
 
-**Work links.** Writing a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing problem, links the writer to the problem by itself (a hook), so the planner writing `problem.md` and a ticket claim need nothing more. `/work problem <slug>` links work that writes no such file; `/work none` clears. A link to an option replaces only through `/work`.
+The same merge closes the problem (`status: closed`) when it leaves no option `accepted` or `in-progress` and the shipped options solve the problem as its statement reads. The lead names the closing when it asks the user for the go-ahead, so the go covers it. A problem that still holds real work is restated instead, its title and description cut to what is left. Closing leaves proposed options as they are: the problem's status says nothing more is wanted, and the options stay on record if it is ever opened again.
+
+**Branch tie.** A builder's first step, on a branch other than main, is `/work option <problem-slug>/<NN>`, which runs `git config branch.<branch>.varnick-option <problem-slug>/<NN>` and links the session or subagent to the option (ADR 0020). Without the skill, run the git command, which ties the branch but links no one. Every worktree shares the config, and deleting the branch drops the entry. The tab shows the option Building while the branch has commits that main lacks, so no `in-progress` is needed.
+
+**Work links.** Writing a file under `docs/problems/<slug>/`, or under `.scratch/<slug>/` of an existing problem, links the writer to the problem by itself (a hook), so a planner writing a new `problem.md` and a ticket claim need nothing more. A planner on an existing problem runs `/work problem <slug>` before it writes, so its edits made through Bash are linked as well. `/work problem <slug>` also links work that writes no such file; `/work none` clears. A link to an option replaces only through `/work`.
+
+`/work` takes two commands, because the hook that records the link runs after the command ends: the first prints a marker, and the second, on the first's last line, says whether a hook recorded it. A failure of the second names the cause, usually a session whose claude started without the work hooks, which needs a restart. The branch tie holds either way. A subagent resumed with `SendMessage` is linked again by itself, as `where-it-breaks.md` says; a subagent's own helper is not linked to its parent's option.
 
 ## Conventions
 
