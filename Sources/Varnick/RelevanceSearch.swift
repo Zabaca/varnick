@@ -20,7 +20,7 @@ struct RelevanceSearch {
     static let rrfK = 60.0
     /// How many pages the filter judges, from the top of the fused ranking.
     nonisolated static let judgedPages = 20
-    static let sessionsShown = 3
+    nonisolated static let sessionsShown = 3
     /// A session matched only by meaning shows when its best exchange's cosine similarity reaches this, since nearest
     /// neighbours always exist. Tuned by hand with `Varnick --search`; keyword matches always show. The best of many
     /// exchanges runs higher than one vector per session did, so this is being retuned (ADR 0018); the value is a separate decision.
@@ -71,15 +71,15 @@ struct RelevanceSearch {
 
     /// A spoken request's sessions (listening-never-answers, option 07), searched apart from the pages since the folder a request
     /// names and the time it names are inputs a typed search doesn't take. `filter` keeps the sessions of the named folders on any Mac,
-    /// and, when no words are left, the sessions in a time window. Returns at most `sessionsShown` sessions.
+    /// and, when no words are left, the sessions in a time window. Returns at most `limit` sessions (`sessionsShown` unless a caller will drop some).
     /// - With no words: the sessions the filter keeps, most recently used first.
     /// - With words: ranked as the panel ranks a project's sessions (`LauncherModel.listPromptSessions`): keyword and meaning fused,
     ///   with the similarity floor, or none when a project or a window chose the sessions. A named project or a filtering window always shows its sessions, so one the words
     ///   don't match comes most recently used first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
-    func spokenSessions(words: String, filter: SessionFilter, boost: DateInterval?) async throws -> [SearchResult] {
+    func spokenSessions(words: String, filter: SessionFilter, boost: DateInterval?, limit: Int = RelevanceSearch.sessionsShown) async throws -> [SearchResult] {
         store.refreshIfChanged()
         guard !words.isEmpty else {
-            return store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
+            return store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
         }
         let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
         // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
@@ -98,7 +98,7 @@ struct RelevanceSearch {
                          semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
                          promoted: store.rowIDs(ofSessions: openHere()))
         if found.isEmpty, selecting {
-            found = store.sessionRows(filter, limit: Self.sessionsShown, promoted: []).compactMap { store.fetch($0) }
+            found = store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
         }
         if let boost {
             var window = filter
@@ -106,7 +106,7 @@ struct RelevanceSearch {
             let inside = store.sessionRowIDs(window)
             found = found.filter { inside.contains($0.id) } + found.filter { !inside.contains($0.id) }
         }
-        return Array(found.prefix(Self.sessionsShown))
+        return Array(found.prefix(limit))
     }
 
     /// Why `words` get no judge.

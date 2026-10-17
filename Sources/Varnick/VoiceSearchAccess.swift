@@ -80,7 +80,7 @@ final class VoiceSearchAccess {
         guard let model = PeerManager.shared.model else { throw VoiceSearchRefusal.starting }
         guard let id = UUID(uuidString: request.pane),
               let caller = model.tabs.lazy.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { throw VoiceSearchRefusal.noPane }
-        guard caller.record.voice == true else { throw VoiceSearchRefusal.notVoice }
+        guard caller.record.isVoice else { throw VoiceSearchRefusal.notVoice }
         guard request.tool == VoiceSearchMCP.search else { throw VoiceSearchRefusal.unknownTool(request.tool) }
         let arguments: VoiceSearchArguments
         switch VoiceSearchArguments.parse(request.args.mapValues(\.any)) {
@@ -102,7 +102,8 @@ final class VoiceSearchAccess {
         let window = arguments.window(now: now)
         if arguments.project != nil || window != nil {
             let filter = SessionFilter(folderNames: arguments.project.map { [$0.lowercased()] } ?? [], window: window)
-            sessions = try await search.spokenSessions(words: arguments.query, filter: filter, boost: nil)
+            // One more than are shown: the caller's own conversation may be among them and is dropped before the cut.
+            sessions = try await search.spokenSessions(words: arguments.query, filter: filter, boost: nil, limit: RelevanceSearch.sessionsShown + 1)
         }
         let pages = Array(ranking.pages.prefix(RelevanceSearch.judgedPages))
         sessions = Array(sessions.filter { $0.sessionID.caseInsensitiveCompare(own) != .orderedSame }.prefix(SpokenText.maxSessions))

@@ -2,7 +2,8 @@ import Foundation
 
 // The voice session (option 09 of `listening-never-answers`): the logic a host keeps for the one Claude session that answers spoken requests. It is
 // in the shared package so a host's relay can reuse it (option 05 of `phone-page-is-only-a-browser-tab`); the Mac app hosts it today
-// (`VoiceSessionHost`). Everything here is a pure function of what a host observed, apart from the two readers of the pane folder (`VoiceReply`).
+// (`VoiceSessionHost`). Everything here is a pure function of what a host observed, apart from the readers of the pane folder (`VoiceReply`) and
+// `VoiceSession.clearMarkers`, which removes two files there.
 // The request goes in as text and what happens comes out as events (`VoiceWatch.Event`); wording and audio are each surface's own.
 // Rules that break: docs/agents/where-it-breaks.md, Listening and spoken requests, and Sessions and tabs.
 
@@ -72,25 +73,27 @@ public enum VoiceSession {
         }
     }
 
-    /// Whether an unopened session is to be ended now: its turn ended (or stopped on an error) `reuseWithin` ago or more. A working one is left to
-    /// finish, and one the user opened is an ordinary tab Varnick never ends.
-    public static func idleEnded(turn: PaneTurn?, opened: Bool, now: Date) -> Bool {
-        guard !opened, let turn, turn.turn == .waiting || turn.turn == .failed else { return false }
-        return now.timeIntervalSince(turn.since) >= reuseWithin
+    /// Whether an unopened session is to be ended now: it is in any state but working and `reuseWithin` has passed since its turn last changed (waiting,
+    /// ended on an error or with background work, or asking a question or for a plan, which nobody can reach from a hidden tab), or its turn can't be
+    /// read and it was started that long ago. A working one is left to finish, and one the user opened is an ordinary tab Varnick never ends.
+    public static func idleEnded(turn: PaneTurn?, startedAt: Date, opened: Bool, now: Date) -> Bool {
+        guard !opened else { return false }
+        guard let turn else { return now.timeIntervalSince(startedAt) >= reuseWithin }
+        return turn.turn != .working && now.timeIntervalSince(turn.since) >= reuseWithin
     }
 
     // MARK: The hooks only its settings carry
 
-    /// `UserPromptSubmit`: the session took a prompt. Written by rename, so its date is new each time.
-    static let takenCommand =
-        #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.voiceTakenFileName)"; "#
-        + #"[ -n "$VARNICK_SESSION_FILE" ] && { printf x > "$f.$$" && mv "$f.$$" "$f" || rm -f "$f.$$"; } 2>/dev/null; exit 0"#
-
-    /// `PreToolUse` for the web tools: Claude is going to the web.
+    /// `UserPromptSubmit`: the session took a prompt. `PreToolUse` for the web tools: Claude is going to the web.
+    static let takenCommand = markerCommand(PaneFolder.voiceTakenFileName)
     static let webMatcher = "^(WebSearch|WebFetch)$"
-    static let webCommand =
-        #"f="${VARNICK_SESSION_FILE%/*}/\#(PaneFolder.voiceWebFileName)"; "#
-        + #"[ -n "$VARNICK_SESSION_FILE" ] && { printf x > "$f.$$" && mv "$f.$$" "$f" || rm -f "$f.$$"; } 2>/dev/null; exit 0"#
+    static let webCommand = markerCommand(PaneFolder.voiceWebFileName)
+
+    /// Writes the marker file beside the session file by rename, so its date is new each time.
+    private static func markerCommand(_ file: String) -> String {
+        #"f="${VARNICK_SESSION_FILE%/*}/\#(file)"; "#
+            + #"[ -n "$VARNICK_SESSION_FILE" ] && { printf x > "$f.$$" && mv "$f.$$" "$f" || rm -f "$f.$$"; } 2>/dev/null; exit 0"#
+    }
 
     /// Clears the two markers, before a request is sent: a marker is believed only when it is newer than the request.
     public static func clearMarkers(for pane: UUID) {
@@ -359,6 +362,9 @@ public struct VoiceSearchArguments: Equatable {
         let known: Set<String> = ["query", "project", "from", "to"]
         if let extra = arguments.keys.sorted().first(where: { !known.contains($0) }) {
             return .failure(Refusal(message: "\(extra) is not an argument: the arguments are query, project, from and to"))
+        }
+        if let wrong = ["query", "project", "from", "to"].first(where: { key in arguments[key].map { !($0 is String) && !($0 is NSNull) } ?? false }) {
+            return .failure(Refusal(message: "\(wrong) must be text, not a number or a boolean"))
         }
         guard let query = text("query") else { return .failure(Refusal(message: "query is required: the words to search for")) }
         var found = VoiceSearchArguments(query: String(query.prefix(VoiceSession.maxRequestCharacters)), project: text("project"), from: nil, to: nil)

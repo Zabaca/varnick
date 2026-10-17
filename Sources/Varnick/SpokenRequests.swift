@@ -392,6 +392,11 @@ final class SpokenRequests {
             lines.append((kind, Date()))
             voice.say(text)
         }
+        /// The closing line of a request goes to the transcript as the answer does (`record`); "Let me check." and "Looking that up." say nothing it doesn't.
+        func close(_ kind: String, _ text: String) {
+            record(text)
+            say(kind, text)
+        }
         var how = "-"
         var tookAfter: TimeInterval?
         var looked = false
@@ -403,7 +408,7 @@ final class SpokenRequests {
                 how = why.map { "started, \($0.rawValue)" } ?? "reused"
             case .refused(let refusal):
                 ending = "refused, \(refusal.logKind)"
-                say("failed", VoiceLines.failed)
+                close("failed", refusal.spoken)
             case .event(let event):
                 switch event {
                 case .taken:
@@ -414,22 +419,20 @@ final class SpokenRequests {
                     say("looking that up", VoiceLines.lookingUp)
                 case .needsYou:
                     ending = "needs you"
-                    say("needs you", VoiceLines.needsYou)
+                    close("needs you", VoiceLines.needsYou)
                 case .answered(let text):
                     ending = "answered"
                     let saying = VoiceReply.speakable(text) ?? VoiceLines.noAnswer
-                    record(saying)
-                    say("answer", saying)
+                    close("answer", saying)
                 case .noAnswer:
                     ending = "no answer"
-                    record(VoiceLines.noAnswer)
-                    say("answer", VoiceLines.noAnswer)
+                    close("answer", VoiceLines.noAnswer)
                 case .failed(let failure):
                     ending = "failed, \(failure.logKind)"
-                    say("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
+                    close("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
                 case .deadline:
                     ending = "deadline"
-                    say("slow", VoiceLines.slow)
+                    close("slow", VoiceLines.slow)
                 }
                 if ending != "-", endedAfter == nil { endedAfter = Date().timeIntervalSince(began) }
             }
@@ -530,6 +533,24 @@ enum VoiceLines {
     static let notTaken = "Claude didn't take that."
     static let slow = "That's taking a while. I'll let you know when it's done."
     static let wakeAlone = "Ask me something."
+    static let off = "The voice session is off."
+    static let needsKeepSessions = "The voice session needs Keep sessions running."
+    static let busy = "I'm still on your last request."
+    static let needsSkipAccepted = "Run claude with the dangerously skip permissions flag once in a pane, accept its warning, and ask again."
+}
+
+extension VoiceSessionHost.Refusal {
+    /// What Hey Varnick says: the cause where it is the user's to fix, else that Claude Code isn't answering.
+    var spoken: String {
+        switch self {
+        case .off: VoiceLines.off
+        case .needsKeepSessions: VoiceLines.needsKeepSessions
+        case .busy: VoiceLines.busy
+        case .needsSkipAccepted: VoiceLines.needsSkipAccepted
+        case .notSent: VoiceLines.notTaken
+        case .couldntStart, .notLoggedIn: VoiceLines.failed
+        }
+    }
 }
 
 extension VoiceSessionHost.Refusal {
@@ -538,6 +559,8 @@ extension VoiceSessionHost.Refusal {
         switch self {
         case .off: "off"
         case .needsKeepSessions: "needs keep sessions"
+        case .needsSkipAccepted: "needs skip accepted"
+        case .notLoggedIn: "not logged in"
         case .busy: "busy"
         case .couldntStart: "couldn't start"
         case .notSent: "not sent"

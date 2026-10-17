@@ -93,7 +93,7 @@ final class SessionNotifier: ObservableObject {
     func turnChanged(in pane: ClaudeSession, from old: PaneTurn?, to new: PaneTurn) {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
         if pane.record.taskRun != nil { model.taskHost.paneTurnChanged(pane) }
-        if pane.record.voice == true { model.voiceSession.paneTurnChanged(pane, to: new.turn) }
+        if pane.record.isVoice { model.voiceSession.paneTurnChanged(pane, to: new.turn) }
         // A peer's date moves with each reply, so the same turn is told within a couple of seconds.
         let sameTurn = old.map { abs($0.since.timeIntervalSince(new.since)) <= 2 } ?? false
         // A standing message folds a Done into itself, and an error or Needs you replaces it (`NoticeRule.merge`).

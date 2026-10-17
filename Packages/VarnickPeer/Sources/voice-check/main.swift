@@ -49,7 +49,7 @@ decide("a request in flight is busy", flying, turn(.waiting, since: 0), at: 5, i
 decide("a request in flight is busy even when the session is opened", flying, turn(.waiting, since: 0), opened: true, at: 5, is: .busy)
 
 func ended(_ name: String, _ turn: PaneTurn?, opened: Bool = false, at seconds: TimeInterval, is expected: Bool) {
-    let got = VoiceSession.idleEnded(turn: turn, opened: opened, now: after(seconds))
+    let got = VoiceSession.idleEnded(turn: turn, startedAt: t0, opened: opened, now: after(seconds))
     expect("idle end: " + name, got == expected, "got \(got), wanted \(expected)")
 }
 
@@ -57,10 +57,16 @@ ended("an unopened session idle for 10 minutes", turn(.waiting, since: 0), at: 6
 ended("not yet", turn(.waiting, since: 0), at: 599, is: false)
 ended("one that stopped on an error", turn(.failed, since: 0), at: 700, is: true)
 ended("a working one is left to finish", turn(.working, since: 0), at: 9000, is: false)
-ended("one waiting on the user is left", turn(.question, since: 0), at: 9000, is: false)
-ended("one with background work is left", turn(.background, since: 0), at: 9000, is: false)
+ended("one asking a question is ended after 10 minutes", turn(.question, since: 0), at: 600, is: true)
+ended("one asking a question is not ended before", turn(.question, since: 0), at: 599, is: false)
+ended("one waiting on a permission, plan or input", turn(.permission, since: 0), at: 9000, is: true)
+ended("a plan", turn(.plan, since: 0), at: 9000, is: true)
+ended("an input", turn(.input, since: 0), at: 9000, is: true)
+ended("one with background work", turn(.background, since: 0), at: 600, is: true)
 ended("one the user opened is never ended", turn(.waiting, since: 0), opened: true, at: 9000, is: false)
-ended("one with no known turn is left", nil, at: 9000, is: false)
+ended("one the user opened is never ended, whatever its turn", turn(.question, since: 0), opened: true, at: 9000, is: false)
+ended("one with no known turn, started 10 minutes ago", nil, at: 600, is: true)
+ended("one with no known turn, started a minute ago", nil, at: 60, is: false)
 
 // MARK: The hint
 
@@ -261,7 +267,10 @@ expect("search: a project", parsed(["query": "login bug", "project": "pantry"])?
 expect("search: a blank project is none", parsed(["query": "x", "project": "  "])?.project == nil)
 expect("search: no query", refusal(["project": "pantry"])?.hasPrefix("query is required") == true)
 expect("search: a blank query", refusal(["query": "   "])?.hasPrefix("query is required") == true)
-expect("search: a number as the query", refusal(["query": 42])?.hasPrefix("query is required") == true)
+expect("search: a number as the query", refusal(["query": 42]) == "query must be text, not a number or a boolean")
+expect("search: a boolean as the project", refusal(["query": "x", "project": true]) == "project must be text, not a number or a boolean")
+expect("search: a number as from", refusal(["query": "x", "from": 20261015]) == "from must be text, not a number or a boolean")
+expect("search: a number as to", refusal(["query": "x", "to": 1.5])?.hasPrefix("to must be text") == true)
 expect("search: an argument it doesn't take", refusal(["query": "x", "limit": 5])?.hasPrefix("limit is not an argument") == true)
 expect("search: a long query is cut", parsed(["query": String(repeating: "a", count: 900)])?.query.count == VoiceSession.maxRequestCharacters)
 let range = parsed(["query": "x", "from": "2026-10-15T09:00:00-07:00", "to": "2026-10-16T09:00:00-07:00"])
@@ -273,6 +282,21 @@ expect("search: only to starts at the epoch", parsed(["query": "x", "to": "2026-
 expect("search: no window without a time", parsed(["query": "x"])?.window(now: after(0)) == nil)
 expect("search: a time that isn't one", refusal(["query": "x", "from": "yesterday"])?.hasPrefix("from must be an ISO 8601 time") == true)
 expect("search: to before from", refusal(["query": "x", "from": "2026-10-16", "to": "2026-10-15"]) == "to is before from")
+
+// MARK: Claude Code's warning for skip-permissions mode
+
+func config(_ text: String?) -> URL {
+    let file = scratch.appendingPathComponent("config-\(UUID().uuidString).json")
+    if let text { try? text.write(to: file, atomically: true, encoding: .utf8) }
+    return file
+}
+
+expect("skip warning: accepted", ClaudeTrust.skipPermissionsAccepted(file: config(#"{"bypassPermissionsModeAccepted":true,"projects":{}}"#)) == true)
+expect("skip warning: not accepted", ClaudeTrust.skipPermissionsAccepted(file: config(#"{"bypassPermissionsModeAccepted":false}"#)) == false)
+expect("skip warning: no key", ClaudeTrust.skipPermissionsAccepted(file: config(#"{"projects":{}}"#)) == false)
+expect("skip warning: only that key, at the top", ClaudeTrust.skipPermissionsAccepted(file: config(#"{"projects":{"/x":{"bypassPermissionsModeAccepted":true}}}"#)) == false)
+expect("skip warning: no file", ClaudeTrust.skipPermissionsAccepted(file: config(nil)) == nil)
+expect("skip warning: unreadable", ClaudeTrust.skipPermissionsAccepted(file: config("not json")) == nil)
 
 // MARK: The hooks
 

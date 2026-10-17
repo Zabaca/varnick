@@ -247,7 +247,7 @@ enum PeerOpenTabs {
         // lists are automation runs only until slice 3 lists a Task's Runs there.
         // The voice session's hidden tab (option 09 of `listening-never-answers`) is left out the same way, until option 05 of
         // `phone-page-is-only-a-browser-tab` lists it.
-        let listable = hosted(in: state).filter { tab in !tab.layout.records.contains { ($0.taskRun != nil || $0.voice == true) && $0.runUnopened == true } }
+        let listable = hosted(in: state).filter { tab in !tab.layout.records.contains { ($0.taskRun != nil || $0.isVoice) && $0.runUnopened == true } }
         return listable.map { tab in
             // A run nobody opened is marked (protocol 29), as a headless host marks its own: the other Macs keep it out of their lists.
             let unopened = tab.layout.records.filter { $0.runUnopened == true }

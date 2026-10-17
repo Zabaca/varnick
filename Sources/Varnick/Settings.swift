@@ -1069,7 +1069,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.automationsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Voice session",
-                                       detail: "Every Hey Varnick request goes to a Claude Code session of yours in Home, out of sight until you open it, instead of Varnick's own steps. It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript as before, and its sessions are found by search like any session's. A question it asks you raises Needs you, and the session opens from its notice. Point at the screen, Answer from the web and the relevance filter's part in a spoken request aren't used while it's on. Needs Hey Varnick, Keep sessions running and Claude Code logged in. Experimental.") {
+                                       detail: "Every Hey Varnick request goes to a Claude Code session of yours in Home, out of sight until you open it, instead of Varnick's own steps. It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript as before, and its sessions are found by search like any session's. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. Point at the screen, Answer from the web and the relevance filter's part in a spoken request aren't used while it's on. Needs Hey Varnick, Keep sessions running and Claude Code logged in. Experimental.") {
                                 VStack(alignment: .trailing, spacing: 4) {
                                     if let need = voiceSessionNeed {
                                         Text(need).font(.system(size: 12)).foregroundStyle(.orange)
@@ -1095,7 +1095,7 @@ struct SettingsView: View {
         // Models and Listening show whether Claude Code is found and logged in (a local check, nothing sent), as they appear and when it is
         // chosen. Listening shows it for Answer from the web too, whichever Text generation is on.
         .task(id: "\(sectionID) \(settings.textGenerationRunOn.rawValue)") {
-            guard section == .listening || section == .experimental || (settings.textGenerationRunOn == .claude && section == .models) else { return }
+            guard section == .listening || (section == .experimental && settings.voiceSessionOn) || (settings.textGenerationRunOn == .claude && section == .models) else { return }
             await claudeCode.prepareForUse()
         }
     }
@@ -1161,6 +1161,9 @@ struct SettingsView: View {
         if !settings.keepSessionsRunning { return "Needs Keep sessions running" }
         if !Zmx.isAvailable { return "Needs zmx: build with make" }
         if !claudeCode.loginPassed { return "Needs Claude Code: open a Claude pane and log in" }
+        if ClaudeTrust.skipPermissionsAccepted() == false {
+            return "Needs skip-permissions mode accepted: run claude --dangerously-skip-permissions once in a pane and accept"
+        }
         return nil
     }
 

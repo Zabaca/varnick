@@ -191,7 +191,7 @@ check-engine:
 
 # The voice session's pure seams (`VoiceSession`, Packages/VarnickPeer; option 09 of listening-never-answers) over a table of cases: which session takes
 # a request, the hint, what is typed in, the reply's cleaning, the Stop input's reading, a request's events and the search tool's arguments. No
-# Varnick, no zmx, no claude and no network; the two files it reads are written in a scratch folder. Built the same way as check-slots.
+# Varnick, no zmx, no claude and no network; its one file, a transcript, is written in a scratch folder. Built the same way as check-slots.
 check-voice:
 	@swift run --package-path Packages/VarnickPeer voice-check
 

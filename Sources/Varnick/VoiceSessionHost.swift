@@ -41,6 +41,10 @@ final class VoiceSessionHost: ObservableObject {
         case off
         /// Keep sessions running is off or zmx is missing.
         case needsKeepSessions
+        /// Claude Code's one-time warning for skip-permissions mode isn't accepted: a hidden session would stop at it.
+        case needsSkipAccepted
+        /// Claude Code isn't logged in: the session would stop at its login.
+        case notLoggedIn
         /// A request of a surface is already in flight to the session.
         case busy
         /// The session could not be started; the reason is for the log's kind, never spoken.
@@ -72,7 +76,7 @@ final class VoiceSessionHost: ObservableObject {
 
     /// The voice session's panes on this Mac, newest first.
     private var panes: [ClaudeSession] {
-        (model?.tabs.flatMap(\.sessions) ?? []).filter { $0.isClaude && $0.record.voice == true && !$0.isOnPeer }
+        (model?.tabs.flatMap(\.sessions) ?? []).filter { $0.isClaude && $0.record.isVoice && !$0.isOnPeer }
             .sorted { $0.record.startedAt > $1.record.startedAt }
     }
 
@@ -105,6 +109,8 @@ final class VoiceSessionHost: ObservableObject {
     private func run(_ request: String, device: VoiceHint.Device, _ out: AsyncStream<Update>.Continuation) async {
         guard let model, Settings.shared.voiceSessionOn else { out.yield(.refused(.off)); return }
         guard Zmx.isEnabled else { out.yield(.refused(.needsKeepSessions)); return }
+        guard ClaudeTrust.skipPermissionsAccepted() != false else { out.yield(.refused(.needsSkipAccepted)); return }
+        guard model.textGeneration.claude.loginPassed else { out.yield(.refused(.notLoggedIn)); return }
         let now = Date()
         var current = held.flatMap { model.claudePane($0.pane) }
         // A session whose process is gone (a reboot, a kill) is no session; its leftover is cleared and a new one starts.
@@ -135,7 +141,9 @@ final class VoiceSessionHost: ObservableObject {
             sent = Date()
             let pasted = await Task.detached(priority: .userInitiated) { Zmx.paste(line, into: id) }.value
             guard pasted else {
+                // A session zmx can't type into is stuck or gone: an unopened one is ended, and the next request starts fresh.
                 inFlight = nil
+                if !isOpened(pane) { endPane(pane) }
                 out.yield(.refused(.notSent))
                 return
             }
@@ -147,6 +155,8 @@ final class VoiceSessionHost: ObservableObject {
             case .success(let started):
                 (id, sent) = started
                 why = reason
+                // The new session is the voice session: an unopened old one is ended, whatever it was doing (option 09).
+                for old in panes where old.id != id && !isOpened(old) { endPane(old) }
             }
         }
         defer {
@@ -160,7 +170,8 @@ final class VoiceSessionHost: ObservableObject {
         var notTaken = false
         while !Task.isCancelled && !watch.finished {
             try? await Task.sleep(for: Self.pollEvery)
-            guard !Task.isCancelled else { return }
+            // The switch was turned off meanwhile (which ends the session): the request ends quietly, with no failure line.
+            guard !Task.isCancelled, Settings.shared.voiceSessionOn else { return }
             for event in watch.observe(observation(of: id, sent: sent, taken: watch.takenAt)) {
                 if case .answered = event { answered.insert(id) }
                 if case .failed(.notTaken) = event { notTaken = true }
@@ -224,13 +235,13 @@ final class VoiceSessionHost: ObservableObject {
     /// Whether the turn that just ended raises no Done: a surface is waiting on it, or took its answer, since the answer was spoken. A turn that
     /// went past the deadline raises Done when it finishes; Needs you and messages are raised as for any pane.
     func suppressesDone(_ pane: ClaudeSession) -> Bool {
-        pane.record.voice == true && (inFlight == pane.id || answered.contains(pane.id))
+        pane.record.isVoice && (inFlight == pane.id || answered.contains(pane.id))
     }
 
     // MARK: Ending
 
-    /// The tick: an unopened session whose turn ended 10 minutes ago is ended, as is one whose process is gone. A working one is left to finish; one
-    /// the user opened is an ordinary tab, never ended here.
+    /// The tick: an unopened session in any state but working 10 minutes after its turn last changed is ended, as is one whose process is gone. A
+    /// working one is left to finish; one the user opened is an ordinary session (it has lost its mark), never ended here.
     private func tidy(now: Date = Date()) {
         guard let model else { return }
         for pane in panes where !isOpened(pane) && inFlight != pane.id {
@@ -244,7 +255,7 @@ final class VoiceSessionHost: ObservableObject {
                 continue
             }
             if !pane.readsOwnTurn { pane.checkTurn() }
-            if VoiceSession.idleEnded(turn: pane.turn, opened: false, now: now) { endPane(pane) }
+            if VoiceSession.idleEnded(turn: pane.turn, startedAt: pane.record.startedAt, opened: false, now: now) { endPane(pane) }
         }
         answered = answered.filter { id in panes.contains { $0.id == id } }
         refreshGoing()

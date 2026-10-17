@@ -85,6 +85,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// the record's `skipPermissions` carries. Its tab is hidden while `runUnopened`, as a run's is. Optional so older records load, and an older
     /// build reads it as an ordinary pane.
     var voice: Bool?
+    var isVoice: Bool { voice == true }
 
     /// A run of an automation or a step of a Task's Run: its MCP server lists `notify` (and a step's `task_result`) alone, whatever the switches say.
     var isRun: Bool { automation != nil || taskRun != nil }

@@ -2550,7 +2550,7 @@ final class LauncherModel: ObservableObject {
             return
         }
         // The voice session nobody opened ends with its tab alone: it is no one's to resume, and its conversation is a session like any other.
-        if tab.isHiddenRun, session.record.voice == true {
+        if tab.isHiddenRun, session.record.isVoice {
             if !tab.remove(session, focusing: false) {
                 closing[tab.id] = nil
                 tabs.remove(at: index)

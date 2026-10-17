@@ -622,7 +622,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let isRun = record.isRun
         let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
         // The voice session (option 09 of `listening-never-answers`) has a pane's full set and the search tool, and two more hooks.
-        let isVoice = record.voice == true
+        let isVoice = record.isVoice
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
@@ -1534,7 +1534,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// A run nobody had opened is shown or taken over: its tab is an ordinary one from now on (`LauncherModel.runOpened`).
-    func markRunOpened() { record.runUnopened = nil }
+    func markRunOpened() {
+        record.runUnopened = nil
+        // The voice session the user opens is theirs (option 09 of `listening-never-answers`): at its next start or resume it has no search tool, no voice
+        // hooks and follows this Mac's Skip permissions, like any session.
+        if record.isVoice {
+            record.voice = nil
+            record.skipPermissions = nil
+        }
+    }
 
     /// A view of a run a headless host started for this Mac (`LauncherModel.adoptHostRuns`): marked as the automation's, and unopened, so the hidden-tab
     /// rule keeps its tab out of sight until it is opened.
