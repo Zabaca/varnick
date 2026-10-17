@@ -134,6 +134,8 @@ final class PanelAccess {
     func noteKey(_ event: NSEvent) {
         if isPosted(event) { return }
         lastKey = .now
+        // A key typed with a tab showing goes to its focused pane: if a session opened that pane, it is the user's now.
+        if let model = PeerManager.shared.model, model.showsTerminal, let pane = model.activeTab?.focused { model.userTook(pane) }
     }
 
     /// Whether `keys` made this key (or the copy `postEvent` hands on), by its stamp.
@@ -226,7 +228,7 @@ final class PanelAccess {
             guard let request = PeerJSON.decode(PanelRequest.self, from: line) else { throw PanelRefusal.unreadable }
             tool = PanelMCP.names.contains(request.tool) || PaneMCP.names.contains(request.tool) ? request.tool : "-"
             // The kind of pane asked for, from the fixed list: never the arguments' own words.
-            if PaneMCP.names.contains(request.tool), let asked = request.args["kind"]?.lowercased(), PaneMCP.kinds.contains(asked) { action = " " + asked }
+            if PaneMCP.names.contains(request.tool), let asked = OpenedPaneKind(rawValue: (request.args["kind"] ?? "").lowercased()) { action = " " + asked.rawValue }
             let done = try await run(request, arrived: arrived)
             action = done.action.map { " " + $0 } ?? ""
             // Counts only: the lines of the reply, never what they say.

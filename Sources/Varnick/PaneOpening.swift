@@ -21,44 +21,44 @@ extension PanelAccess {
         if let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
         switch request.tool {
         case PaneMCP.open: return try open(request.args, model, tab: tab, caller: session)
-        default: return try close(request.args, model, tab: tab, caller: session)
+        case PaneMCP.close: return try close(request.args, model, tab: tab, caller: session)
+        default: throw PanelRefusal.unknownTool(request.tool)
         }
     }
 
     // MARK: pane_open
 
     private func open(_ args: PanelArguments, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession) throws -> Answered {
-        guard let kind = args["kind"]?.trimmingCharacters(in: .whitespaces).lowercased(), PaneMCP.kinds.contains(kind) else {
-            throw PanelRefusal.bad("kind is one of: " + PaneMCP.kinds.joined(separator: ", "))
+        guard let kind = OpenedPaneKind(rawValue: (args["kind"] ?? "").trimmingCharacters(in: .whitespaces).lowercased()) else {
+            throw PanelRefusal.bad("kind is one of: " + OpenedPaneKind.allCases.map(\.rawValue).joined(separator: ", "))
         }
-        let place = (args["place"] ?? "beside").trimmingCharacters(in: .whitespaces).lowercased()
-        guard place == "beside" || place == "below" else { throw PanelRefusal.bad("place is beside or below") }
-        let axis: SplitAxis = place == "below" ? .stacked : .sideBySide
+        guard let place = OpenedPanePlace(rawValue: (args["place"] ?? "beside").trimmingCharacters(in: .whitespaces).lowercased()) else {
+            throw PanelRefusal.bad("place is one of: " + OpenedPanePlace.allCases.map(\.rawValue).joined(separator: ", "))
+        }
 
         let home = caller.record.directory
         let project = Project.root(of: home)
-        let starts = kind == "terminal" || kind == "claude"
-        var record = SessionRecord(id: UUID(), prompt: kind == "claude" ? try Self.prompt(args) : "", title: "",
+        let starts = kind == .terminal || kind == .claude
+        var record = SessionRecord(id: UUID(), prompt: kind == .claude ? try Self.prompt(args) : "", title: "",
                                    directory: starts ? try Self.folder(args, home: home, project: project) : home, startedAt: Date(), lastUsed: Date())
         record.openedBy = caller.id
         var app: CustomApp?
 
         switch kind {
-        case "terminal", "claude":
-            if kind == "terminal" {
-                record.shell = true
-            } else {
-                if let agent = args["agent"]?.trimmingCharacters(in: .whitespaces), !agent.isEmpty {
-                    let found = Agent.available(in: record.directory).map(\.name)
-                    guard found.contains(agent) else {
-                        throw PanelRefusal.bad("No such agent in that folder. " + (found.isEmpty ? "None is found there." : "These are: " + found.joined(separator: ", ")))
-                    }
-                    record.agent = agent
+        case .terminal:
+            record.shell = true
+        case .claude:
+            if let agent = args["agent"]?.trimmingCharacters(in: .whitespaces), !agent.isEmpty {
+                let found = Agent.available(in: record.directory).map(\.name)
+                guard found.contains(agent) else {
+                    throw PanelRefusal.bad("No such agent in that folder. " + (found.isEmpty ? "None is found there." : "These are: " + found.joined(separator: ", ")))
                 }
-                // Never more than the session that opens it: Skip permissions only while the setting is on and this session skips them too.
-                record.skipPermissions = Settings.shared.skipPermissions && caller.startedSkippingPermissions
+                record.agent = agent
             }
-        case "app":
+            // Skip permissions only while the setting is on and this session was started skipping them too. Saved as false when not, so a later
+            // change of the setting never makes the helper skip; nil when yes, so it follows the setting (where-it-breaks, Panel access).
+            record.skipPermissions = Settings.shared.skipPermissions && caller.record.skippedAtStart == true ? nil : false
+        case .app:
             let wanted = (args["app"] ?? "").trimmingCharacters(in: .whitespaces)
             let apps = CustomApp.available(from: home)
             guard !wanted.isEmpty, let found = apps.first(where: { $0.folderName.lowercased() == wanted.lowercased() })
@@ -71,28 +71,29 @@ extension PanelAccess {
             let port = CustomApp.freePort()
             record.appPort = port
             record.url = CustomApp.serverURL(port: port)
-        case "page":
+        case .page:
             guard let url = ClaudeSession.httpURL(from: args["url"] ?? "") else { throw PanelRefusal.bad("url must be an http or https address") }
             record.url = url.absoluteString
-        default:
+        case .file:
             guard let path = args["path"]?.trimmingCharacters(in: .whitespaces), !path.isEmpty else { throw PanelRefusal.bad("A file needs a path") }
             guard PeerFile.isInside(path, folders: [project]) else { throw PanelRefusal.bad("That file is outside this session's project") }
-            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
             guard (try? FileManager.default.attributesOfItem(atPath: resolved))?[.type] as? FileAttributeType == .typeRegular else {
                 throw PanelRefusal.bad("That isn't a file")
             }
-            // Already open in this tab: it is shown, not opened again, and it was not opened by this call.
-            if let open = tab.sessions.first(where: { $0.record.file == path }) {
-                return Answered(text: "\(id(for: open.id, caller: caller.id)) is that file, already open in this tab. Nothing was opened.", action: kind)
+            // Already open in this tab (by the path as it resolves): reported, not opened again, and not this call's to close.
+            if let open = tab.sessions.first(where: { $0.record.file.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path } == resolved }) {
+                return Answered(text: "\(id(for: open.id, caller: caller.id)) is that file, already open in this tab. Nothing was opened.", action: kind.rawValue)
             }
             record.file = path
-            record.directory = tab.files.root
+            // The tree's folder is empty until the tree has been shown, so the project stands in for it.
+            record.directory = project
         }
 
-        let pane = model.addPane(record, app: app, beside: caller, in: tab, axis: axis)
+        let pane = model.addPane(record, app: app, beside: caller, in: tab, axis: place.axis)
         let hidden = SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab."
-        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place) this pane. It is not focused: focus and the panel are as they were.\(hidden)",
-                        action: kind)
+        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(hidden)",
+                        action: kind.rawValue)
     }
 
     /// The folder asked for, or the session's own: absolute, an existing folder, and this session's project or inside it.
@@ -107,7 +108,7 @@ extension PanelAccess {
 
     private static func prompt(_ args: PanelArguments) throws -> String {
         let text = args["prompt"] ?? ""
-        guard text.count <= longestPrompt else { throw PanelRefusal.bad("prompt is at most \(longestPrompt) characters") }
+        guard text.utf8.count <= longestPrompt else { throw PanelRefusal.bad("prompt is at most \(longestPrompt) bytes") }
         return text
     }
 

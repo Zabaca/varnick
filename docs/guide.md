@@ -358,9 +358,10 @@ restart while both are on two more tools. `pane_open` opens a terminal (empty: n
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude
-subscription, shows on the board and raises notices like any pane, and skips permission checks only while Skip permissions is
-on and the session that opened it skips them too. `pane_close` closes a pane that session opened, as ⌘W would, until you
-first focus it: after that it is yours. Neither works in a tab another Mac or a device controls. Nothing new is read.
+subscription, shows on the board and raises notices like any pane. **It follows your Skip permissions setting, but never skips
+permission checks when the session that opened it was started without skipping them.** `pane_close` closes a pane that session
+opened, as ⌘W would, until you first click, type in or focus it: after that it is yours. Neither works in a tab another Mac or
+a device controls. Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows

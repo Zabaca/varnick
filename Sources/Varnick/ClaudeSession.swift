@@ -171,14 +171,14 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Called when a close the user asked for won't happen: the question was answered No, the pane was
     /// taken over or went live again, or the card it was waiting to ask on never showed.
     var onKept: () -> Void = {}
-    /// Whether this pane's claude was last started skipping permissions, as `launchClaude` decided; kept in memory only. `pane_open` gives a new
-    /// Claude pane Skip permissions only while the setting is on and this is true (option 01 of `panes-open-only-by-hand-at-a-mac`).
-    private(set) var startedSkippingPermissions = false
+    /// The record has something new to save that no tab change carries (`launchClaude` recording how it started).
+    var onRecordChange: () -> Void = {}
 
-    /// The user focused this pane, so a session that opened it may no longer close it (`pane_close`).
-    func becameUsers() {
-        guard record.openedBy != nil else { return }
+    /// The user took this pane, so the session that opened it may no longer close it. True when it was one a session opened.
+    func clearOpenedBy() -> Bool {
+        guard record.openedBy != nil else { return false }
         record.openedBy = nil
+        return true
     }
 
     /// A pane the host starts for a peer's `start` request: the peer's id, which the zmx session
@@ -597,7 +597,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// pane resumed it to begin with.
     private func launchClaude(restarting: Bool = false) {
         let skipsPermissions = record.skipPermissions ?? Settings.shared.skipPermissions
-        startedSkippingPermissions = skipsPermissions
+        if record.skippedAtStart != skipsPermissions {
+            record.skippedAtStart = skipsPermissions
+            onRecordChange()
+        }
         // The hook's `cat >` fails into a missing folder.
         try? FileManager.default.createDirectory(at: PaneFolder.url(for: record.id), withIntermediateDirectories: true)
         // A switch the last run reported but never got to read (killed within a poll) is

@@ -428,9 +428,8 @@ enum ScreenMCP {
                 let decoded = arguments.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                     .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
                 reply = ask(requestLine(pane: pane, tool: name, arguments: decoded))
-            } else if sets.contains(.panel), PanelMCP.names.contains(name) {
-                reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
-            } else if sets.contains(.panes), PaneMCP.names.contains(name) {
+            } else if (sets.contains(.panel) && PanelMCP.names.contains(name)) || (sets.contains(.panes) && PaneMCP.names.contains(name)) {
+                // The pane tools travel as Panel access's request.
                 reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.automations), AutomationMCP.names.contains(name) {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))

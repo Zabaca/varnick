@@ -92,6 +92,6 @@ Panel access began as read and show: nothing a session called added or closed a 
 
 - **What they do.** A session opens a terminal, a Claude session with a first message, a custom app, a page or a file beside its own pane, in its own tab on this Mac, and closes the panes it opened until the user first focuses one. Focus stays where it was, the panel is never raised, and nothing limits how many panes are opened (the user's choices).
 - **Same route, no new request.** The calls are Panel access's request with new tool names, answered by its router after its own checks and then the switch of their own, the tab's lock and the hidden tab. Both switches are read at every call.
-- **No more power than the caller has.** A new Claude pane skips permission checks only while Skip permissions is on and the calling session was started skipping them; with the caller asking, Claude Code asks before each call. A terminal opens empty: nothing is typed into it, so a command still runs in Claude's own Bash, under its permission checks.
+- **Permissions.** A new Claude pane never skips permission checks when the calling session does not (the rule is in the guide, Panel access). What the tools do not promise, among them that `kind: app` runs a custom app's code outside Claude Code's checks, is in where-it-breaks, Panel access.
 - **This Mac's own tabs only.** A tab another Mac or a device controls, a headless host, and the voice session's hidden tab are refused.
-- **Privacy.** Nothing new is read. The log holds the tool, the kind, the outcome and the time.
+- **Privacy.** The tools read nothing that Panel access does not already; the log holds the tool, the kind, the outcome and the time.
