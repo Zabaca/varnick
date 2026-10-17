@@ -116,3 +116,15 @@ const unreachable = (pane, where) => `${where} ${pane.proxyNote ? `It can't be s
 
 /** Whether Take over is offered for the tab: something in it runs, and this phone isn't in control of it. */
 export const offersTake = (tab) => tab.panes.some(isOpenable) && !tab.mine;
+
+/** Whether Add pane is offered for the tab: this phone is in control of it, and it has a pane to put the new one beside (option 03 of panes-open-only-by-hand-at-a-mac). */
+export const offersAdd = (tab) => tab.mine === true && tab.panes.length > 0;
+
+/** Whether the switcher is drawn: with more than one pane, and with one when Add pane is its button. */
+export const showsSwitcher = (tab) => tab.panes.length > 1 || offersAdd(tab);
+
+/** The pane a new session is: the session's name is `varnick-` and the pane's id. Null for any other name. */
+export function paneOfSession(session) {
+  const match = /^varnick-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(session);
+  return match ? match[1] : null;
+}

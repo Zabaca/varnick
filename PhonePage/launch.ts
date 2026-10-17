@@ -3,7 +3,7 @@
 // relay as a seam (`Asker`), so `bun test` runs them against a fake.
 
 import type { Device } from "./checks";
-import { optional, same, type RelayResult } from "./home";
+import { optional, same, shapeTab, type HomePane, type HomeTab, type RelayResult } from "./home";
 import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
 import { launchTimeoutMs, reopenTimeoutMs } from "./relay";
@@ -57,6 +57,12 @@ export interface StartAsk {
 export function parseStartBody(body: unknown): Parsed<StartAsk> {
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
   if (!isFolder(body.folder)) return refuse("Pick a project");
+  const claude = readClaude(body);
+  return claude.ok ? { ok: true, value: { folder: body.folder, ...claude.value } } : claude;
+}
+
+/** The agent and the prompt of a request for a Claude session: what a start and a split read alike. */
+function readClaude(body: Record<string, unknown>): Parsed<{ agent: string | null; prompt: string }> {
   const agent = body.agent === undefined || body.agent === null || body.agent === "" ? null : body.agent;
   if (agent !== null && !isAgentName(agent)) return refuse("That isn't an agent's name");
   const prompt = body.prompt === undefined || body.prompt === null ? "" : body.prompt;
@@ -64,7 +70,36 @@ export function parseStartBody(body: unknown): Parsed<StartAsk> {
   if (controls.test(prompt)) return refuse("The prompt has a control character in it");
   if (Buffer.byteLength(JSON.stringify(prompt), "utf8") > promptLimitBytes) return refuse("The prompt is too long (newlines and quotes count double)");
   if (prompt.startsWith("-")) return refuse("A prompt can't start with a dash: begin it with a word");
-  return { ok: true, value: { folder: body.folder, agent, prompt } };
+  return { ok: true, value: { agent, prompt } };
+}
+
+export interface SplitAsk {
+  /** The tab and the pane of it the new pane goes beside: lowercase ids. */
+  tab: string;
+  pane: string;
+  kind: "claude" | "terminal";
+  agent: string | null;
+  prompt: string;
+}
+
+/**
+ * `POST /api/split`'s body: the tab, the pane shown, the kind (`claude` or `terminal`) and for Claude the agent and the prompt. No folder:
+ * the host takes the split pane's. A terminal has no agent or prompt, and one sent is refused rather than dropped. Nothing else is read.
+ */
+export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
+  if (!isObject(body)) return refuse("The request wasn't a JSON object");
+  if (typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
+  if (typeof body.pane !== "string" || !uuidPattern.test(body.pane)) return refuse("That isn't a pane id");
+  const tab = body.tab.toLowerCase();
+  const pane = body.pane.toLowerCase();
+  if (body.kind === "terminal") {
+    const given = (value: unknown): boolean => value !== undefined && value !== null && value !== "";
+    if (given(body.agent) || given(body.prompt)) return refuse("A terminal takes no agent or prompt");
+    return { ok: true, value: { tab, pane, kind: "terminal", agent: null, prompt: "" } };
+  }
+  if (body.kind !== "claude") return refuse("Add Claude or a terminal");
+  const claude = readClaude(body);
+  return claude.ok ? { ok: true, value: { tab, pane, kind: "claude", ...claude.value } } : claude;
 }
 
 /** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
@@ -180,6 +215,60 @@ export async function startSession(asker: Asker, device: Device, host: string, a
   if (started.ok) return { status: 200, body: { ok: true, session, tab: optional(started.reply.tab)?.toLowerCase() ?? null } };
   // A start whose answer was lost: the session may be there, and its tab is not known, so the page opens the session alone.
   if (await isRunning(asker, device, session)) return { status: 200, body: { ok: true, session, tab: null } };
+  return failed(502, started.error);
+}
+
+/** The pane to split, in the tab the host lists, when this phone is in control of the tab and the tab has the pane. */
+async function splittable(asker: Asker, device: Device, host: string, tab: string, pane: string): Promise<{ tab: HomeTab; pane: HomePane } | Launched> {
+  const tabs = await asker.ask("tabs", device.id);
+  if (!tabs.ok) return failed(502, tabs.error);
+  const raw = findTab(tabs, tab);
+  const shaped = raw ? shapeTab(raw, device) : null;
+  if (!shaped) return failed(404, `That tab isn't open on ${host} any more`);
+  if (!shaped.mine) return failed(409, "This phone isn't in control of that tab: take it over first");
+  const found = shaped.panes.find((candidate) => candidate.id === pane);
+  return found ? { tab: shaped, pane: found } : failed(400, "That pane isn't in that tab");
+}
+
+/**
+ * The folder a pane's agents are read from: the pane's own, else the first pane of the tab that has one (a page or a file has none). The host
+ * lists it, never the page, and it needn't be one of the host's projects: it may be a worktree or Home.
+ */
+const folderOf = (tab: HomeTab, pane: HomePane): string | null =>
+  isFolder(pane.folder) ? pane.folder : tab.panes.find((candidate) => isFolder(candidate.folder))?.folder ?? null;
+
+/** `GET /api/split-agents`: the agents of the folder of a pane of a tab this phone controls, for the chips of Add pane. */
+export async function splitAgents(asker: Asker, device: Device, host: string, tab: string, pane: string): Promise<{ status: number; body: Json }> {
+  const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
+  if ("body" in found) return found;
+  const folder = folderOf(found.tab, found.pane);
+  if (folder === null) return { status: 200, body: { ok: true, folder: null, agents: [] } };
+  const agents = shapeAgents(await asker.ask("agents", device.id, { folder }));
+  return "error" in agents ? { status: 502, body: { ok: false, error: agents.error } } : { status: 200, body: { ok: true, folder: agents.folder, agents: agents.rows } };
+}
+
+/**
+ * Add a Claude session or a terminal beside a pane of a tab this phone controls (option 03 of panes-open-only-by-hand-at-a-mac): the `start` a
+ * Mac sends for a split of another machine's tab, naming the tab, the pane and the axis, with no folder (the host takes the split pane's). The
+ * server picks the id and sends no `skipPermissions`, as a start does. The host's own check of who controls the tab holds whatever this says.
+ * The answer names the tab asked for: it is the same tab, whether or not the host's reply came.
+ */
+export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string): Promise<Launched> {
+  const found = await splittable(asker, device, host, ask.tab, ask.pane);
+  if ("body" in found) return found;
+  if (ask.agent !== null) {
+    const folder = folderOf(found.tab, found.pane);
+    const known = folder === null ? { rows: [] as AgentRow[] } : shapeAgents(await asker.ask("agents", device.id, { folder }));
+    if ("error" in known) return failed(502, known.error);
+    if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of that pane's folder on ${host}`);
+  }
+  const id = newID();
+  const session = sessionNameFor(id);
+  const start: Json = { id, prompt: ask.prompt, kind: ask.kind };
+  if (ask.agent !== null) start.agent = ask.agent;
+  const started = await asker.ask("start", device.id, { start, tab: ask.tab, pane: ask.pane, axis: "sideBySide" }, launchTimeoutMs);
+  // A start whose answer was lost may have made the pane: a running session is a success, or a second tap would add another.
+  if (started.ok || (await isRunning(asker, device, session))) return { status: 200, body: { ok: true, session, tab: ask.tab } };
   return failed(502, started.error);
 }
 

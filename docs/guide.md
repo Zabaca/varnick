@@ -188,6 +188,11 @@ A session's screen draws itself again by itself when the phone rotates, the wind
 is still blank or half drawn, **Redraw**, beside End in the session's header, throws the screen away, fits it to the phone and has the host send it again (a
 terminal you control attaches again; a screen you are watching opens again). It types nothing and changes nothing about who controls the session.
 
+A tab shows one pane at a time, with a switcher between its panes. While the phone is in control of the tab, the switcher ends in **+** (Add pane), also on a
+tab of one pane: it adds a Claude session (with an agent of the shown pane's folder and a prompt, both optional) or a terminal beside the pane you are
+looking at, and opens it. On the host the new pane sits beside that pane. On a tab you left on the Mac there is no +: Take over first, which detaches the Mac.
+Pages, apps and files can't be added from the phone.
+
 The page can also notify the phone. At the foot of the home page, Notifications has a switch (Turn on asks the phone's permission, from
 that tap; on an iPhone it needs the page added to the Home Screen first). Each host is its own app and its own switch. With it on, the phone
 gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, stops on an API error

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersTake, paneLabel, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersTake, paneLabel, paneOfSession, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
 
@@ -145,5 +145,25 @@ describe("what take and end may ask", () => {
     expect(parseEndBody({ tab: tab.toUpperCase(), session: `varnick-${a}` })).toEqual({ ok: true, fields: { tab } });
     expect(parseEndBody({ session: `varnick-${a}` })).toEqual({ ok: true, fields: { session: `varnick-${a}` } });
     for (const bad of [null, {}, { session: "varnick-x" }, { tab: "x" }, { tab: "x", session: `varnick-${a}` }]) expect(parseEndBody(bad)).toMatchObject({ ok: false });
+  });
+});
+
+describe("Add pane", () => {
+  test("is offered only on a tab this phone controls, with one pane or more", () => {
+    expect(offersAdd({ mine: true, panes: [claude(a)] })).toBe(true);
+    expect(offersAdd({ mine: true, panes: [claude(a), terminal(b)] })).toBe(true);
+    expect(offersAdd({ mine: false, panes: [claude(a), terminal(b)] })).toBe(false);
+    expect(offersAdd({ mine: true, panes: [] })).toBe(false);
+  });
+
+  test("a tab of one pane gets a switcher only for the button", () => {
+    expect(showsSwitcher({ mine: true, panes: [claude(a)] })).toBe(true);
+    expect(showsSwitcher({ mine: false, panes: [claude(a)] })).toBe(false);
+    expect(showsSwitcher({ mine: false, panes: [claude(a), terminal(b)] })).toBe(true);
+  });
+
+  test("the new pane is the session's id", () => {
+    expect(paneOfSession(`varnick-${a}`)).toBe(a);
+    for (const bad of [null, "", a, `varnick-x`, `varnick-${a}x`, `Varnick-${a}`]) expect(paneOfSession(bad as string)).toBeNull();
   });
 });
