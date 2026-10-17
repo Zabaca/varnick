@@ -2,7 +2,7 @@
 problem: panes-open-only-by-hand-at-a-mac
 title: The phone adds a Claude session or a terminal beside the pane it shows, in a tab it controls
 summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), with option 01. An Add pane button at the end of the tab's switcher, there while the phone is in control of the tab, opens a small form: Claude, with the folder's agents and a prompt as New session has them, or Terminal. The page server sends the host the `start` a Mac sends for a split, naming the tab, the pane shown and side by side. Protocol 30 has every field, and Mac and headless hosts already take it from a device in control, so there is no bump and no change to either host. The new pane becomes a switcher button and shows at once; on the host it sits beside that pane.
-status: accepted
+status: shipped
 ---
 
 ## Solution

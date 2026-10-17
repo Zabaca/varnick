@@ -571,6 +571,8 @@ $("take").addEventListener("click", async () => {
       s.error = result.error;
       return showNotice(s);
     }
+    // The tab view (tab.js) asks the host for the tab again, so it knows the phone is in control.
+    document.dispatchEvent(new Event("tab-taken"));
     return connect(s, false);
   }
   // `take` is true right after this press, or for a session just started or resumed (`openSession`): nowhere else.

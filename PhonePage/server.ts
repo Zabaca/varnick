@@ -17,7 +17,7 @@ import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseResumeBody, parseStartBody, reopenTab, shapeProjects, startSession } from "./launch";
+import { agentsOf, parseAgentsFolder, parseResumeBody, parseSplitBody, parseStartBody, reopenTab, shapeProjects, splitAgents, splitTab, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
@@ -235,6 +235,7 @@ async function main(): Promise<void> {
     "/live.js": { file: "page/live.js", type: js },
     "/liverules.js": { file: "page/liverules.js", type: js },
     "/new.js": { file: "page/new.js", type: js },
+    "/add.js": { file: "page/add.js", type: js },
     "/newrules.js": { file: "page/newrules.js", type: js },
     "/app.css": { file: "page/app.css", type: "text/css; charset=utf-8" },
     "/vendor/xterm.mjs": { file: "vendor/xterm.mjs", type: js },
@@ -366,7 +367,7 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
         && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
@@ -406,6 +407,13 @@ async function main(): Promise<void> {
         const ask = parseStartBody(body);
         if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
         const launched = await startSession(relay, device, host.name, ask.value, () => crypto.randomUUID());
+        return json(launched.body, launched.status);
+      }
+      // Add pane (option 03 of panes-open-only-by-hand-at-a-mac): a Claude session or a terminal beside a pane of a tab this phone controls.
+      if (path === "/api/split") {
+        const ask = parseSplitBody(body);
+        if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
+        const launched = await splitTab(relay, device, host.name, ask.value, () => crypto.randomUUID());
         return json(launched.body, launched.status);
       }
       const tab = parseResumeBody(body);
@@ -467,6 +475,14 @@ async function main(): Promise<void> {
     if (path === "/api/projects" && request.method === "GET") {
       const projects = shapeProjects(await relay.ask("projects", device.id));
       return "error" in projects ? json({ ok: false, error: projects.error }, 502) : json({ ok: true, host: host.name, projects: projects.rows });
+    }
+    if (path === "/api/split-agents" && request.method === "GET") {
+      const query = new URL(request.url).searchParams;
+      const tab = query.get("tab"), pane = query.get("pane");
+      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      // The folder is the pane's own as the host lists it, never the page's.
+      const agents = await splitAgents(relay, device, host.name, tab, pane);
+      return json(agents.body, agents.status);
     }
     if (path === "/api/agents" && request.method === "GET") {
       const folder = parseAgentsFolder(new URL(request.url).searchParams.get("folder"));

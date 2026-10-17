@@ -173,6 +173,27 @@
   </section>
 </div>
 
+<dialog id="add" aria-labelledby="add-title">
+  <p id="add-title" class="add-title">Add pane <span id="add-host" class="add-host"></span></p>
+  <div id="add-kinds" class="chips" role="group" aria-label="What to add">
+    <button type="button" class="chip" data-kind="claude" aria-pressed="true">Claude</button>
+    <button type="button" class="chip" data-kind="terminal" aria-pressed="false">Terminal</button>
+  </div>
+  <div id="add-claude">
+    <div id="add-agents-wrap" hidden>
+      <span class="field-label" id="add-agent-label">Agent</span>
+      <div id="add-agents" class="chips" role="group" aria-labelledby="add-agent-label"></div>
+    </div>
+    <label class="field-label" for="add-prompt">Prompt</label>
+    <textarea id="add-prompt" placeholder="What should Claude do? Optional." autocapitalize="sentences" rows="5"></textarea>
+  </div>
+  <p id="add-status" class="new-status" role="status" hidden></p>
+  <div class="card-actions">
+    <button id="add-cancel" type="button">Cancel</button>
+    <button id="add-go" type="button" class="primary">Add</button>
+  </div>
+</dialog>
+
 <dialog id="confirm">
   <form method="dialog">
     <p id="confirm-text"></p>

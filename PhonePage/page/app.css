@@ -82,6 +82,8 @@ body.in-session { max-width: none; padding: 0; height: var(--page-height, 100dvh
 button.pane-tab { display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-height: 44px; max-width: 12rem; padding: 4px 12px; text-align: left; }
 button.pane-tab[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 button.pane-tab.idle { opacity: .6; }
+/* Add pane, at the end of the switcher: a plus, as wide as a touch target needs. */
+button.pane-add { min-width: 44px; padding: 4px 12px; font-size: 22px; line-height: 1; position: sticky; right: 0; margin-left: 6px; box-shadow: -8px 0 0 var(--bg); }
 .pane-kind { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .pane-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 
@@ -136,6 +138,15 @@ button.danger { background: var(--warn); }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 16px; max-width: min(24rem, calc(100vw - 32px)); }
 dialog::backdrop { background: rgb(0 0 0 / .55); }
 dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
+
+/* Add pane: a dialog over the tab view. It scrolls inside the visible height, so the keyboard doesn't push its buttons off. */
+#add { width: calc(100vw - 32px); max-width: 32rem; max-height: calc(var(--page-height, 100dvh) - 24px); overflow-y: auto; overscroll-behavior: contain; }
+#add > * + * { margin-top: 8px; }
+#add p.add-title { margin: 0; font-weight: 600; }
+.add-host { font-weight: 400; color: var(--muted); font-size: 13px; }
+#add-prompt { font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; resize: none; }
+#add p.new-status { margin: 0; }
+#add .card-actions { justify-content: flex-end; }
 
 /* New session, and Resume on a Recent row. */
 a.button {
