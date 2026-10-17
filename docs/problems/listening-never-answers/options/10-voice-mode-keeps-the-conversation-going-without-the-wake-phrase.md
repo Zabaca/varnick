@@ -2,7 +2,7 @@
 problem: listening-never-answers
 title: Voice mode on a Mac, started by Hey Varnick or a key, sends every line the mic hears to the voice session until a minute after Varnick last spoke
 summary: Listening stays the always-on transcription it is. Voice mode is a state on top of it. "Hey Varnick" or a new global key (⌃⌥V to start with) turns it on. While it is on, every finished mic line is a request to the voice session with no wake phrase needed, and a leading "Hey Varnick" is dropped. It ends on the same key, on End Voice mode in the menu bar's menu, 60 s after Varnick last finished speaking with no new line from the user, when another app takes the microphone (a call), or when Claude calls an end tool because the user is done. The minute doesn't run while Varnick works or speaks. A sound marks entering and leaving, and the transcript gets "Voice mode on." and "Voice mode off." lines. The menu bar's Fold gets three states that read at a glance: off, listening and voice mode. This is for the voice session on a Mac only. Today's pipeline, now experimental, keeps one request per wake, and the phone's Voice mode keeps its Start and End. No protocol change.
-status: proposed
+status: accepted
 ---
 
 ## Solution
