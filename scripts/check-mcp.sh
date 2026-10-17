@@ -312,6 +312,39 @@ if searching:
     if schema.get("required") != ["query"] or set(properties) != {"query", "project", "from", "to"} or any(properties.get(name, {}).get("type") != "string" for name in properties):
         fail("search is %s: string query (required), project, from and to" % schema)
 
+# The pane tools (option 01 of panes-open-only-by-hand-at-a-mac): their own set, named by the app only while Panel access and Sessions can open panes are
+# on, and never for a run's session or the voice session's. Named alone it lists the two; with the others it comes last; with none named the server still
+# lists the screen tools alone. Their calls travel as Panel access's requests. NEVER call one of these tools here: with Varnick running, the call reaches
+# it and opens a real pane. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
+pane_tools = ["pane_open", "pane_close"]
+only_panes = listed(["--panes"])
+if only_panes != pane_tools:
+    fail("--panes lists %s, not pane_open and pane_close" % only_panes)
+if listed(["--screen", "--panel", "--panes"]) != screen + only_panel + pane_tools:
+    fail("--screen --panel --panes lists %s, not the screen tools, Panel access's and the pane tools" % listed(["--screen", "--panel", "--panes"]))
+if listed(["--notify", "--search", "--panes"]) != ["notify"] + voice_tools + pane_tools:
+    fail("--notify --search --panes lists %s, with the pane tools last" % listed(["--notify", "--search", "--panes"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search"]):
+    if set(listed(arguments)) & set(pane_tools):
+        fail("%s lists a pane tool" % arguments)
+for name in pane_tools:
+    if name in only_panel:
+        fail("Panel access's set lists %s: it belongs to --panes" % name)
+pane_described = {t["name"]: t for t in listed(["--panes"], full=True)}
+if all(name in pane_described for name in pane_tools):
+    open_schema = pane_described["pane_open"]["inputSchema"]
+    open_properties = open_schema.get("properties", {})
+    if open_schema.get("required") != ["kind"] or open_properties.get("kind", {}).get("enum") != ["terminal", "claude", "app", "page", "file"]:
+        fail("pane_open is %s: a required kind of terminal, claude, app, page or file" % open_schema)
+    for argument in ("folder", "prompt", "agent", "app", "url", "path", "place"):
+        if open_properties.get(argument, {}).get("type") != "string":
+            fail("pane_open takes no string %s" % argument)
+    if open_properties.get("place", {}).get("enum") != ["beside", "below"]:
+        fail("pane_open's place is %s, not beside or below" % open_properties.get("place"))
+    close_schema = pane_described["pane_close"]["inputSchema"]
+    if close_schema.get("required") != ["id"] or close_schema.get("properties", {}).get("id", {}).get("type") != "string":
+        fail("pane_close is %s: a required string id" % close_schema)
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
                         (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
@@ -320,7 +353,9 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look"),
                         ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
                         ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
-                        (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list")):
+                        (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list"),
+                        ([], "pane_open"), ([], "pane_close"), (["--panel"], "pane_open"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
+                        (["--search"], "pane_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))

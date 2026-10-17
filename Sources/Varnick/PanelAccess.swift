@@ -23,6 +23,8 @@ enum PanelRefusal: Error {
     case problemsOff
     /// The Outline switch (Settings › Experimental) is off.
     case outlineOff
+    /// Sessions can open panes (Settings › Claude) is off.
+    case panesOff
     /// The arguments are not ones the tool takes.
     case bad(String)
     /// The Outline can't be read from its file (unreadable, newer, or still loading); the message is the Outline's own reason.
@@ -47,6 +49,7 @@ enum PanelRefusal: Error {
         case .gone: "gone: read again"
         case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
         case .outlineOff: "The Outline is off: the user can turn it on in Settings › Experimental"
+        case .panesOff: "Sessions can open panes is off in Varnick's Settings › Claude"
         case .bad(let why): why
         case .outlineUnavailable(let why): why
         case .refused(let why): "Nothing was changed: \(why)"
@@ -74,6 +77,7 @@ enum PanelRefusal: Error {
         case .gone: "gone"
         case .problemsOff: "problems off"
         case .outlineOff: "outline off"
+        case .panesOff: "panes off"
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
         case .refused: "edit refused"
@@ -130,6 +134,8 @@ final class PanelAccess {
     func noteKey(_ event: NSEvent) {
         if isPosted(event) { return }
         lastKey = .now
+        // A key typed with a tab showing goes to its focused pane: if a session opened that pane, it is the user's now.
+        if let model = PeerManager.shared.model, model.showsTerminal, let pane = model.activeTab?.focused { model.userTook(pane) }
     }
 
     /// Whether `keys` made this key (or the copy `postEvent` hands on), by its stamp.
@@ -220,7 +226,9 @@ final class PanelAccess {
             guard let head = PeerJSON.decode(PanelRequestHead.self, from: line) else { throw PanelRefusal.unreadable }
             guard head.panel == PanelRequest.version else { throw PanelRefusal.versionDiffers }
             guard let request = PeerJSON.decode(PanelRequest.self, from: line) else { throw PanelRefusal.unreadable }
-            tool = PanelMCP.names.contains(request.tool) ? request.tool : "-"
+            tool = PanelMCP.names.contains(request.tool) || PaneMCP.names.contains(request.tool) ? request.tool : "-"
+            // The kind of pane asked for, from the fixed list: never the arguments' own words.
+            if PaneMCP.names.contains(request.tool), let asked = OpenedPaneKind(rawValue: (request.args["kind"] ?? "").lowercased()) { action = " " + asked.rawValue }
             let done = try await run(request, arrived: arrived)
             action = done.action.map { " " + $0 } ?? ""
             // Counts only: the lines of the reply, never what they say.
@@ -254,6 +262,7 @@ final class PanelAccess {
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
         prune(in: model)
+        if PaneMCP.names.contains(request.tool) { return try panes(request, model, caller: caller) }
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
         if request.tool == "show" {
             let (text, kind) = try show(request.args, model, caller: caller)
@@ -384,7 +393,9 @@ final class PanelAccess {
         if !visible, opensTab || model.showsTerminal {
             throw PanelRefusal.bad("The panel is hidden, and Varnick doesn't swap a terminal's tab under a hidden panel: ask the user to open the panel first")
         }
+        model.sessionIsChangingView = true
         act()
+        model.sessionIsChangingView = false
         let showing = Self.showingBlock(of: panelText(model, caller: caller)) ?? "Shown."
         return (showing + (visible ? "" : "\nThe panel is hidden, so this is there when the user opens it."), kind)
     }
@@ -473,6 +484,7 @@ final class PanelAccess {
             var marks: [String] = []
             if pane === tab.focused { marks.append("focused") }
             if pane.id == caller { marks.append("this session") }
+            if pane.record.openedBy == caller { marks.append("opened by this session") }
             lines.append("  \(id(for: pane.id, caller: caller)) \(Self.kindText(pane)) \"\(pane.label)\"" + (marks.isEmpty ? "" : " (\(marks.joined(separator: ", ")))"))
         }
         return lines

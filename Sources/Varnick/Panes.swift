@@ -466,9 +466,15 @@ final class ClaudeTab: ObservableObject {
 
     func contains(_ session: ClaudeSession) -> Bool { root.leaf(for: session) != nil }
 
+    /// Focus moved to this pane from another (`focus`): the model tells a pane a session opened that it is the user's now.
+    var onFocus: (ClaudeSession) -> Void = { _ in }
+
     func focus(_ session: ClaudeSession) {
         guard contains(session) else { return }
-        if focused !== session { focused = session }
+        if focused !== session {
+            focused = session
+            onFocus(session)
+        }
         DispatchQueue.main.async { session.focus() }
     }
 

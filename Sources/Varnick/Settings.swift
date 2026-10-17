@@ -211,6 +211,7 @@ final class Settings: ObservableObject {
     static let skipPermissionsKey = "skipPermissions"
     static let screenAccessKey = "screenAccess"
     static let panelAccessKey = "panelAccess"
+    static let sessionsOpenPanesKey = "sessionsOpenPanes"
     static let relevanceFilterOnKey = "relevanceFilterOn"
     static let relevanceFilterKey = "relevanceFilter"
     static let defaultFontSize: Double = 12.5
@@ -225,6 +226,10 @@ final class Settings: ObservableObject {
     /// through Varnick's own model, with no permission. Off until turned on; read at every call, so turning it off stops running sessions
     /// too. Independent of Screen access.
     @Published var panelAccess: Bool { didSet { defaults.set(panelAccess, forKey: Self.panelAccessKey) } }
+    /// Gives the Claude sessions started or restarted while it and Panel access are on `pane_open` and `pane_close` (`PaneOpening`): a terminal, a
+    /// Claude session, a custom app, a page or a file beside the session's own pane, and closing the ones it opened. Off until turned on; read at
+    /// every call together with Panel access, so turning either off stops running sessions too.
+    @Published var sessionsOpenPanes: Bool { didSet { defaults.set(sessionsOpenPanes, forKey: Self.sessionsOpenPanesKey) } }
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -432,6 +437,7 @@ final class Settings: ObservableObject {
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         panelAccess = defaults.bool(forKey: Self.panelAccessKey)
+        sessionsOpenPanes = defaults.bool(forKey: Self.sessionsOpenPanesKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
@@ -732,6 +738,11 @@ struct SettingsView: View {
                             SettingRow(title: "Panel access",
                                        detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. While the Outline is on (Settings › Experimental), they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
                                 Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Sessions can open panes",
+                                       detail: "Needs Panel access. Sessions started or restarted while both are on get tools to open a terminal, a Claude session, a custom app such as Scratch, a page or a file beside their own pane, and to close the panes they opened until you first click, type in or focus one. The new pane never takes the keyboard and the panel is never brought up. A Claude session they open draws on your Claude subscription and never skips permission checks when the session that opened it does not. A custom app they open runs its code, and a page loads with your cookies. Nothing limits how many panes they open. See the guide, Panel access.") {
+                                Toggle("", isOn: $settings.sessionsOpenPanes).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .disabled(!settings.panelAccess)
                             }
                             SettingRow(title: "Keep sessions running",
                                        detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {

@@ -245,12 +245,16 @@ enum ScreenMCP {
         static let taskResult = Sets(rawValue: 32)
         /// `search` (option 09 of `listening-never-answers`): History, Bookmarks and Claude sessions, listed for the voice session alone.
         static let voiceSearch = Sets(rawValue: 64)
+        /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`): in every Claude pane started while Panel access and Sessions can
+        /// open panes are on, a run's and the voice session's excepted. Their calls travel as Panel access's requests.
+        static let panes = Sets(rawValue: 128)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
         static let automationsArgument = "--automations"
         static let tasksArgument = "--tasks"
         static let voiceSearchArgument = "--search"
+        static let panesArgument = "--panes"
 
         /// With none named, the screen tools alone: a session started before Panel access keeps the tools it had.
         init(arguments: [String]) {
@@ -262,6 +266,7 @@ enum ScreenMCP {
             if arguments.contains(TaskResultTool.argument) { found.insert(.taskResult) }
             if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
             if arguments.contains(Self.voiceSearchArgument) { found.insert(.voiceSearch) }
+            if arguments.contains(Self.panesArgument) { found.insert(.panes) }
             self = found.isEmpty ? .screen : found
         }
 
@@ -272,12 +277,13 @@ enum ScreenMCP {
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
     /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
-                              voiceSearch: Bool = false) -> String {
+                              voiceSearch: Bool = false, panes: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
                                     + (automations ? [Sets.automationsArgument] : []) + (tasks ? [Sets.tasksArgument] : [])
-                                    + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : []))
+                                    + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : [])
+                                    + (panes ? [Sets.panesArgument] : []))
     }
 
     // MARK: The tools
@@ -393,7 +399,7 @@ enum ScreenMCP {
     // MARK: The server
 
     /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, the task tools, then `notify`,
-    /// `task_result` (which is listed only while the pane's folder holds a step's schema) and the voice session's `search`.
+    /// `task_result` (which is listed only while the pane's folder holds a step's schema), the voice session's `search` and the pane tools.
     static func tools(for sets: Sets, pane: UUID? = nil) -> [[String: Any]] {
         var listed: [[String: Any]] = []
         if sets.contains(.screen) { listed += tools }
@@ -403,6 +409,7 @@ enum ScreenMCP {
         if sets.contains(.notify) { listed.append(NotifyTool.tool) }
         if sets.contains(.taskResult), let pane { listed += TaskResultTool.tools(in: TaskResultTool.folder(for: pane)) }
         if sets.contains(.voiceSearch) { listed += VoiceSearchMCP.tools }
+        if sets.contains(.panes) { listed += PaneMCP.tools }
         return listed
     }
 
@@ -421,7 +428,8 @@ enum ScreenMCP {
                 let decoded = arguments.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                     .flatMap { try? JSONDecoder().decode(ScreenArguments.self, from: $0) } ?? ScreenArguments()
                 reply = ask(requestLine(pane: pane, tool: name, arguments: decoded))
-            } else if sets.contains(.panel), PanelMCP.names.contains(name) {
+            } else if (sets.contains(.panel) && PanelMCP.names.contains(name)) || (sets.contains(.panes) && PaneMCP.names.contains(name)) {
+                // The pane tools travel as Panel access's request.
                 reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.automations), AutomationMCP.names.contains(name) {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))

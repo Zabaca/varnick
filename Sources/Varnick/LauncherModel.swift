@@ -2234,6 +2234,7 @@ final class LauncherModel: ObservableObject {
     func focusPane(showing view: NSView) {
         guard let tab = activeTab, let session = tab.sessions.first(where: { $0.content === view }) else { return }
         tab.focus(session)
+        userTook(session)
     }
 
     private static func newRecord(prompt: String, directory: String) -> SessionRecord {
@@ -2260,6 +2261,8 @@ final class LauncherModel: ObservableObject {
             if let tab { self?.arrangeOnHost(tab) }
         }
         tab.layoutLock = { [weak self, weak tab] in tab.flatMap { self?.layoutLockReason(of: $0) } }
+        // The first time the user focuses a pane a session opened, it is theirs: `pane_close` refuses it from then on.
+        tab.onFocus = { [weak self] pane in self?.userTook(pane) }
         tab.onMove = { [weak self, weak tab] moved, change in
             if let self, let tab { self.movePane(moved, in: tab, change) }
         }
@@ -2296,6 +2299,7 @@ final class LauncherModel: ObservableObject {
             self.sessionExited(ended, code: code, query: prompt)
         }
         session.task?.model = self
+        session.onRecordChange = { [weak self] in self?.saveSessions() }
         session.onLabelChange = { [weak self] in
             self?.strip.refresh()
             self?.saveSessions()
@@ -3368,6 +3372,16 @@ final class LauncherModel: ObservableObject {
     /// New text size for every terminal (⌘= / ⌘- / ⌘0 and Settings).
     func applyFontSize(_ size: Double) {
         for tab in tabs { for session in tab.sessions { session.setFontSize(size) } }
+    }
+
+    /// True while a session's `show` changes the view (`PanelAccess`): a focus it moves is not the user's, so it does not make a pane the user's.
+    var sessionIsChangingView = false
+
+    /// The user focused, clicked or typed in `pane`: if a session opened it, it is theirs now and that session can't close it. Called whether or not
+    /// focus moved, since a pane focused by a session's `show` or by a closing neighbour is not the user's until they use it.
+    func userTook(_ pane: ClaudeSession) {
+        guard !sessionIsChangingView, pane.clearOpenedBy() else { return }
+        saveSessions()
     }
 
     /// ⌘W: ends the focused pane; its exit handler picks what to show next.

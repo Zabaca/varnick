@@ -171,6 +171,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Called when a close the user asked for won't happen: the question was answered No, the pane was
     /// taken over or went live again, or the card it was waiting to ask on never showed.
     var onKept: () -> Void = {}
+    /// The record has something new to save that no tab change carries (`launchClaude` recording how it started).
+    var onRecordChange: () -> Void = {}
+
+    /// The user took this pane, so the session that opened it may no longer close it. True when it was one a session opened.
+    func clearOpenedBy() -> Bool {
+        guard record.openedBy != nil else { return false }
+        record.openedBy = nil
+        return true
+    }
+
     /// A pane the host starts for a peer's `start` request: the peer's id, which the zmx session
     /// is labelled with as it is created as its control (and, with `record.origin`, its origin).
     var startedFor: String?
@@ -587,6 +597,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// pane resumed it to begin with.
     private func launchClaude(restarting: Bool = false) {
         let skipsPermissions = record.skipPermissions ?? Settings.shared.skipPermissions
+        if record.skippedAtStart != skipsPermissions {
+            record.skippedAtStart = skipsPermissions
+            onRecordChange()
+        }
         // The hook's `cat >` fails into a missing folder.
         try? FileManager.default.createDirectory(at: PaneFolder.url(for: record.id), withIntermediateDirectories: true)
         // A switch the last run reported but never got to read (killed within a poll) is
@@ -631,7 +645,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                                                     panel: !isRun && Settings.shared.panelAccess,
                                                                                     automations: !isRun && Settings.shared.automationsOn,
                                                                                     tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult,
-                                                                                    voiceSearch: isVoice),
+                                                                                    voiceSearch: isVoice,
+                                                                                    panes: !isRun && !isVoice && Settings.shared.panelAccess
+                                                                                        && Settings.shared.sessionsOpenPanes),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
                                                  voice: isVoice)
 

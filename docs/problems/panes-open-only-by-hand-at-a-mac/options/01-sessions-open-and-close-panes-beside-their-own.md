@@ -2,7 +2,7 @@
 problem: panes-open-only-by-hand-at-a-mac
 title: A session opens panes beside its own with `pane_open`, and closes the ones it opened with `pane_close`, on this Mac
 summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), with no pane cap. Two tools on the `varnick` server, behind a switch of their own under Panel access. `pane_open` adds a terminal, a Claude session with a starting prompt, a custom app such as Scratch, a page or a file beside the calling pane, in its own tab. Focus stays where it is and the panel is never brought up. There is no cap on panes. A new Claude pane starts at once, following Varnick's Skip permissions setting, and never skips when the caller doesn't. `pane_close` closes a pane the same session opened, until the user has focused it. This Mac's own tabs only, while no other machine controls them.
-status: accepted
+status: shipped
 ---
 
 ## Solution
