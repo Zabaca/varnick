@@ -406,7 +406,6 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
 ### The Phone page
 
 - **It is off by default** (Settings › Serve the phone page; on a headless host, the installer's `--page`).
-- **A Voice mode test page exists while the spike runs** (option 05 of `phone-page-is-only-a-browser-tab`, phase 1; removed after). It is off unless you make an empty file `voice-spike-on` in the phone folder, and is linked from nowhere. It records, in `voice-spike.log` in that folder (owner-only, 4 MB at most), the microphone's loudness once a second, the page's visibility and freeze events, and the timing of a ping: never audio or words. It asks the browser for the microphone, which the browser asks you about.
 - **It is published only with `tailscale serve`, to your tailnet,** on HTTPS port 8444. Varnick and the
   installer never run `tailscale funnel`, and refuses to publish if Funnel is on for that port or its state can't be read.
 - **Who is calling comes from Tailscale.** The server asks Tailscale (`tailscale whois`) who owns the address

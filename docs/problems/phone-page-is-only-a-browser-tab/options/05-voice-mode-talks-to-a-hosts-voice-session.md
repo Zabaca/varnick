@@ -122,7 +122,7 @@ This builds on listening-never-answers option 09: a host's **voice session** has
 ## Results
 
 - **Decided by the user, 2026-10-16.** Speech becomes text, and replies become voice, on the Mac host, with Listening's transcriber and the Speaker (ElevenLabs or the installed voice). No Voice mode on a headless host at first (the protocol's requests exist on it and refuse). Foreground only, by the browser's rules; the tone below is the one measured addition. Protocol 30. ADR 0043.
-- **The spike (a Pixel, Chrome 155, in a tab and not the installed app, 2026-10-16; `PhonePage/voicespike.ts`).**
+- **The spike (a Pixel, Chrome 155, in a tab and not the installed app, 2026-10-16, with a throwaway page that logged the mic's level, visibility and freeze events and a websocket ping to the host; the page is removed).**
   - *No tone, home screen:* the page was hidden at 13.3 s, Chrome froze it at 73.4 s (60 s later), the host's websocket closed with 1006 about 5 s after that, and on return the page resumed, reconnected within a second and the mic was live again.
   - *A 220 Hz tone at 0.02 (Web Audio), hidden for 132 s:* no freeze, a level every second, the mic heard the user throughout (loud frames in every 30 s bucket, rms up to 0.24), and the websocket stayed open (35 pings).
   - *Not known:* whether that run was the home screen or a locked screen (the locked run was left to the user), and anything past about 2 minutes. A locked phone is therefore not supported.

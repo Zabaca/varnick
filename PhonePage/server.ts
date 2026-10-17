@@ -27,7 +27,6 @@ import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, page
 import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
 import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
-import { fileSink, SpikeLog, SpikeSockets, spikeFiles, spikeIsOn, spikePaths, type SpikeData } from "./voicespike";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 30;
@@ -96,7 +95,7 @@ function socketAnswers(path: string): Promise<boolean> {
   });
 }
 
-type SocketData = TerminalData | WatchData | SpikeData;
+type SocketData = TerminalData | WatchData;
 
 /**
  * Bun.serve takes one set of websocket options for every socket, so both channels live under these, and each kind's own limits sit
@@ -112,8 +111,8 @@ export const socketOptions = {
 };
 
 /** Each socket's data says which channel it is; its handlers are that kind's. */
-export function socketHandlers(terminals: Terminals, watches: Watches, spike?: SpikeSockets): Bun.WebSocketHandler<SocketData> {
-  const kinds = { terminal: terminals.handlers(), watch: watches.handlers(), spike: spike?.handlers() ?? {} };
+export function socketHandlers(terminals: Terminals, watches: Watches): Bun.WebSocketHandler<SocketData> {
+  const kinds = { terminal: terminals.handlers(), watch: watches.handlers() };
   // One handler is looked up by the socket's kind, so a third channel adds one entry above.
   const of = (ws: Bun.ServerWebSocket<SocketData>) => kinds[ws.data.kind] as Record<string, (...args: unknown[]) => void>;
   return {
@@ -329,16 +328,6 @@ async function main(): Promise<void> {
   const terminals = new Terminals(config, relay, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
   const watches = new Watches(config, PROTOCOL_VERSION, homedir(), log, push?.openPanes);
   const json = (value: unknown, status = 200) => respond(JSON.stringify(value), status, "application/json; charset=utf-8");
-  // The Voice mode spike (voicespike.ts): on while the phone folder holds its marker, off again when the marker is removed.
-  const phoneFolder = config.push?.folder ?? config.proxy?.folder;
-  const spikeOn = () => spikeIsOn(phoneFolder);
-  const spikeLog = new SpikeLog(fileSink(spikeFiles(phoneFolder ?? "/dev/null").log));
-  const spikeSockets = new SpikeSockets(spikeLog);
-  const spikeServed: Record<string, { file: string; type: string }> = {
-    [spikePaths.page]: { file: "page/voice-spike.html", type: "text/html; charset=utf-8" },
-    [spikePaths.script]: { file: "page/voice-spike.js", type: js },
-    [spikePaths.worklet]: { file: "page/voice-spike-worklet.js", type: js },
-  };
 
   /** Null when the request was upgraded to a terminal websocket. */
   async function handle(request: Request, name: { value: string }, server: Bun.Server<SocketData>): Promise<Response | null> {
@@ -363,12 +352,12 @@ async function main(): Promise<void> {
     if (path.startsWith("/api/") && !checkFetchSite(request.headers, wantOrigin)) return plain(403, "cross-site");
     // The two websockets, the terminal's and the live screen's, pass the caller, Host and Origin checks as a mutation does,
     // before anything is spawned.
-    if (path === "/ws/terminal" || path === "/ws/watch" || (path === spikePaths.socket && spikeOn())) {
+    if (path === "/ws/terminal" || path === "/ws/watch") {
       const refusedUpgrade = gateUpgrade(request.method, request.headers, wantOrigin);
       if (refusedUpgrade) return plain(refusedUpgrade.status, refusedUpgrade.reason);
       const terminal = path === "/ws/terminal";
-      const data: SocketData | null = path === spikePaths.socket ? spikeSockets.admit(device) : terminal ? terminals.admit(device) : watches.admit(device);
-      if (!data) return plain(429, path === spikePaths.socket ? "Too many pings open" : terminal ? "Too many terminals open" : "Too many screens open");
+      const data: SocketData | null = terminal ? terminals.admit(device) : watches.admit(device);
+      if (!data) return plain(429, terminal ? "Too many terminals open" : "Too many screens open");
       if (server.upgrade(request, { data })) return null;
       data.admission.giveBack();
       return plain(400, "Upgrade failed");
@@ -377,15 +366,10 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      const spikeLogging = path === spikePaths.log && spikeOn();
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path) && !spikeLogging
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
         && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
-      if (spikeLogging) {
-        const answered = spikeLog.record(device, body);
-        return json(answered.body, answered.status);
-      }
       if (pushPaths.includes(path)) {
         const answered = await pushRoute(push, device, path, body, { now: Date.now, log });
         return json(answered.body, answered.status);
@@ -443,13 +427,6 @@ async function main(): Promise<void> {
     // The icons hold nothing private, and a browser may fetch one outside the page's own context (a Home Screen icon).
     if (Object.hasOwn(iconFiles, path)) return respond(head ? null : await Bun.file(new URL(iconFiles[path].file, import.meta.url)).bytes(), 200, "image/png", { "cross-origin-resource-policy": "cross-origin" });
 
-    // The Voice mode spike (voicespike.ts): its files are served only while its marker file is in the phone folder.
-    if (Object.hasOwn(spikeServed, path) && spikeOn()) {
-      const spikeFile = spikeServed[path];
-      const body = await Bun.file(new URL(spikeFile.file, import.meta.url)).text();
-      // Only its page may play a blob (the tone's audio element); the rest of the policy is every page's.
-      return respond(head ? null : body, 200, spikeFile.type, path === spikePaths.page ? { "content-security-policy": `${pageContentPolicy(self.dnsName, wantHost)}; media-src blob:` } : {});
-    }
     const served = files[path];
     if (served) {
       let body = await Bun.file(new URL(served.file, import.meta.url)).text();
@@ -520,7 +497,7 @@ async function main(): Promise<void> {
     idleTimeout: 30,
     // A prompt may be up to 60,000 bytes (launch.ts), and JSON escaping can double that.
     maxRequestBodySize: 256 << 10,
-    websocket: socketHandlers(terminals, watches, spikeSockets),
+    websocket: socketHandlers(terminals, watches),
     async fetch(request, server) {
       const started = Date.now();
       const name = { value: "-" };
