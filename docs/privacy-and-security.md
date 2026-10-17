@@ -247,7 +247,10 @@ session's:
 - **What its search tool finds.** The session can search your history, bookmarks and Claude sessions through Varnick, which answers up to 20
   pages (title, site, address, when, and a description) and 3 sessions (title, folder, when, prompts cut to 300 characters, the conversation id and,
   for one on this Mac, the transcript's path, or the paired Mac's name). Nothing is filtered or judged first, so rows that do not help go too.
-  The tool is listed for this session only and refuses a call from any other.
+  The tool is listed for sessions started as the voice session, until they are opened, and the app refuses a call from any other pane; a pane id is not a
+  secret, though, so any process on this Mac that knows the voice session's pane id and can open Varnick's socket could call it, as with the task tools.
+- **The first request and its hint are saved as the session's prompt** in `sessions.json` in Varnick's support folder, with the session's record, as any
+  session's first prompt is. Later requests are in Claude Code's transcript only.
 - **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
   last request.
 
@@ -546,7 +549,8 @@ today's Hey Varnick only reads, searches and answers, and opens nothing.
   (see Screen permissions reach every pane, above).
 - **A question or a plan it raises waits for you.** Varnick says "Claude needs your OK in Varnick." and raises Needs you; the session opens from its
   notice, and what Claude says after that is read in the pane, not spoken.
-- **Its tab is out of sight until you open it,** and once you have, it is yours: Varnick never types into a session you opened.
+- **Its tab is out of sight until you open it,** and once you have, it is yours: Varnick never types into a session you opened, and from its next start or
+  resume it is an ordinary session: it follows your Skip permissions and has neither the search tool nor the voice hooks.
 
 ### Screen access acts without asking
 
