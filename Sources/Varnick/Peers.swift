@@ -1025,7 +1025,7 @@ final class PeerManager: ObservableObject {
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
             // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
             guard let by = request.by, UUID(uuidString: by) != nil,
-                  peers.contains(where: { $0.id == by }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
+                  peers.contains(where: { Zmx.sameID($0.id, by) }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
             }
             switch request.op {
@@ -1049,7 +1049,7 @@ final class PeerManager: ObservableObject {
             return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "This Mac") keeps its own automations: only a headless host answers these"))
         case .voiceAudio, .voiceAsk, .voiceStatus:
             // Voice mode (option 05 of `phone-page-is-only-a-browser-tab`): for a Mac in the list or a device, as `start` is, read from the file the relay reads.
-            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { $0.id == by }) || MacPeerHost().listsDevice(by) else {
+            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { Zmx.sameID($0.id, by) }) || MacPeerHost().listsDevice(by) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
             }
             guard let model else { return starting }

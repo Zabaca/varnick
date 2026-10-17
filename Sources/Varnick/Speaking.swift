@@ -292,10 +292,16 @@ final class Speaker {
     }
 }
 
-/// Where a voice's rendered buffers go: the Mac's speakers (`SpeechPlayback`) or, for Voice mode on the phone, a recording (`VoiceRender`). An empty
+/// Where a voice's rendered buffers go: the Mac's speakers (`SpeechPlayback`) or, for Voice mode on the phone, a recording (`VoiceRecording`). An empty
 /// buffer ends the rendering.
 protocol SpeechSink: Sendable {
     func add(_ buffer: AVAudioBuffer)
+    /// False once the sink wants no more (a recording that is full), so the source can stop making it.
+    var isAccepting: Bool { get }
+}
+
+extension SpeechSink {
+    var isAccepting: Bool { true }
 }
 
 /// One speech played from the buffers the synthesizer renders, or ElevenLabs sends, as they arrive. Thread-safe: they call `add`

@@ -12,14 +12,16 @@ enum VoiceTranscriber {
         let kind: String
     }
 
-    /// The longest the transcriber gets for one utterance, a model download aside.
+    /// The longest the transcriber gets for one utterance, once the model is installed.
     static let limit: TimeInterval = 40
 
     /// The words in `pcm16`, or an empty string when there are none. Throws when the transcriber can't run or takes too long.
     static func transcribe(pcm16: Data) async throws -> String {
         guard VoiceAudio.peak(ofPCM16: pcm16) >= silence else { return "" }
+        // The model is installed outside the limit: a first use downloads it, which takes as long as it takes.
+        let model = try await prepare()
         return try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask { try await run(pcm16) }
+            group.addTask { try await run(pcm16, on: model) }
             group.addTask {
                 try await Task.sleep(for: .seconds(limit))
                 throw Failure(kind: "too slow")
@@ -33,7 +35,13 @@ enum VoiceTranscriber {
     /// An utterance whose loudest sample is under this (of 1) is silence: the phone's mic reads exact zeros when it is muted.
     private static let silence: Float = 0.002
 
-    private static func run(_ pcm16: Data) async throws -> String {
+    /// The transcriber with its model installed, and the audio format it takes.
+    private struct Model: @unchecked Sendable {
+        let transcriber: SpeechTranscriber
+        let format: AVAudioFormat
+    }
+
+    private static func prepare() async throws -> Model {
         let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: listeningLanguage)) ?? Locale(identifier: "en_US")
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
@@ -42,8 +50,15 @@ enum VoiceTranscriber {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
             throw Failure(kind: "no audio format")
         }
+        return Model(transcriber: transcriber, format: format)
+    }
+
+    /// One pass of the utterance through a new analyzer. However it ends, a failure or the limit's cancel, the analyzer is cancelled and the reader of its
+    /// results stopped, so nothing keeps running on the Mac for an utterance nobody waits for.
+    private static func run(_ pcm16: Data, on model: Model) async throws -> String {
+        let transcriber = model.transcriber
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        try await analyzer.prepareToAnalyze(in: format)
+        try await analyzer.prepareToAnalyze(in: model.format)
         // Read from the start, since a result can arrive while the audio is still being fed.
         let collected = Task { () -> String in
             var text = ""
@@ -54,12 +69,23 @@ enum VoiceTranscriber {
             }
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let (inputs, feed) = AsyncStream<AnalyzerInput>.makeStream()
-        try await analyzer.start(inputSequence: inputs)
-        for buffer in try buffers(of: pcm16, as: format) { feed.yield(AnalyzerInput(buffer: buffer)) }
-        feed.finish()
-        try await analyzer.finalizeAndFinishThroughEndOfInput()
-        return await collected.value
+        return try await withTaskCancellationHandler {
+            do {
+                let (inputs, feed) = AsyncStream<AnalyzerInput>.makeStream()
+                try await analyzer.start(inputSequence: inputs)
+                for buffer in try buffers(of: pcm16, as: model.format) { feed.yield(AnalyzerInput(buffer: buffer)) }
+                feed.finish()
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+                return await collected.value
+            } catch {
+                collected.cancel()
+                await analyzer.cancelAndFinishNow()
+                throw error
+            }
+        } onCancel: {
+            collected.cancel()
+            Task { await analyzer.cancelAndFinishNow() }
+        }
     }
 
     /// The utterance as buffers in the speech model's format, a second of audio each.
@@ -77,19 +103,7 @@ enum VoiceTranscriber {
             input.frameLength = AVAudioFrameCount(count)
             for i in 0..<count { channel[i] = samples[start + i] }
             start += count
-            let capacity = AVAudioFrameCount(Double(count) * format.sampleRate / source.sampleRate) + 64
-            guard let converted = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { throw Failure(kind: "no buffer") }
-            nonisolated(unsafe) let pending = input
-            var consumed = false
-            var error: NSError?
-            converter.convert(to: converted, error: &error) { _, status in
-                if consumed { status.pointee = .noDataNow; return nil }
-                consumed = true
-                status.pointee = .haveData
-                return pending
-            }
-            if let error { throw error }
-            if converted.frameLength > 0 { out.append(converted) }
+            if let converted = AudioConversion.convert(input, using: converter, to: format) { out.append(converted) }
         }
         return out
     }

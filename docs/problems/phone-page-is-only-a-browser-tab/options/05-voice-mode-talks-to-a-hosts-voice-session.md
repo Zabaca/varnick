@@ -1,7 +1,7 @@
 ---
 problem: phone-page-is-only-a-browser-tab
 title: Voice mode on a host's Phone page talks back and forth with that host's voice session
-summary: A Voice mode button on a host's Phone page starts that host's voice session, or reuses it within its 10 minutes. This is the same session Hey Varnick reaches on a Mac (listening-never-answers option 09), in the host's Home. The user then talks back and forth by voice, with each exchange shown as text too. Requests reach the host and replies come back through the host's relay, with one new request to ask and one to poll, on a Mac or a headless host. Voice mode works only in the foreground. Research on Chrome for Android found that a hidden page keeps the mic for about a minute and a locked phone keeps nothing, so the mic is one getUserMedia stream with a wake lock and Media Session controls, and a spike on the user's phone comes first. Whether speech becomes text on the phone or on the host, and where the reply's audio is made, is left open. A prompt that needs the user's OK is answered in the page's own terminal view. A native Android shell, for a locked screen, is deferred.
+summary: A Voice mode button on a Mac host's Phone page starts that Mac's voice session, or reuses it within its 10 minutes. This is the same session Hey Varnick reaches (listening-never-answers option 09), in the Mac's Home. The user talks back and forth by voice, with each exchange shown as text too. The phone sends its microphone's audio in chunks, and the Mac turns it into text with Listening's transcriber and makes the reply's audio in its Voice setting's voice, which the phone plays; three new relay requests (protocol 30) send audio, send text and poll for what happened. A headless host has no Voice mode at first. Voice mode works in the foreground and, by a quiet tone the page plays for as long as it runs, in the background (a spike on a Pixel found a hidden silent page frozen at 60 s and a tone-playing one alive for 132 s); a locked screen is not supported and a native Android shell for it is deferred. The mic is one getUserMedia stream with a wake lock; a page that is frozen anyway reconnects on resume and says so. A prompt that needs the user's OK is answered in the page's own terminal view.
 status: accepted
 ---
 
@@ -76,7 +76,7 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   - Do it at 30 s, 90 s, 5 min and 15 min, both with the page hidden and with the phone locked.
   - Do it with audio playing and without.
 
-  The grace the page allows when hidden comes from it. Figures stay in `.scratch/phone-page-is-only-a-browser-tab/`.
+  The figures are in Results below.
 - **The protocol's pure parts** (`voiceAsk` and `voiceStatus`, read and answered) get the shared package's checks and the page's Bun tests, as protocol 28's and 29's did.
 - **By hand, after option 09 has shipped and the host runs this build:**
   - Voice mode on a Mac's page: ask, follow up, and follow up at the Mac by Hey Varnick.
@@ -102,7 +102,7 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   - opening a session on the phone with take: the page's terminal;
   - Needs you to the phone: option 02's routing.
 - **ADR, on acceptance:** amends ADR 0011 (the page reaches a host's voice session through its relay, and holds the mic in the foreground) and ADR 0009 (a headless host keeps a voice session).
-- **Open questions for the user:**
+- **Open questions for the user (decided 2026-10-16: see Results):**
   1. **Where does speech become text, and where is the reply's audio made?** Left open, as the coordinator asked. The shapes:
      - **On the host.** The page sends the stream's audio over its WebSocket. A Mac turns it into text with Listening's transcriber as a third source and voices the reply with its Speaker (the user's Voice setting, ElevenLabs included). The page plays that audio, which also keeps a hidden page awake while it plays. A headless host has neither a transcriber nor a voice today.
      - **On the phone.** Chrome's SpeechRecognition makes the text and the phone's own speech synthesis speaks the reply, so the host sees only text and a headless host needs nothing new. But SpeechRecognition ends the moment the page is hidden. And whether it can take the mode's getUserMedia track, rather than opening its own capture, is unverified.
@@ -118,3 +118,20 @@ This builds on listening-never-answers option 09: a host's **voice session** has
 
   The browser facts are the research's, as relayed: Chromium's source, not run on a phone.
 - **Inferred:** that Chrome on Android sends SpeechRecognition audio to Google; every latency; and the polling interval.
+
+## Results
+
+- **Decided by the user, 2026-10-16.** Speech becomes text, and replies become voice, on the Mac host, with Listening's transcriber and the Speaker (ElevenLabs or the installed voice). No Voice mode on a headless host at first (the protocol's requests exist on it and refuse). Foreground only, by the browser's rules; the tone below is the one measured addition. Protocol 30. ADR 0043.
+- **The spike (a Pixel, Chrome 155, in a tab and not the installed app, 2026-10-16; `PhonePage/voicespike.ts`).**
+  - *No tone, home screen:* the page was hidden at 13.3 s, Chrome froze it at 73.4 s (60 s later), the host's websocket closed with 1006 about 5 s after that, and on return the page resumed, reconnected within a second and the mic was live again.
+  - *A 220 Hz tone at 0.02 (Web Audio), hidden for 132 s:* no freeze, a level every second, the mic heard the user throughout (loud frames in every 30 s bucket, rms up to 0.24), and the websocket stayed open (35 pings).
+  - *Not known:* whether that run was the home screen or a locked screen (the locked run was left to the user), and anything past about 2 minutes. A locked phone is therefore not supported.
+- **Hand test,** with the Mac running the build, Voice session on, Keep sessions running and Claude Code logged in with skip-permissions accepted, then on the Pixel:
+  1. Voice mode, Start: "Listening". Say "what time is it": your words appear as text, "Let me check.", then the answer as text and in the Mac's voice.
+  2. A follow-up ("and in Tokyo?") is answered in context and the Mac's log says the session was reused; a question asked at the Mac by Hey Varnick can be followed up from the phone within 10 minutes.
+  3. A world question shows "Looking that up."
+  4. A request that makes Claude ask a question shows "Claude needs your OK" and Open (which ends Voice mode) opens the session with control taken.
+  5. Home screen for 2 minutes with the mode on, then speak: the conversation survives. A locked screen: say how it behaves.
+  6. A pause in the middle of a request, a cough, a clap: tune `silenceMs`, `minSpeechMs` and `lowestThreshold` in `voicerules.js` if requests cut off or false-start. A television or fan stepping up does not start a 30 s request.
+  7. Another app taking the microphone, or the system muting it, ends the mode within about 5 s and says why.
+  8. Voice session off, or Keep sessions running off: Start then the first request says why at once, before anything is sent. A headless host's page has no button.

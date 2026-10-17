@@ -5,7 +5,7 @@
 export const uploadRate = 16000;
 /** A chunk is a second of audio; the host takes up to 1.5 s (`VoiceAudio.maxChunkBytes`). */
 export const chunkSamples = 16000;
-/** The longest request: 30 s (`VoiceAudio.maxUtteranceBytes`). */
+/** The longest request the host takes: 30 s (`VoiceAudio.maxUtteranceBytes`), counting the pre-roll and the closing chunk. */
 export const maxUtteranceMs = 30000;
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -17,6 +17,10 @@ export const silenceMs = 900;
 export const minSpeechMs = 300;
 /** Audio kept from before speech was heard, so the first word isn't clipped. */
 export const preRollMs = 300;
+/** A request ends here, so that with its pre-roll and its last chunk (10 ms) it is under what the host takes. */
+export const requestCapMs = maxUtteranceMs - preRollMs - 100;
+/** Sound that stays above the threshold this long without a quiet frame is not speech (a television, a fan that stepped up): the floor rises over it. */
+export const noiseRunMs = 10000;
 /** Speech is a level above the noise floor times this, and never below the lowest. */
 export const floorTimes = 3;
 export const lowestThreshold = 0.015;
@@ -31,10 +35,12 @@ export const calibrationFrames = 5;
  *   "pending" a sound that may be speech, not yet long enough
  *   "begin"   it was long enough: the request has begun (the page starts sending)
  *   "speech"  the request goes on
- *   "end"     the request ended after `silenceMs` of quiet, or at `maxUtteranceMs`
+ *   "end"     the request ended after `silenceMs` of quiet, or at `requestCapMs`
  *   "drop"    the sound ended before it was long enough: nothing was sent
+ *   "abort"   the sound never let up for `noiseRunMs`, so it was the room and not a person: whatever was sent is abandoned
  * The threshold follows the room: three times the level of the quiet, and never below `lowestThreshold`, so the keep-alive tone a speaker lets the
- * microphone hear doesn't begin a request. The first `calibrationFrames` only measure it.
+ * microphone hear doesn't begin a request. The first `calibrationFrames` only measure it, and an "abort" raises it to the sound's lowest level, so a room
+ * that got louder is learned in one go.
  */
 export class Endpointer {
   constructor() {
@@ -49,6 +55,8 @@ export class Endpointer {
     this.speechMs = 0;
     this.quietMs = 0;
     this.totalMs = 0;
+    this.runMs = 0;
+    this.runMin = Infinity;
   }
 
   get threshold() {
@@ -71,14 +79,25 @@ export class Endpointer {
       this.speechMs = ms;
       this.quietMs = 0;
       this.totalMs = ms;
+      this.runMs = ms;
+      this.runMin = rms;
       return this.confirm();
     }
     this.totalMs += ms;
     if (loud) {
       this.speechMs += ms;
       this.quietMs = 0;
+      this.runMs += ms;
+      this.runMin = Math.min(this.runMin, rms);
     } else {
       this.quietMs += ms;
+      this.runMs = 0;
+      this.runMin = Infinity;
+    }
+    if (this.runMs >= noiseRunMs) {
+      this.floor = Math.max(this.floor, this.runMin);
+      this.reset();
+      return "abort";
     }
     if (this.state === "pending") {
       if (this.quietMs >= silenceMs) {
@@ -87,7 +106,7 @@ export class Endpointer {
       }
       return this.confirm();
     }
-    if (this.quietMs >= silenceMs || this.totalMs >= maxUtteranceMs) {
+    if (this.quietMs >= silenceMs || this.totalMs >= requestCapMs) {
       this.reset();
       return "end";
     }
@@ -129,6 +148,117 @@ export function fromBase64(text) {
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return bytes;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A microphone that reads live and delivers nothing
+
+/** A live track that gives exact zeros this long is muted or silenced by the system: a quiet room still gives about 1e-5 (the spike, 2026-10-16). */
+export const deadMicMs = 5000;
+
+/** Feed it each block's level while the page is capturing; it says when the microphone has been digitally silent long enough to give up on. */
+export class DeadMic {
+  constructor() {
+    this.zeroMs = 0;
+  }
+
+  feed(rms, ms) {
+    this.zeroMs = rms === 0 ? this.zeroMs + ms : 0;
+    return this.zeroMs >= deadMicMs;
+  }
+
+  reset() {
+    this.zeroMs = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// One request on its way to the host
+
+/**
+ * A request being sent: blocks are added as they are heard, a chunk goes to the host as soon as a second of it has gathered (after `begin`), and
+ * `finish` sends the rest and a last chunk. `post(body)` sends one chunk and answers `{ok, error?}`; the chunks go one after another, in order. The first
+ * chunk the host refuses (or that fails) marks the request `failed` with the reason, calls `onFail` once, and stops everything after it, so a request
+ * never waits for an answer that a refused one will not give.
+ */
+export class Utterance {
+  constructor(id, post, preRoll = [], onFail = () => {}) {
+    this.id = id;
+    this.post = post;
+    this.onFail = onFail;
+    this.blocks = [];
+    this.count = 0;
+    this.seq = 0;
+    this.begun = false;
+    this.failed = null;
+    this.chain = Promise.resolve();
+    for (const block of preRoll) this.add(block);
+  }
+
+  add(block) {
+    this.blocks.push(block);
+    this.count += block.length;
+    if (this.begun) this.pump();
+  }
+
+  /** The request is long enough to be one: what has gathered starts going. */
+  begin() {
+    this.begun = true;
+    this.pump();
+  }
+
+  /** Whether the page should now wait for the host's answer, with the microphone held: the request is a request and nothing in it failed. */
+  get awaitsAnswer() {
+    return this.begun && this.failed === null;
+  }
+
+  pump() {
+    while (this.count >= chunkSamples) this.send(this.take(chunkSamples), false);
+  }
+
+  /** The first `count` samples of the queue (all of them for Infinity), as one array. */
+  take(count) {
+    const parts = [];
+    let need = count;
+    while (this.blocks.length > 0 && need > 0) {
+      const block = this.blocks[0];
+      if (block.length <= need) {
+        parts.push(block);
+        this.blocks.shift();
+        need -= block.length;
+      } else {
+        parts.push(block.subarray(0, need));
+        this.blocks[0] = block.subarray(need);
+        need = 0;
+      }
+    }
+    const out = new Int16Array(parts.reduce((total, part) => total + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
+    this.count -= out.length;
+    return out;
+  }
+
+  send(samples, last) {
+    const seq = this.seq++;
+    this.chain = this.chain.then(async () => {
+      if (this.failed !== null) return;
+      const result = await this.post({ id: this.id, seq, last, audio: toBase64(samples) });
+      if (result.ok || this.failed !== null) return;
+      this.failed = result.error ?? "The host didn't take that.";
+      this.onFail(this.failed);
+    });
+  }
+
+  /** Sends the rest and a last chunk (the host wants audio in it: 10 ms of quiet). Resolves once every chunk is sent: null, or the reason one failed. */
+  finish() {
+    for (const piece of cut(this.take(Infinity))) this.send(piece, false);
+    this.send(new Int16Array(160), true);
+    return this.chain.then(() => this.failed);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -164,13 +164,6 @@ public struct PeerVoiceReply: Codable, Equatable, Sendable {
     }
 }
 
-extension PeerProtocol {
-    /// The three requests about Voice mode (protocol 30), for a listed Mac or device; only a Mac's app answers.
-    public static func isVoiceRequest(_ op: PeerOp) -> Bool {
-        op == .voiceAudio || op == .voiceAsk || op == .voiceStatus
-    }
-}
-
 // MARK: - Audio
 
 public enum VoiceAudio {

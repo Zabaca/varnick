@@ -18,6 +18,13 @@ final class VoiceRecording: @unchecked Sendable, SpeechSink {
     private var converter: AVAudioConverter?
     private var source: AVAudioFormat?
 
+    /// False once the rendering would not fit in a reply: nothing more is wanted, and there is no WAV.
+    var isAccepting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !tooLong
+    }
+
     /// A rendered buffer; an empty one ends the rendering.
     func add(_ buffer: AVAudioBuffer) {
         guard let buffer = buffer as? AVAudioPCMBuffer else { return }
@@ -40,19 +47,7 @@ final class VoiceRecording: @unchecked Sendable, SpeechSink {
             converter = made
             source = buffer.format
         }
-        guard let converter else { return nil }
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * Self.target.sampleRate / buffer.format.sampleRate) + 64
-        guard let out = AVAudioPCMBuffer(pcmFormat: Self.target, frameCapacity: capacity) else { return nil }
-        nonisolated(unsafe) let pending = buffer
-        var consumed = false
-        var error: NSError?
-        converter.convert(to: out, error: &error) { _, status in
-            if consumed { status.pointee = .noDataNow; return nil }
-            consumed = true
-            status.pointee = .haveData
-            return pending
-        }
-        guard error == nil, out.frameLength > 0, let samples = out.int16ChannelData?[0] else { return nil }
+        guard let converter, let out = AudioConversion.convert(buffer, using: converter, to: Self.target), let samples = out.int16ChannelData?[0] else { return nil }
         return Data(bytes: samples, count: Int(out.frameLength) * 2)
     }
 
@@ -98,6 +93,8 @@ enum VoiceRender {
             let recording = VoiceRecording()
             let outcome = await ElevenLabs.speak(text, voice: settings.elevenLabsVoice, key: key, into: recording)
             if case .played = outcome, let wav = recording.wav() { return (wav, "ElevenLabs") }
+            // Too long for a reply in one voice is too long in the other: the phone shows the words.
+            if !recording.isAccepting { return nil }
         }
         let recording = VoiceRecording()
         let synthesizer = AVSpeechSynthesizer()

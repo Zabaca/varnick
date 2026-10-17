@@ -14,8 +14,6 @@ final class VoiceRemote {
 
     private var uploads = VoiceUploads()
     private var ledger = VoiceLedger()
-    /// The asks whose work is under way, so a shutdown or the switch going off can end them (the ledger says they ended).
-    private var working: [String: Task<Void, Never>] = [:]
 
     func answer(_ request: PeerRequest, by: String, model: LauncherModel) async -> PeerReply {
         guard let ask = request.voice, let id = Self.lowercaseUUID(ask.id) else { return .failure("That isn't a voice request") }
@@ -45,14 +43,7 @@ final class VoiceRemote {
                 return reply
             case .complete(let pcm):
                 if let refusal = refusal(model) { return .failure(refusal) }
-                return begin(id, ask: ask, model: model) {
-                    if #available(macOS 26, *) {
-                        do { return try await VoiceTranscriber.transcribe(pcm16: pcm) } catch {
-                            throw VoiceRemote.Failure(kind: (error as? VoiceTranscriber.Failure)?.kind ?? "transcriber", line: "I couldn't make out the audio.")
-                        }
-                    }
-                    throw VoiceRemote.Failure(kind: "needs macOS 26", line: "Voice mode needs macOS 26 on this Mac.")
-                }
+                return begin(id, ask: ask, model: model) { try await Self.transcribe(pcm) }
             }
         default:
             return .failure("Unknown request")
@@ -63,23 +54,31 @@ final class VoiceRemote {
     struct Failure: Error {
         let kind: String
         let line: String
+
+        static func transcriber(_ kind: String) -> Failure { Failure(kind: kind, line: "I couldn't make out the audio.") }
     }
 
-    /// Why a new ask can't begin, in words for the user; nil when it can.
+    private static func transcribe(_ pcm: Data) async throws -> String {
+        guard #available(macOS 26, *) else { throw Failure(kind: "needs macOS 26", line: "Voice mode needs macOS 26 on this Mac.") }
+        do { return try await VoiceTranscriber.transcribe(pcm16: pcm) } catch {
+            throw Failure.transcriber((error as? VoiceTranscriber.Failure)?.kind ?? "transcriber")
+        }
+    }
+
+    /// Why a new ask can't begin, in words for the user; nil when it can. What would refuse the voice session itself is asked of it, before anything is
+    /// uploaded or transcribed.
     private func refusal(_ model: LauncherModel) -> String? {
-        if !Settings.shared.voiceSessionOn { return VoiceLines.off + " Turn it on in Settings › Experimental on this Mac." }
+        if let why = model.voiceSession.preflight(model) {
+            return why == .off ? why.spoken + " Turn it on in Settings › Experimental on this Mac." : why.spoken
+        }
         if ledger.busy() || model.voiceSession.requestInFlight { return VoiceLines.busy }
         return nil
     }
 
     /// Opens the ask and carries it out in the background: `text` makes the request's words (the audio's transcription, or the text given).
     private func begin(_ id: String, ask: PeerVoiceAsk, model: LauncherModel, text: @escaping () async throws -> String) -> PeerReply {
-        let now = Date()
-        guard ledger.begin(id, now: now) else { return .failure(VoiceLines.busy) }
-        working[id] = Task { [weak self] in
-            await self?.carryOut(id, ask: ask, model: model, text: text)
-            self?.working[id] = nil
-        }
+        guard ledger.begin(id, now: Date()) else { return .failure(VoiceLines.busy) }
+        Task { await carryOut(id, ask: ask, model: model, text: text) }
         var reply = PeerReply.success()
         reply.voice = PeerVoiceReply(id: id)
         return reply
@@ -101,12 +100,10 @@ final class VoiceRemote {
         let words: String
         do {
             words = try await text()
-        } catch let failure as Failure {
+        } catch {
+            let failure = error as? Failure ?? .transcriber("transcriber")
             ending = "failed, \(failure.kind)"
             return add(PeerVoiceEvent(.failed, text: failure.line, failure: failure.kind))
-        } catch {
-            ending = "failed"
-            return add(PeerVoiceEvent(.failed, text: "I couldn't make out the audio.", failure: "transcriber"))
         }
         guard !words.isEmpty else {
             ending = "failed, nothing heard"
@@ -115,8 +112,8 @@ final class VoiceRemote {
         heard = Date().timeIntervalSince(began)
         // The audio's own transcription is shown to the user; a typed ask is what they typed.
         if ask.audio != nil { add(PeerVoiceEvent(.heard, text: words)) }
-        let moment = ask.hint(now: Date(), hostZone: .current, hostUnits: Locale.current.measurementSystem == .us ? .us : .metric)
-        for await update in model.voiceSession.ask(words, device: .phone, moment: moment.moment, zone: moment.zone, units: moment.units) {
+        let asker = ask.hint(now: Date(), hostZone: .current, hostUnits: .host)
+        for await update in model.voiceSession.ask(words, device: .phone, moment: asker.moment, zone: asker.zone, units: asker.units) {
             switch update {
             case .began:
                 break
@@ -125,8 +122,7 @@ final class VoiceRemote {
                 add(PeerVoiceEvent(.failed, text: refusal.spoken, failure: refusal.logKind))
             case .event(let event):
                 if case .answered(let answer) = event {
-                    let said = VoiceReply.speakable(answer) ?? VoiceReply.nothingSpeakable
-                    let rendered = await VoiceRender.wav(said)
+                    let rendered = await VoiceRender.wav(VoiceReply.speakable(answer) ?? VoiceReply.nothingSpeakable)
                     ending = "answered, voice \(rendered?.by ?? "none")"
                     add(PeerVoiceEvent.answered(text: answer, audio: rendered?.wav))
                 } else {

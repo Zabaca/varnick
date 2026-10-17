@@ -9,7 +9,7 @@
 // Everything the host sent goes in with textContent, never as markup.
 
 import { element, getJSON, postJSON } from "/dom.js";
-import { applyEvents, chunkSamples, cut, Endpointer, fromBase64, hint, newView, pauseNote, preRollMs, stateLine, toBase64 } from "/voicerules.js";
+import { applyEvents, DeadMic, Endpointer, fromBase64, hint, newView, pauseNote, preRollMs, stateLine, Utterance } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,6 +22,8 @@ const echoTailMs = 500;
 /** The tone: quiet and low, looping for as long as the mode runs. */
 const toneHz = 220;
 const toneGain = 0.02;
+/** The tone has been sounding this long before the microphone is listened to, so the room it is measured in includes the tone. */
+const toneSettleMs = 700;
 const pollMs = 1000;
 /** Failed polls in a row before the page says it lost the host. */
 const pollFailures = 6;
@@ -33,7 +35,7 @@ export function openVoice({ host, done, openSession }) {
   current = {
     host, done, openSession, closed: false, running: false, view: newView(), note: "",
     ctx: null, stream: null, node: null, osc: null, lock: null, held: false, asking: null,
-    endpoint: new Endpointer(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
+    endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
   };
   const v = current;
   $("voice").hidden = false;
@@ -69,9 +71,10 @@ export function closeVoice() {
   $("voice").hidden = true;
 }
 
-function end(v) {
+/** Leaves Voice mode for the home; `text` is what the home then says. */
+function end(v, text) {
   if (current !== v) return;
-  v.done();
+  v.done(text);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -167,6 +170,8 @@ function startTone(v) {
   v.osc.connect(gain).connect(v.ctx.destination);
   v.osc.onended = () => { v.osc = null; };
   v.osc.start();
+  // What the microphone hears of the tone is part of the room, so the room is measured after it has begun.
+  v.ignoreUntil = Math.max(v.ignoreUntil, Date.now() + toneSettleMs);
 }
 
 function stopAudio(v) {
@@ -225,6 +230,7 @@ function afterPause(v, gapMs) {
   v.utt = null;
   v.ring = [];
   v.endpoint.reset();
+  v.dead.reset();
   v.frozenAt = 0;
   if (now - v.noted > 2000) {
     v.noted = now;
@@ -243,6 +249,8 @@ function onBlock(v, { pcm, rms }) {
   if (v.lastBlock !== 0 && now - v.lastBlock >= 5000) afterPause(v, now - v.lastBlock);
   v.lastBlock = now;
   if (now < v.ignoreUntil) return;
+  // A microphone that reads live and delivers digital silence is muted by the system: the mode can't do its work, and says so.
+  if (!v.held && v.dead.feed(rms, blockMs)) return end(v, "The microphone went silent, so Voice mode ended. Another app or the phone may have taken it.");
   if (v.held) {
     v.ring = [];
     v.endpoint.reset();
@@ -254,102 +262,58 @@ function onBlock(v, { pcm, rms }) {
       if (v.ring.length > preRollMs / blockMs) v.ring.shift();
       break;
     case "pending":
-      if (!v.utt) v.utt = newUtterance(v.ring.splice(0));
-      add(v.utt, pcm);
+      if (!v.utt) v.utt = newUtterance(v, v.ring.splice(0));
+      v.utt.add(pcm);
       break;
     case "begin":
       if (!v.utt) break;
-      add(v.utt, pcm);
-      v.utt.begun = true;
+      v.utt.add(pcm);
+      v.utt.begin();
       v.note = "";
       setState(v, "hearing");
-      pump(v, v.utt);
       break;
     case "speech":
-      if (!v.utt) break;
-      add(v.utt, pcm);
-      pump(v, v.utt);
+      v.utt?.add(pcm);
       break;
     case "end": {
       const utt = v.utt;
       v.utt = null;
       if (!utt) break;
-      add(utt, pcm);
-      finish(v, utt);
+      utt.add(pcm);
+      void finish(v, utt);
       break;
     }
     case "drop":
+    case "abort":
+      // A sound too short to be a request, or one that never let up (the room): whatever was sent of it is left to the host to drop.
       v.utt = null;
+      v.ring = [];
+      if (v.view.state === "hearing") setState(v, "listening");
       break;
   }
 }
 
-function newUtterance(preRoll) {
-  const utt = { id: crypto.randomUUID(), blocks: [], count: 0, seq: 0, begun: false, failed: false, chain: Promise.resolve() };
-  for (const block of preRoll) add(utt, block);
-  return utt;
-}
-
-function add(utt, block) {
-  utt.blocks.push(block);
-  utt.count += block.length;
-}
-
-/** The first `count` samples of the utterance's queue (all of them for Infinity), as one array. */
-function take(utt, count) {
-  const parts = [];
-  let need = count;
-  while (utt.blocks.length > 0 && need > 0) {
-    const block = utt.blocks[0];
-    if (block.length <= need) {
-      parts.push(block);
-      utt.blocks.shift();
-      need -= block.length;
-    } else {
-      parts.push(block.subarray(0, need));
-      utt.blocks[0] = block.subarray(need);
-      need = 0;
-    }
-  }
-  const out = new Int16Array(parts.reduce((total, part) => total + part.length, 0));
-  let at = 0;
-  for (const part of parts) { out.set(part, at); at += part.length; }
-  utt.count -= out.length;
-  return out;
-}
-
-/** A second of a request goes to the host as soon as there is one, while it is still being said. */
-function pump(v, utt) {
-  while (utt.begun && utt.count >= chunkSamples) send(v, utt, take(utt, chunkSamples), false);
-}
-
-/** The request ended: the rest goes, marked last, and the page waits for the answer with the mic held. */
-function finish(v, utt) {
-  if (!utt.begun) return;
-  v.held = true;
-  v.asking = utt.id;
-  for (const piece of cut(take(utt, Infinity))) send(v, utt, piece, false);
-  // The host wants a last chunk with audio in it: 10 ms of quiet ends the request.
-  send(v, utt, new Int16Array(160), true);
-  utt.chain = utt.chain.then(() => {
-    if (!utt.failed && v.asking === utt.id) {
-      setState(v, "sending");
-      void poll(v, utt.id);
-    }
-  });
-}
-
-function send(v, utt, samples, last) {
-  const seq = utt.seq++;
-  utt.chain = utt.chain.then(async () => {
-    if (utt.failed || v.closed) return;
-    const result = await postJSON("/api/voice/audio", { id: utt.id, seq, last, audio: toBase64(samples), ...hint() }, "The host didn't answer.");
-    if (result.ok || utt.failed || v.closed) return;
-    utt.failed = true;
-    if (v.asking === utt.id) releaseHold(v, 0);
-    v.view = { ...v.view, state: "listening", exchange: [...v.view.exchange, { who: "note", text: result.error }] };
+/** A request for the host: each chunk is a POST, and the first the host refuses is shown at once. */
+function newUtterance(v, preRoll) {
+  const post = (body) => postJSON("/api/voice/audio", { ...body, ...hint() }, "The host didn't answer.");
+  return new Utterance(crypto.randomUUID(), post, preRoll, (error) => {
+    if (v.closed) return;
+    v.view = { ...v.view, state: "listening", exchange: [...v.view.exchange, { who: "note", text: error }] };
     render(v);
   });
+}
+
+/** The request ended: the rest goes, and unless a chunk failed the page waits for the answer with the mic held. */
+async function finish(v, utt) {
+  if (!utt.awaitsAnswer) return;
+  v.held = true;
+  v.asking = utt.id;
+  const failed = await utt.finish();
+  if (v.closed || v.asking !== utt.id) return;
+  // A chunk that failed was shown when it did (`newUtterance`); with no answer to wait for, the page listens again.
+  if (failed !== null) return releaseHold(v, 0);
+  setState(v, "sending");
+  void poll(v, utt.id);
 }
 
 function releaseHold(v, after) {

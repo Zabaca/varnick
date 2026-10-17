@@ -11,12 +11,11 @@
 
 import { isObject, uuidPattern, type Json } from "./json";
 import type { RelayResult } from "./home";
+import { uploadRate } from "./page/voicerules.js";
 
 type Parsed<Value> = { ok: true; value: Value } | { ok: false; error: string };
 const refuse = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
-/** The rate the page sends, and the host's: the page resamples to it. */
-export const uploadRate = 16_000;
 /** The largest chunk the host takes (`VoiceAudio.maxChunkBytes`: 1.5 s), as bytes and as base64 text. */
 export const maxChunkBytes = 48_000;
 export const maxChunkText = Math.ceil(maxChunkBytes / 3) * 4;

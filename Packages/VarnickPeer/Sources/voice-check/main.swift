@@ -315,8 +315,6 @@ let otherID = "9c1a7d52-0e3b-4a6f-8d21-6b4e5f7a8c90"
 let bytes = { (count: Int) in Data(repeating: 1, count: count) }
 
 expect("protocol: this is 30", PeerProtocol.version == 30)
-expect("protocol: the three voice requests are told apart", [PeerOp.voiceAudio, .voiceAsk, .voiceStatus].allSatisfy(PeerProtocol.isVoiceRequest)
-       && !PeerProtocol.isVoiceRequest(.tabs) && !PeerProtocol.isVoiceRequest(.runOpened))
 
 var voiceRequest = PeerRequest(.voiceAsk)
 voiceRequest.voice = PeerVoiceAsk(id: askID, text: "what time is it", moment: 1_760_000_000, zone: "America/Denver", units: "us")

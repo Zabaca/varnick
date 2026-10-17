@@ -98,6 +98,16 @@ final class VoiceSessionHost: ObservableObject {
 
     // MARK: A request
 
+    /// What stops a request before anything is sent: the switch, Keep sessions running, Claude Code's one-time warning for skip-permissions mode (a hidden
+    /// session would stop at it) and its login. Nil when nothing does. A surface with a long way to a request (the phone's upload) asks it first.
+    func preflight(_ model: LauncherModel) -> Refusal? {
+        guard Settings.shared.voiceSessionOn else { return .off }
+        guard Zmx.isEnabled else { return .needsKeepSessions }
+        guard ClaudeTrust.skipPermissionsAccepted() != false else { return .needsSkipAccepted }
+        guard model.textGeneration.claude.loginPassed else { return .notLoggedIn }
+        return nil
+    }
+
     /// Types a request into the voice session, or starts one with it as the first prompt, and tells what happens. The stream ends when the request
     /// does: answered, waiting on the user, failed, or past the deadline (the turn goes on). Cancelling its reader ends the request and not the turn.
     ///
@@ -114,10 +124,8 @@ final class VoiceSessionHost: ObservableObject {
 
     private func run(_ request: String, device: VoiceHint.Device, moment: Date, zone: TimeZone, units: VoiceHint.Units?,
                      _ out: AsyncStream<Update>.Continuation) async {
-        guard let model, Settings.shared.voiceSessionOn else { out.yield(.refused(.off)); return }
-        guard Zmx.isEnabled else { out.yield(.refused(.needsKeepSessions)); return }
-        guard ClaudeTrust.skipPermissionsAccepted() != false else { out.yield(.refused(.needsSkipAccepted)); return }
-        guard model.textGeneration.claude.loginPassed else { out.yield(.refused(.notLoggedIn)); return }
+        guard let model else { out.yield(.refused(.off)); return }
+        if let refusal = preflight(model) { out.yield(.refused(refusal)); return }
         let now = Date()
         var current = held.flatMap { model.claudePane($0.pane) }
         // A session whose process is gone (a reboot, a kill) is no session; its leftover is cleared and a new one starts.
@@ -129,7 +137,7 @@ final class VoiceSessionHost: ObservableObject {
         let heldNow = current.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
         let decision = VoiceSession.decide(held: heldNow, turn: current?.turn, opened: current.map(isOpened) ?? false, now: now)
         let hint = VoiceHint.text(device: device, now: moment, timeZone: zone,
-                                  units: units ?? (Locale.current.measurementSystem == .us ? .us : .metric))
+                                  units: units ?? .host)
         let line = VoicePaste.line(hint: hint, request: request)
         let id: UUID
         let sent: Date
@@ -310,4 +318,9 @@ extension LauncherModel {
     func startVoiceSession() {
         voiceSession.start(model: self)
     }
+}
+
+extension VoiceHint.Units {
+    /// This Mac's own units, for a request that names none.
+    static var host: VoiceHint.Units { Locale.current.measurementSystem == .us ? .us : .metric }
 }

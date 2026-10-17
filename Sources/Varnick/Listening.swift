@@ -483,19 +483,7 @@ private final class Capture {
         }
 
         return { buffer in
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / input.sampleRate) + 64
-            guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
-            // convert(to:) calls the block before it returns, on this thread.
-            nonisolated(unsafe) let pending = buffer
-            var consumed = false
-            var error: NSError?
-            converter.convert(to: out, error: &error) { _, status in
-                if consumed { status.pointee = .noDataNow; return nil }
-                consumed = true
-                status.pointee = .haveData
-                return pending
-            }
-            guard out.frameLength > 0 else { return }
+            guard let out = AudioConversion.convert(buffer, using: converter, to: format) else { return }
             clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
             feed.yield(AnalyzerInput(buffer: out))
             // `out` is this call's own buffer, never touched again here, so it is handed over, not copied.

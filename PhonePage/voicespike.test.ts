@@ -12,7 +12,7 @@ import {
   type LogSink, type SpikeData,
 } from "./voicespike";
 
-const device: Device = { id: "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d", node: "nodeid", name: "Pixel 8a" };
+const device: Device = { id: "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d", node: "nodeid", name: "Test Phone" };
 const run = "0a1b2c3d";
 
 function memorySink(initial = 0): LogSink & { text: string } {
@@ -57,7 +57,7 @@ describe("a batch from the page", () => {
 describe("the log's lines", () => {
   test("are epoch, time, run, kind, t and device, then the fields", () => {
     expect(formatLine(1_760_000_000_123, run, device, { t: 4200, kind: "vis", fields: [["state", "hidden"]] }))
-      .toBe(`1760000000123 2025-10-09T08:53:20.123Z ${run} vis t=4200 dev=Pixel_8a state=hidden\n`);
+      .toBe(`1760000000123 2025-10-09T08:53:20.123Z ${run} vis t=4200 dev=Test_Phone state=hidden\n`);
   });
 });
 
@@ -246,7 +246,7 @@ describe("the one-line summary", () => {
     try {
       const path = join(folder, "voice-spike.log");
       const lines: string[] = [];
-      const add = (t: number, kind: string, fields = "") => lines.push(`${1_760_000_000_000 + t} 2025-10-09T08:53:20.000Z ${run} ${kind} t=${t} dev=Pixel_8a${fields}`);
+      const add = (t: number, kind: string, fields = "") => lines.push(`${1_760_000_000_000 + t} 2025-10-09T08:53:20.000Z ${run} ${kind} t=${t} dev=Test_Phone${fields}`);
       add(0, "start", " chrome=141 app=tab");
       for (let s = 1; s <= 10; s++) {
         const silent = s > 6;
@@ -288,7 +288,7 @@ describe("the one-line summary", () => {
     try {
       const path = join(folder, "voice-spike.log");
       const lines: string[] = [];
-      const add = (t: number, kind: string, fields = "") => lines.push(`${1_760_000_000_000 + t} 2025-10-09T08:53:20.000Z ${run} ${kind} t=${t} dev=Pixel_8a${fields}`);
+      const add = (t: number, kind: string, fields = "") => lines.push(`${1_760_000_000_000 + t} 2025-10-09T08:53:20.000Z ${run} ${kind} t=${t} dev=Test_Phone${fields}`);
       add(0, "start");
       for (let s = 1; s <= 10; s++) add(s * 1000, "level", " rms=0.02000 peak=0.1 blank=0 mute=0 ready=live ctx=running vis=hidden ws=1");
       // The page froze at 12 s: the host heard pings until 60 s, and the page's levels from 11 s to 260 s came in one batch when it resumed.

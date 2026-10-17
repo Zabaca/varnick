@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { argumentLimit, buildRequest, relayArguments } from "./relay";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
 import {
-  askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, uploadRate,
+  askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
-import { applyEvents, calibrationFrames, chunkSamples, cut, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs, minSpeechMs, newView, pauseMs, pauseNote, silenceMs, stateLine, toBase64 } from "./page/voicerules.js";
+import {
+  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs, minSpeechMs,
+  newView, noiseRunMs, pauseMs, pauseNote, preRollMs, requestCapMs, silenceMs, stateLine, toBase64, uploadRate, Utterance,
+} from "./page/voicerules.js";
 import { block, Downsampler } from "./page/voice-worklet.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
@@ -155,10 +161,30 @@ describe("where a request ends", () => {
     expect(answers.indexOf("end")).toBe(answers.length - 1);
   });
 
+  // Speech with a breath every half second, so it never looks like a steady sound.
+  const talking = (frames: number) => Array.from({ length: frames }, (_, i) => (i % 6 === 5 ? quiet : loud));
+
   test("a request ends at the longest, even in speech", () => {
-    const answers = run(Array(maxUtteranceMs / 100 + 1).fill(loud));
-    expect(answers.indexOf("end")).toBe(maxUtteranceMs / 100 - 1);
-    expect(answers.at(-1)).toBe("pending");
+    const answers = run(talking(requestCapMs / 100 + 5));
+    expect(answers.indexOf("end")).toBe(requestCapMs / 100 - 1);
+  });
+
+  test("a steady sound that never lets up is the room, not a person: it is abandoned and the floor rises over it", () => {
+    const endpointer = calibrated();
+    const steady = 0.05;
+    const answers = run(Array(noiseRunMs / 100 + 3).fill(steady), endpointer);
+    expect(answers.indexOf("begin")).toBe(2);
+    expect(answers.indexOf("abort")).toBe(noiseRunMs / 100 - 1);
+    expect(endpointer.threshold).toBeCloseTo(steady * floorTimes, 10);
+    // The same sound is now the room's.
+    expect(run(Array(30).fill(steady), endpointer).every((answer) => answer === "idle")).toBe(true);
+    // And a voice over it is still heard.
+    expect(run([0.4, 0.4, 0.4], endpointer)).toEqual(["pending", "pending", "begin"]);
+  });
+
+  test("speech with breaths is not the room", () => {
+    const answers = run(talking(noiseRunMs / 100 * 2));
+    expect(answers.includes("abort")).toBe(false);
   });
 
   test("after an end the next request begins afresh", () => {
@@ -197,6 +223,130 @@ describe("where a request ends", () => {
   test("speech has to be a few frames to count", () => {
     expect(minSpeechMs).toBe(300);
     expect(run([loud, loud])).toEqual(["pending", "pending"]);
+  });
+});
+
+describe("a request at the longest the host takes", () => {
+  /** The host's `VoiceAudio.maxUtteranceBytes`: 30 s of 16-bit mono at 16 kHz. */
+  const hostLimitBytes = maxUtteranceMs * uploadRate / 1000 * 2;
+  const block = () => new Int16Array(uploadRate / 10);
+
+  test("the page's longest request, with its pre-roll and its last chunk, is under the limit", async () => {
+    const sizes: number[] = [];
+    const endpointer = new Endpointer();
+    for (let i = 0; i < calibrationFrames; i++) endpointer.feed(0.001, 100);
+    const ring = Array.from({ length: preRollMs / 100 }, block);
+    const utterance = new Utterance("x", async (body: { audio: string }) => { sizes.push(fromBase64(body.audio).length); return { ok: true }; }, ring);
+    let ended = false;
+    for (let frame = 0; !ended; frame++) {
+      const answer = endpointer.feed(frame % 6 === 5 ? 0.001 : 0.1, 100);
+      if (answer === "pending") utterance.add(block());
+      else if (answer === "begin") { utterance.add(block()); utterance.begin(); }
+      else if (answer === "speech") utterance.add(block());
+      else if (answer === "end") { utterance.add(block()); ended = true; }
+      expect(frame).toBeLessThan(1000);
+    }
+    expect(await utterance.finish()).toBeNull();
+    const total = sizes.reduce((sum, size) => sum + size, 0);
+    expect(total).toBeLessThanOrEqual(hostLimitBytes);
+    expect(total).toBeGreaterThan(hostLimitBytes - 2 * uploadRate / 5);
+    expect(hostLimitBytes).toBe(960_000);
+  });
+});
+
+describe("a request on its way to the host", () => {
+  const block = () => new Int16Array(uploadRate / 10).fill(7);
+
+  test("goes in seconds while it is said, and the rest with a last chunk", async () => {
+    const sent: { seq: number; last: boolean; samples: number }[] = [];
+    const utterance = new Utterance("u", async (body: { seq: number; last: boolean; audio: string }) => {
+      sent.push({ seq: body.seq, last: body.last, samples: fromBase64(body.audio).length / 2 });
+      return { ok: true };
+    });
+    for (let i = 0; i < 25; i++) utterance.add(block());
+    expect(sent).toEqual([]);
+    utterance.begin();
+    for (let i = 0; i < 5; i++) utterance.add(block());
+    expect(await utterance.finish()).toBeNull();
+    expect(sent.map((chunk) => chunk.seq)).toEqual([0, 1, 2, 3]);
+    expect(sent.map((chunk) => chunk.samples)).toEqual([chunkSamples, chunkSamples, chunkSamples, 160]);
+    expect(sent.map((chunk) => chunk.last)).toEqual([false, false, false, true]);
+  });
+
+  test("a chunk the host refuses stops the rest, tells once, and the request waits for no answer", async () => {
+    const posts: number[] = [];
+    const told: string[] = [];
+    const utterance = new Utterance("u", async (body: { seq: number }) => {
+      posts.push(body.seq);
+      return body.seq === 0 ? { ok: false, error: "The voice session is off." } : { ok: true };
+    }, [], (reason: string) => told.push(reason));
+    utterance.begin();
+    for (let i = 0; i < 40; i++) utterance.add(block());
+    await utterance.chain;
+    // It failed while the user was still speaking: the page is not to hold the microphone for an answer.
+    expect(utterance.failed).toBe("The voice session is off.");
+    expect(utterance.awaitsAnswer).toBe(false);
+    expect(await utterance.finish()).toBe("The voice session is off.");
+    expect(posts).toEqual([0]);
+    expect(told).toEqual(["The voice session is off."]);
+  });
+
+  test("a request that was a request and sent whole waits for the answer", async () => {
+    const utterance = new Utterance("u", async () => ({ ok: true }));
+    expect(utterance.awaitsAnswer).toBe(false);
+    utterance.begin();
+    expect(utterance.awaitsAnswer).toBe(true);
+    expect(await utterance.finish()).toBeNull();
+    expect(utterance.awaitsAnswer).toBe(true);
+  });
+
+  test("a failure in the last chunk is the request's", async () => {
+    let calls = 0;
+    const utterance = new Utterance("u", async () => (++calls === 2 ? { ok: false, error: "The host didn't answer." } : { ok: true }));
+    utterance.begin();
+    utterance.add(block());
+    expect(await utterance.finish()).toBe("The host didn't answer.");
+    expect(utterance.awaitsAnswer).toBe(false);
+  });
+});
+
+describe("a microphone that reads live and gives nothing", () => {
+  test("exact zeros for long enough are dead; anything else, even faint, is not", () => {
+    const mic = new DeadMic();
+    let dead = false;
+    for (let ms = 0; ms < deadMicMs - 100; ms += 100) dead = mic.feed(0, 100) || dead;
+    expect(dead).toBe(false);
+    expect(mic.feed(0, 100)).toBe(true);
+    const faint = new DeadMic();
+    for (let ms = 0; ms < deadMicMs * 3; ms += 100) expect(faint.feed(0.00001, 100)).toBe(false);
+  });
+
+  test("a sound in between starts the count again", () => {
+    const mic = new DeadMic();
+    for (let ms = 0; ms < deadMicMs - 100; ms += 100) mic.feed(0, 100);
+    expect(mic.feed(0.0003, 100)).toBe(false);
+    for (let ms = 0; ms < deadMicMs - 100; ms += 100) expect(mic.feed(0, 100)).toBe(false);
+  });
+});
+
+describe("Voice mode's own relay", () => {
+  test("takes two relays of a device at a time, and a third waits for none", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "voice-relay-"));
+    try {
+      const script = join(folder, "relay.sh");
+      writeFileSync(script, `#!/bin/sh\nsleep 0.5\nprintf '{"v":${V},"ok":true}\\n'\n`);
+      chmodSync(script, 0o755);
+      const config = { relay: script } as never;
+      const relay = new Relay(config, V, folder, { total: 4, perKey: 2 });
+      const answers = await Promise.all([1, 2, 3].map(() => relay.ask("voiceStatus", "device")));
+      expect(answers.filter((answer) => answer.ok).length).toBe(2);
+      expect(answers.find((answer) => !answer.ok)).toEqual({ ok: false, error: "The host is busy: try again" });
+      // Another device is not held back by the first.
+      const other = await Promise.all([relay.ask("voiceStatus", "a"), relay.ask("voiceStatus", "b"), relay.ask("voiceStatus", "a")]);
+      expect(other.every((answer) => answer.ok)).toBe(true);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 });
 

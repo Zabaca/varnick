@@ -1,6 +1,6 @@
 # Voice mode on the Phone page talks to a Mac's voice session through its relay, hears and speaks on the Mac, and is kept alive by a quiet tone
 
-Amends [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page now holds the microphone, in the foreground, and sends the host audio) and reads [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md) (the voice session this is the second surface of). The problem and the option are in `docs/problems/phone-page-is-only-a-browser-tab/options/05-voice-mode-talks-to-a-hosts-voice-session.md`.
+Builds on [ADR 0042](0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md) (the voice session this is the second surface of), [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the page and its relay requests) and [ADR 0010](0010-a-panes-turn-comes-from-hooks-that-write-to-the-pane-folder.md) (the turn the answer is read from). Option 05 of `phone-page-is-only-a-browser-tab` is the spec.
 
 A **Voice mode** button on a Mac host's Phone page starts a back-and-forth by voice with that Mac's **Voice session** (`CONTEXT.md`): the same session Hey Varnick reaches at the desk, so a question asked aloud there can be followed up from the phone within the 10 minutes. The user's decisions of 2026-10-16:
 
@@ -8,14 +8,16 @@ A **Voice mode** button on a Mac host's Phone page starts a back-and-forth by vo
 - **No Voice mode on a headless host at first.** It has no transcriber or voice; the page hides the button and the relay says so.
 - **Foreground only,** by the browser's rules, with one measured addition (below).
 
-## The decisions
-
 - **Three relay requests (protocol 30), each one short process.** `voiceAudio` carries one chunk of an utterance (16 kHz 16-bit mono, 1 s, base64; a request is one base64 argument of at most 120,000 bytes, which is why a chunk is small), `voiceAsk` the same ask as text, and `voiceStatus` the ask's events from a count on, polled once a second as `task_run_status` is. A listed device or Mac may ask; only a Mac's app answers (`VoiceRemote`).
 - **The page decides where a request ends** (silence after speech, named constants, a noise floor measured at the start so the tone and a fan are not speech) and sends it while it is still being said, so only the last chunk waits after the last word. The Mac assembles the chunks in order (`VoiceUploads`), transcribes (`VoiceTranscriber`: a single pass of `SpeechTranscriber` over the finished utterance), shows the phone what it heard, and asks the voice session as Hey Varnick does, with the phone's moment, zone and units in the hint (`VoiceSessionHost.ask`).
 - **The reply comes back as the answer's text, its spoken form and its audio** as one 16 kHz mono WAV made on the Mac (`VoiceRender`, which records the Speaker's voice instead of playing it; an answer too long for a reply line goes as text alone). The page plays it through its audio context. While a request is out and its reply plays, the microphone's audio is dropped, so Varnick does not hear itself.
 - **A question or plan is answered in the session's own terminal.** The event names the voice session's zmx session; the page's Open button opens it with take, as any session opens there, and the session is then the user's (ADR 0042). The hidden tab is still never in a tab list: it is reached by that event alone.
 - **A quiet tone keeps the page alive.** The spike on a Pixel (Chrome 155, a tab, 2026-10-16) found a hidden, silent page frozen after 60 s (the websocket closed about 5 s later, and the page was fine on return), and a hidden page that played a 220 Hz tone at 0.02 not frozen for 132 s, its microphone hearing the user throughout and its websocket open. So Voice mode plays that tone from Start to End, and keeps the screen on while the page is shown. A page that is frozen anyway reconnects on its next resume (the microphone, the context, the tone, the screen) and says so in the view.
 - **Nothing of the exchange is kept.** It lives in the view; the page's worker and cache hold none of it; the server logs the method, path, status, device and time; the Mac's timing line holds durations and kinds.
+
+## Amends, for this mode
+
+- [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md): the page now holds the microphone (in the foreground, from a tap) and sends the host audio, as chunks inside the relay requests it already makes; and a page may play a tone to stay unfrozen.
 
 ## Considered Options
 

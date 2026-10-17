@@ -138,6 +138,9 @@ async function main(): Promise<void> {
   if (!self) fail(`tailscale status --json (${config.tailscale}) didn't give this host's MagicDNS name and user`);
 
   const relay = new Relay(config, PROTOCOL_VERSION, homedir());
+  // Voice mode's own, so a poll and a chunk never wait on the sessions and Recent, and it never takes more than two relays of a device (a chunk and a poll)
+  // or four in all.
+  const voiceRelay = new Relay(config, PROTOCOL_VERSION, homedir(), { total: 4, perKey: 2 });
   // The anonymous hello Find Macs sends: no from, by or pair, so it pairs nothing.
   const hello = await relay.ask("hello", null);
   if (!hello.ok) fail(`the relay (${config.relay}) didn't answer a hello: ${hello.error}`);
@@ -393,8 +396,7 @@ async function main(): Promise<void> {
         const parsed = audio ? parseAudioBody(body) : parseAskBody(body);
         if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
         const fields = audio ? audioFields(parsed.value as AudioChunk) : askFields(parsed.value as TextAsk);
-        // Its own slot key, so a poll and a chunk never wait on the sessions and Recent.
-        const taken = shapeTaken(await relay.ask(audio ? "voiceAudio" : "voiceAsk", device.id, fields, undefined, `${device.id}:voice`));
+        const taken = shapeTaken(await voiceRelay.ask(audio ? "voiceAudio" : "voiceAsk", device.id, fields));
         return json(taken.body, taken.status);
       }
       if (path === "/api/end") {
@@ -498,7 +500,7 @@ async function main(): Promise<void> {
     if (path === "/api/voice/status" && request.method === "GET") {
       const query = parseStatusQuery(new URL(request.url).searchParams);
       if (!query.ok) return json({ ok: false, error: query.error }, 400);
-      const answered = shapeStatus(await relay.ask("voiceStatus", device.id, statusFields(query.value), undefined, `${device.id}:voice`));
+      const answered = shapeStatus(await voiceRelay.ask("voiceStatus", device.id, statusFields(query.value)));
       return json(answered.body, answered.status);
     }
     if (path === "/api/home" && request.method === "GET") {

@@ -200,6 +200,8 @@ enum ElevenLabs {
             var buffering = PCMBuffering()
             var heard = false
             for try await byte in bytes {
+                // A recording that is full wants no more of it.
+                if !playback.isAccepting { return .cancelled }
                 watch.heard()
                 if let buffer = buffering.add(byte) {
                     playback.add(buffer)
