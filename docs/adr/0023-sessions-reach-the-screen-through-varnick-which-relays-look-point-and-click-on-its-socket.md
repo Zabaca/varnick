@@ -56,6 +56,7 @@ Every process in a Varnick pane gets Varnick's grants (the correction in ADR 001
 - **Nothing is logged but the tool, the outcome's kind, durations and counts.** Never a label, note, window title, app name or session name.
 - **Changing what `look` returns is a privacy change,** needing this ADR, the README, SECURITY.md and the switch's detail amended, as for ADR 0019.
 - Amended by ADR 0031: "Never Varnick's own window" has its reason now (a session that could click the panel could approve its own actions, and Settings holds the controls that govern sessions), and the rule stands. Panel access gives sessions tools for Varnick through its model instead, with no grant.
+- Amended by ADR 0042: In the voice session nothing asks, `look` and `point` included, since it runs with permissions skipped.
 - **The tools' text is Hey Varnick's:** `ScreenElement.description`, the 255-element cap, the "dimmed" and "under the pointer" marks, no field's value and nothing of a secure field. A fix to the read is a fix to both.
 
 ## Amendments

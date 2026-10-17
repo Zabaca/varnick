@@ -80,6 +80,13 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// load, and an older build ignores it.
     var taskRun: UUID?
 
+    /// The host's voice session (option 09 of `listening-never-answers`), for the whole life of the record: the one Claude session in Home that
+    /// answers spoken requests. Unlike a run it has a pane's full MCP set (and the search tool), and it is started with permissions skipped, which
+    /// the record's `skipPermissions` carries. Its tab is hidden while `runUnopened`, as a run's is. Optional so older records load, and an older
+    /// build reads it as an ordinary pane.
+    var voice: Bool?
+    var isVoice: Bool { voice == true }
+
     /// A run of an automation or a step of a Task's Run: its MCP server lists `notify` (and a step's `task_result`) alone, whatever the switches say.
     var isRun: Bool { automation != nil || taskRun != nil }
 

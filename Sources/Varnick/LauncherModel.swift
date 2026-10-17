@@ -177,6 +177,8 @@ final class LauncherModel: ObservableObject {
     /// The Tasks found from a folder, read off the main thread (option 01 of `work-cant-be-saved-or-chained`, slice 2a), and the host that runs their Runs.
     let taskCatalog = TaskCatalog()
     let taskHost = TaskHost()
+    /// The voice session on this Mac (option 09 of `listening-never-answers`).
+    let voiceSession = VoiceSessionHost()
     /// Bumped to move keyboard focus back into the search field.
     @Published var focusToken = 0
 
@@ -2545,6 +2547,17 @@ final class LauncherModel: ObservableObject {
                 sessionSelection = min(sessionSelection, max(0, shownTabs.count - 1))
             }
             saveSessions()
+            return
+        }
+        // The voice session nobody opened ends with its tab alone: it is no one's to resume, and its conversation is a session like any other.
+        if tab.isHiddenRun, session.record.isVoice {
+            if !tab.remove(session, focusing: false) {
+                closing[tab.id] = nil
+                tabs.remove(at: index)
+                sessionSelection = min(sessionSelection, max(0, shownTabs.count - 1))
+            }
+            saveSessions()
+            strip.refresh()
             return
         }
         // A run nobody opened ends into its automation's run list: not Recent, not an ended card, not Completed.

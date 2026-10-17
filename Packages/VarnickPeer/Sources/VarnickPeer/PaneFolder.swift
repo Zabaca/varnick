@@ -48,6 +48,20 @@ public enum PaneFolder {
 
     static let stopFileName = ".varnick-stop"
 
+    /// The voice session's two markers (option 09 of `listening-never-answers`), written by hooks that only its settings carry: the prompt
+    /// hook's, whose date says the session took a request, and the web hook's, whose date says Claude went to the web. Their contents are empty.
+    public static func voiceTakenFile(for id: UUID) -> URL { url(for: id).appendingPathComponent(voiceTakenFileName) }
+    public static func voiceWebFile(for id: UUID) -> URL { url(for: id).appendingPathComponent(voiceWebFileName) }
+    static let voiceTakenFileName = ".varnick-voice-taken"
+    static let voiceWebFileName = ".varnick-voice-web"
+
+    /// The `Stop` input as saved, with its date. Nil without a file.
+    static func stopInput(for id: UUID) -> (data: Data, savedAt: Date)? {
+        let file = stopFile(for: id)
+        guard let saved = modificationDate(file.path), let data = try? Data(contentsOf: file) else { return nil }
+        return (data, saved)
+    }
+
     /// Removed when a pane starts claude again in a running Varnick (a restart): its tasks died with the last run, but a start within
     /// `staleWindow` of that run's last `Stop` would still read them as this run's.
     public static func clearStop(for id: UUID) {

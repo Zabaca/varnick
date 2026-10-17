@@ -18,6 +18,7 @@ Every host serves a web page, the Phone page, to the user's own devices, such as
 - The protocol version goes up once, for devices as askers and for the controller's name in `status` and `sessions`. Every Mac and the headless host then run one commit (ADR 0009).
 - The server asks nobody outside the tailnet, except to push a notice to the phone: [ADR 0038](0038-each-hosts-phone-page-server-pushes-notices-to-the-phone-through-the-vendors-push-services.md) adds that one outbound request, to the vendors' push services, with its own rules.
 - Funnel stays off. Nothing in Varnick or the installer runs `tailscale funnel`, and each publishes only the one mount 8444 (see the note at the end).
+- The page can hold the user's microphone and send a Mac host audio, in chunks inside relay requests, for Voice mode: [ADR 0043](0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
 - On a headless host a device can be in control. This amends ADR 0009's "always in control" by a Mac.
 
 ## Changed by the user, 2026-10-06: Launchy and the installer publish 8444 themselves

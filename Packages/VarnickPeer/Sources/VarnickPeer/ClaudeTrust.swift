@@ -41,6 +41,15 @@ public enum ClaudeTrust {
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 
+    /// Whether the user has accepted Claude Code's one-time warning for skip-permissions mode: the config file's top-level
+    /// `bypassPermissionsModeAccepted`, that key only. A session started with `--dangerously-skip-permissions` stops at the warning until it is
+    /// accepted, with nobody to answer a hidden one. Nil when the file can't be read, which is no reason to refuse.
+    public static func skipPermissionsAccepted(file: URL? = nil) -> Bool? {
+        guard let data = try? Data(contentsOf: file ?? configFile),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return root["bypassPermissionsModeAccepted"] as? Bool == true
+    }
+
     /// What to tell the user when the folder is known not to be trusted; nil when it is, or when that can't be told.
     public static func note(for folder: String) -> String? {
         guard isTrusted(folder) == false else { return nil }

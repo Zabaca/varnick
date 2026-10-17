@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import VarnickPeer
 
 /// The pure parts of a spoken request (ADR 0015, 0036): the wake phrase, the clock, what a request names, how rows are ordered and
 /// described, and the writer's prompt and reply. None of it touches the app, so each is a seam for a first test once there is a
@@ -105,7 +106,7 @@ enum SpokenText {
     }
 
     /// The most of a request that is kept and sent anywhere.
-    static let maxRequestCharacters = 500
+    static let maxRequestCharacters = VoiceSession.maxRequestCharacters
 
     // MARK: Step 2: read
 
@@ -360,15 +361,7 @@ enum SpokenText {
 
     /// Plain text for the speech: no markdown, one line, the first `sentences` sentences. Nil when the reply holds no text.
     static func spoken(fromReply reply: String, sentences limit: Int) -> String? {
-        let plain = oneLine(reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
-            .replacingOccurrences(of: "`", with: ""))
-        var sentences: [String] = []
-        plain.enumerateSubstrings(in: plain.startIndex..., options: .bySentences) { sentence, _, _, stop in
-            if let sentence = sentence?.trimmingCharacters(in: .whitespaces), !sentence.isEmpty { sentences.append(sentence) }
-            if sentences.count >= limit { stop = true }
-        }
-        let text = sentences.joined(separator: " ")
-        return text.isEmpty ? nil : text
+        SpokenReply.spoken(fromReply: reply, sentences: limit)
     }
 }
 

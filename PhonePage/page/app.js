@@ -8,6 +8,7 @@ import { closeNew, openNew } from "/new.js";
 import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
+import { closeVoice, openVoice } from "/voice.js";
 import { paneSummary, parseTabHash, tabHash, tabTitle } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -83,6 +84,8 @@ function show(home) {
   $("device").textContent = `You are ${home.device.name}`;
   document.title = `${home.host.name} · Phone page`;
   hostName = home.host.name;
+  // Voice mode needs a Mac's transcriber and voice: a headless host has neither.
+  $("voice-mode").hidden = home.host.headless === true;
   titles.clear();
   fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
     for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
@@ -239,7 +242,7 @@ function goHome(text) {
   route();
 }
 
-/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, anything else the home. */
+/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, `#voice` is Voice mode, anything else the home. */
 function route() {
   const tabMatch = parseTabHash(location.hash);
   const match = sessionHash.exec(location.hash);
@@ -247,38 +250,40 @@ function route() {
   const take = match !== null && takeOnce === match[1];
   const takeSession = takeOnce;
   takeOnce = null;
+  // Each view closes the others; the one that opens sets the body's class.
+  const views = { tab: tabMatch !== null, session: match !== null, new: location.hash === "#new", voice: location.hash === "#voice" };
+  if (!views.new) closeNew();
+  if (!views.voice) closeVoice();
+  if (!views.session) closeSession();
+  if (!views.tab) closeTab();
+  document.body.classList.remove("in-new", "in-voice");
   if (tabMatch) {
-    closeNew();
-    closeSession();
     $("home").hidden = true;
-    document.body.classList.remove("in-new");
     document.body.classList.add("in-session");
     document.title = hostName ? `${hostName} · Phone page` : "Phone page";
     openTab({ tab: tabMatch.tab, pane: tabMatch.pane, host: hostName, done: goHome, take: takeSession });
     // Opening a tab is seeing what its notifications said.
     closeNotices(tabMatch.tab);
   } else if (match) {
-    closeNew();
-    closeTab();
     $("home").hidden = true;
-    document.body.classList.remove("in-new");
     document.body.classList.add("in-session");
     // Never a session's title or a prompt: the title goes into the browser's history, and into Chrome Sync.
     document.title = hostName ? `${hostName} · Phone page` : "Phone page";
     openSession({ name: match[1], title: titles.get(match[1]) ?? "", host: hostName, done: goHome, take });
-  } else if (location.hash === "#new") {
-    closeSession();
-    closeTab();
+  } else if (views.new) {
     $("home").hidden = true;
     document.body.classList.remove("in-session");
     document.body.classList.add("in-new");
     document.title = hostName ? `New session · ${hostName}` : "New session · Phone page";
     openNew({ host: hostName, started: ({ session, title, tab }) => enterSession(session, title, true, tab), done: goHome });
+  } else if (views.voice) {
+    $("home").hidden = true;
+    document.body.classList.remove("in-session");
+    document.body.classList.add("in-voice");
+    document.title = hostName ? `Voice mode · ${hostName}` : "Voice mode · Phone page";
+    openVoice({ host: hostName, done: goHome, openSession: (session) => enterSession(session, "Hey Varnick", false) });
   } else {
-    closeSession();
-    closeTab();
-    closeNew();
-    document.body.classList.remove("in-session", "in-new");
+    document.body.classList.remove("in-session");
     $("home").hidden = false;
     load();
   }

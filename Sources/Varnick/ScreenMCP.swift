@@ -243,11 +243,14 @@ enum ScreenMCP {
         static let tasks = Sets(rawValue: 16)
         /// `task_result`, a Claude step's answer: answered by this server alone, and listed only while the pane's folder holds the step's schema.
         static let taskResult = Sets(rawValue: 32)
+        /// `search` (option 09 of `listening-never-answers`): History, Bookmarks and Claude sessions, listed for the voice session alone.
+        static let voiceSearch = Sets(rawValue: 64)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
         static let automationsArgument = "--automations"
         static let tasksArgument = "--tasks"
+        static let voiceSearchArgument = "--search"
 
         /// With none named, the screen tools alone: a session started before Panel access keeps the tools it had.
         init(arguments: [String]) {
@@ -258,6 +261,7 @@ enum ScreenMCP {
             if arguments.contains(Self.tasksArgument) { found.insert(.tasks) }
             if arguments.contains(TaskResultTool.argument) { found.insert(.taskResult) }
             if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
+            if arguments.contains(Self.voiceSearchArgument) { found.insert(.voiceSearch) }
             self = found.isEmpty ? .screen : found
         }
 
@@ -267,12 +271,13 @@ enum ScreenMCP {
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
     /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
-    static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false) -> String {
+    static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
+                              voiceSearch: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
                                     + (automations ? [Sets.automationsArgument] : []) + (tasks ? [Sets.tasksArgument] : [])
-                                    + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []))
+                                    + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : []))
     }
 
     // MARK: The tools
@@ -387,8 +392,8 @@ enum ScreenMCP {
 
     // MARK: The server
 
-    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, the task tools, then `notify` and
-    /// `task_result` (which is listed only while the pane's folder holds a step's schema).
+    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, the task tools, then `notify`,
+    /// `task_result` (which is listed only while the pane's folder holds a step's schema) and the voice session's `search`.
     static func tools(for sets: Sets, pane: UUID? = nil) -> [[String: Any]] {
         var listed: [[String: Any]] = []
         if sets.contains(.screen) { listed += tools }
@@ -397,6 +402,7 @@ enum ScreenMCP {
         if sets.contains(.tasks) { listed += TaskMCP.tools }
         if sets.contains(.notify) { listed.append(NotifyTool.tool) }
         if sets.contains(.taskResult), let pane { listed += TaskResultTool.tools(in: TaskResultTool.folder(for: pane)) }
+        if sets.contains(.voiceSearch) { listed += VoiceSearchMCP.tools }
         return listed
     }
 
@@ -421,6 +427,8 @@ enum ScreenMCP {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.tasks), TaskMCP.names.contains(name) {
                 reply = ask(TaskMCP.requestLine(pane: pane, tool: name, arguments: arguments))
+            } else if sets.contains(.voiceSearch), VoiceSearchMCP.names.contains(name) {
+                reply = ask(VoiceSearchMCP.requestLine(pane: pane, tool: name, arguments: arguments))
             } else if sets.contains(.notify), name == NotifyTool.name {
                 // Answered here: the hook records the call, and nothing is sent to the app.
                 return NotifyTool.call(arguments)

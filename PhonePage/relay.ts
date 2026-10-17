@@ -133,9 +133,12 @@ const concurrentLimit = 8;
 const perDeviceLimit = 4;
 
 export class Relay {
-  private slots = new Slots(concurrentLimit, perDeviceLimit);
+  private slots: Slots;
 
-  constructor(private config: Config, private version: number, private home: string) {}
+  /** `limits` are how many relays may run at once and for one key; Voice mode's own relay has fewer (a chunk and a poll, which is two). */
+  constructor(private config: Config, private version: number, private home: string, limits: { total: number; perKey: number } = { total: concurrentLimit, perKey: perDeviceLimit }) {
+    this.slots = new Slots(limits.total, limits.perKey);
+  }
 
   /** Asks the relay one thing as `by`. Never throws: a relay that fails to start, answer or answer in time is a failed result. */
   async ask(op: string, by: string | null, fields: Record<string, unknown> = {}, limitMs: number = timeoutMs, slotKey?: string): Promise<RelayResult> {

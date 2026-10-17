@@ -65,3 +65,5 @@ So a choice among the user's folder names, or among the past week's times, is on
   - **The route-decisions eval** (`5b4b069`) measured one call with every decision at a p90 of 171–178 ms. "Time", "do", the window and several held. The folder (28–29 of 40) and own (0.86 with the screen on) did not, until the project index and written criteria (option 07, re-run next).
   - Haiku passed every bar as the fallback, at a p90 of 3.2 s. This Mac's Gemma was unusable as a decider, and the user chose to leave it so.
 - **Amends** ADR 0016: the decide step's Text generation fallback returns, as the fallback for every question. **Amends** ADR 0036: the clock and can't-do lists, and the folder and time rules, are replaced by these questions. The problem and the full specification are option 07 of `docs/problems/listening-never-answers/`.
+
+- Amended by ADR 0042: With Voice session on, no decision of a spoken request is asked of Jev or of the Text generation model: Claude decides in the voice session. Nothing of a spoken request is decided by a word list either.

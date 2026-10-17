@@ -287,7 +287,7 @@ When Jev isn't used or fails, the Text generation model answers the same questio
 - **`SpeechSpans`** covers each line from its first sound to its last plus the tail, and covers nothing while Varnick is silent, waiting for the writer or the web.
   - The mic is heard, and written to the transcript, in those gaps. That fixes the stopped branch's review finding.
   - As today, nothing heard while a request is answered wakes Varnick or joins the request.
-- **The transcript** gets the answer or the closing line as a `[varnick]` line, never "Let me check." or "Looking that up.".
+- **The transcript** gets "Let me check." and "Looking that up." as `[varnick]` lines when they are said (changed 2026-10-17; they were left out), then the answer or the closing line.
 - The per-route lines of option 06 are dropped.
 
 **The clock and can't-do, from the decisions** (amended by ADR 0037; the phrase lists go)

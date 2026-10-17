@@ -1,4 +1,5 @@
 import Foundation
+import VarnickPeer
 
 /// Answer from the web (listening-never-answers, option 06's call as option 07 asks it): a question the user's pages, bookmarks and
 /// sessions can't answer goes to their own Claude Code, with WebSearch as its one tool, on their plan. The pure parts: the prompt,
@@ -50,21 +51,9 @@ enum WebAnswer {
     }
 
     /// Claude Code's WebSearch description requires a "Sources:" list of markdown links at the end of every answer, and the prompt
-    /// may not win against it. So the reply is cleaned before the sentence cut: everything from a line starting "Sources" is
-    /// dropped, a markdown link is replaced by its text, and bare web addresses are dropped.
+    /// may not win against it. So the reply is cleaned before the sentence cut (`SpokenReply.stripped`, the voice session's too).
     static func read(_ reply: String) -> Reading {
-        var kept: [Substring] = []
-        for line in reply.split(separator: "\n", omittingEmptySubsequences: false) {
-            // A line that is only "Sources" (bold, a heading, a colon) or starts "Sources:"; not a sentence that begins with the word.
-            let mark = CharacterSet(charactersIn: "#*_ ")
-            let bare = line.trimmingCharacters(in: mark).lowercased()
-            if bare == "sources" || bare == "sources:" || line.drop(while: { "#*_ ".contains($0) }).lowercased().hasPrefix("sources:") { break }
-            kept.append(line)
-        }
-        var text = kept.joined(separator: "\n")
-        text = text.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(https?://|www\.)\S+"#, with: "", options: .regularExpression)
-        let plain = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plain = SpokenReply.stripped(reply)
         if plain.trimmingCharacters(in: CharacterSet(charactersIn: ".*_ \n")) == "UNABLE" { return .unable }
         guard let spoken = SpokenText.spoken(fromReply: plain, sentences: SpokenText.maxSentences) else { return .nothing }
         return .answer(spoken)

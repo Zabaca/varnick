@@ -232,6 +232,33 @@ With Automations on, a Claude session you start can also list, make, edit and sw
 them sends every automation's name, prompt, folder and cadence to Anthropic with the rest of that session, as anything else it reads
 in the conversation; the tools send nothing else, and the list never leaves this Mac but through that session.
 
+### Anthropic, through the Voice session
+
+With Settings › Experimental › **Voice session** on (off by default), every "Hey Varnick" request goes to a Claude Code session of yours in
+Home, out of sight until you open it, in place of Varnick's own steps. It is a session like one you type, so everything it reads goes to
+Anthropic on your plan with it, and the transcripts are kept in Claude Code's own folders on this Mac and are found by session search like any
+session's:
+
+- **What you say after "Hey Varnick",** with a line in front of every request that gives today's date and time, whether it was said on this Mac
+  or from the phone, and the unit system (US or metric), and asks for a short spoken answer.
+- **Whatever the session does for the request:** the files it reads, the commands it runs and their output, the pages it fetches, the web
+  searches it makes (Claude's search words go on to Anthropic's search provider), and pictures of your screen when it uses Screen access's
+  `look` with a picture, which it can with the screen tools on.
+- **What its search tool finds.** The session can search your history, bookmarks and Claude sessions through Varnick, which answers up to 20
+  pages (title, site, address, when, and a description) and 3 sessions (title, folder, when, prompts cut to 300 characters, the conversation id and,
+  for one on this Mac, the transcript's path, or the paired Mac's name). Nothing is filtered or judged first, so rows that do not help go too.
+  The tool is listed for sessions started as the voice session, until they are opened, and the app refuses a call from any other pane; a pane id is not a
+  secret, though, so any process on this Mac that knows the voice session's pane id and can open Varnick's socket could call it, as with the task tools.
+- **The first request and its hint are saved as the session's prompt** in `sessions.json` in Varnick's support folder, with the session's record, as any
+  session's first prompt is. Later requests are in Claude Code's transcript only.
+- **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
+  last request.
+
+While it is on, nothing of a spoken request goes to TypeSafe, and Text generation, the relevance filter's part in a spoken request, Answer from the
+web and Point at the screen are not used for it. The Voice session needs Hey Varnick, Keep sessions running and Claude Code found and logged in.
+What the session does is shown in its tab (Settings › Experimental › Show, or its Needs you notice); Varnick's log says only how long a
+request took, whether the session was started or reused, and how it ended, never a word of the request, the answer or what Claude did.
+
 ### Anthropic, through Screen access
 
 With Screen access on (off by default), the Claude sessions started or restarted after you turn it on can read
@@ -507,6 +534,34 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   than a prompt you type gets. That is your decision, recorded on 2026-10-15, and the mark names the rules a session set. You are told by
   a mark on the automation in Settings and in the Runs tab until you open its editor, switch it or press Seen; there is no notice. Any process on this Mac that can open Varnick's socket can make one the same way, as for Panel access, with no grant.
   The log names the tool and whether it was done, never a name or a prompt.
+
+### The Voice session acts on what the microphone hears
+
+The Voice session runs with permissions skipped: Claude Code never asks before a command, an edit, a fetch or a screen tool, whatever Skip
+permissions says (that was the choice made for it, so a spoken request is not stopped at a dialog nobody is looking at). So anything the
+microphone hears that starts "Hey Varnick" can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
+your own voice misheard, a video or a call played through the speakers (Listening hears the Mac's audio too), or another person in the room.
+It also has Varnick's tools your other sessions have (Screen access and Panel access when they are on, notifications, automations and Tasks),
+which can click, type and press keys without asking. Settings › Experimental says so beside the switch. If that is too much, leave the switch off:
+today's Hey Varnick only reads, searches and answers, and opens nothing.
+
+- **It is a session like any other in what it can reach:** Varnick's Accessibility and Screen Recording are inherited by the commands it runs
+  (see Screen permissions reach every pane, above).
+- **A question or a plan it raises waits for you.** Varnick says "Claude needs your OK in Varnick." and raises Needs you; the session opens from its
+  notice, and what Claude says after that is read in the pane, not spoken.
+- **Its tab is out of sight until you open it,** and once you have, it is yours: Varnick never types into a session you opened, and from its next start or
+  resume it is an ordinary session: it follows your Skip permissions and has neither the search tool nor the voice hooks.
+
+### Voice mode on the phone
+
+Voice mode (the Phone page, on a Mac's page, with the Voice session switch on) sends the phone's microphone audio to that Mac and gets audio back. It is the Voice session's second surface, so everything above holds for it: **anything your phone's microphone hears while Voice mode is on can make the Mac run commands, unasked.**
+
+- **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches it takes for a request (it listens for speech and sends from the first word to a pause, with the 300 ms before the first word, which it keeps in memory while it listens), never continuously. The browser's own microphone indicator is on the whole time.
+- **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.
+- **The audio goes to the Mac over the tailnet and nowhere else.** The Mac turns it into text on-device (Listening's transcriber) and does not keep it; the text goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
+- **Nothing of the exchange is kept on the phone,** and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
+- **A quiet tone plays on the phone for as long as Voice mode runs,** to keep the page from being frozen while it is in the background.
+- **A question the session asks is answered in the session's terminal,** opened from the page with Take over, as any session is.
 
 ### Screen access acts without asking
 

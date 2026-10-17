@@ -255,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // The saved tabs are restored and the notifier reads by now. The first check runs a slot missed while Varnick was quit, once.
         model.startAutomations()
         model.startTasks()
+        model.startVoiceSession()
         PresenceReader.shared.start()
 
         settingsSubs = [

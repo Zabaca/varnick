@@ -29,6 +29,7 @@
   </header>
   <p id="notice" class="notice" role="status" hidden></p>
   <a id="new-session" class="button primary" href="#new">New session</a>
+  <a id="voice-mode" class="button" href="#voice" hidden>Voice mode</a>
   <main>
     <section aria-labelledby="open-heading">
       <h2 id="open-heading">Open tabs</h2>
@@ -91,6 +92,24 @@
   <div class="new-foot">
     <p id="new-status" class="new-status" role="status" hidden></p>
     <button id="start" type="button" class="primary" disabled>Start</button>
+  </div>
+</div>
+
+<div id="voice" hidden>
+  <header class="bar">
+    <button id="voice-back" type="button" aria-label="Back to sessions">←</button>
+    <div class="who">
+      <h1>Voice mode</h1>
+      <p id="voice-host"></p>
+    </div>
+    <button id="voice-end" type="button" hidden>End</button>
+  </header>
+  <div id="voice-log" class="voice-log" role="log" aria-live="polite"></div>
+  <div class="new-foot">
+    <p id="voice-notice" class="new-status" role="status" hidden></p>
+    <p id="voice-state" class="voice-state" role="status"></p>
+    <button id="voice-open" type="button" hidden>Open the session (ends Voice mode)</button>
+    <button id="voice-start" type="button" class="primary">Start</button>
   </div>
 </div>
 

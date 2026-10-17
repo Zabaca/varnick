@@ -164,7 +164,7 @@ enum ElevenLabs {
 
     /// Streams `text` in `voice` into `playback`, with a `key` read beforehand. The caller stops the playback when this fails,
     /// since sound may have begun.
-    static func speak(_ text: String, voice: String, key: String, into playback: SpeechPlayback) async -> Outcome {
+    static func speak(_ text: String, voice: String, key: String, into playback: some SpeechSink) async -> Outcome {
         let sent = Date()
         let watch = Watch(sent: sent)
         return await withTaskGroup(of: Outcome?.self) { group in
@@ -179,7 +179,7 @@ enum ElevenLabs {
         }
     }
 
-    private static func stream(_ text: String, voice: String, key: String, watch: Watch, into playback: SpeechPlayback) async -> Outcome? {
+    private static func stream(_ text: String, voice: String, key: String, watch: Watch, into playback: some SpeechSink) async -> Outcome? {
         guard let body = try? JSONSerialization.data(withJSONObject: ["text": text, "model_id": pinnedModel]),
               let request = request("/v1/text-to-speech/\(pathComponent(voice))/stream?output_format=pcm_24000",
                                     key: key, method: "POST", body: body)
@@ -200,6 +200,8 @@ enum ElevenLabs {
             var buffering = PCMBuffering()
             var heard = false
             for try await byte in bytes {
+                // A recording that is full wants no more of it.
+                if !playback.isAccepting { return .cancelled }
                 watch.heard()
                 if let buffer = buffering.add(byte) {
                     playback.add(buffer)

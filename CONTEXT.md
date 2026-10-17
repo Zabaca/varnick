@@ -278,8 +278,16 @@ The signed copy of Bun inside Varnick.app and the `agent.js` it runs, which writ
 _Avoid_: Agent (an **Agent** is a Claude Code definition), Claude session
 
 **Spoken request**:
-What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused.
+What the user says after the **Wake phrase**. **History**, **Bookmark**s and **Session**s are all searched for it, sessions also by a project's folder name and by when they were used, and it is answered aloud from the rows the **Relevance filter** keeps or, with **Answer from the web** on, from the web when they can't answer it. A question about the time or the date is answered from this Mac's clock. When it asks about something in the window in front of the user, it is answered aloud and with an **Arrow** at that thing. Nothing is ever opened, clicked or focused. With the **Voice session** switch on (Settings › Experimental), it is answered by the **Voice session**, not by Varnick's own steps.
 _Avoid_: Ask (except `--ask`, the command-line flag that runs one), prompt (a **Prompt** starts a session), command, query
+
+**Voice session**:
+A **Host**'s one Claude **Session** in its **Home** that answers **Spoken requests** while the Voice session switch is on (Settings › Experimental, off by default). It is an ordinary pane with everything a pane has, a `search` tool over History, Bookmarks and Claude sessions, and permissions skipped (so anything the microphone hears can run commands). Its tab is out of sight until the user opens it, as a **Run**'s is, but it is not a Run; once opened it is an ordinary session. The first request is its first prompt and a later one is typed into it while it waits; its answer is the turn's last assistant message, spoken. It is reused until 10 minutes pass after its last turn with no request. Hey Varnick on a Mac reaches it, and so does the Phone page's **Voice mode** on a Mac's page (option 05 of `phone-page-is-only-a-browser-tab`). [ADR 0042](docs/adr/0042-a-spoken-request-is-answered-by-the-hosts-voice-session-one-hidden-claude-session-in-home-with-permissions-skipped.md)
+_Avoid_: assistant, spoken conversation
+
+**Voice mode**:
+A button on a Mac **Host**'s Phone page that talks back and forth, by voice, with that Mac's **Voice session**, the one Hey Varnick reaches at the desk. The phone sends its microphone's audio in chunks; the Mac turns it into text with Listening's transcriber, asks the session, and makes the reply into audio in the Voice setting's voice, which the phone plays; each exchange is shown as text too. It works in the foreground, kept alive by a quiet tone, and is not on a headless host. [ADR 0043](docs/adr/0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
+_Avoid_: voice chat, dictation
 
 **Route**:
 The one call that decides what a **Spoken request** means, Jev's or, when Jev isn't used or fails, the Text generation model's: how likely each source is, whether it asks the time or asks for something Varnick can't do, whether it is about the screen, which **Project** and which time it names, whether only the user's own things can answer it, one result or several, and which of its words to search for. It orders the rows and shapes the session search; it never shuts a source out, and no phrase list decides anything.
@@ -298,7 +306,7 @@ Text generation as it writes the answer to a **Spoken request** from the rows th
 _Avoid_: Answerer, model
 
 **Acknowledgement**:
-The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and not written to the transcript. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
+The general line a **Spoken request** gets when the hold ends and its answer isn't ready ("Let me check."), and "Looking that up." when the web is asked. Said before the answer, which is queued behind it, and written to the transcript as `[varnick]` lines, each as it is handed to the voice, so the file reads `[mic]` request, "Let me check.", "Looking that up.", answer. A request whose one line is ready (the clock, something Varnick can't do, nothing found) gets none.
 _Avoid_: Cue, earcon (the wake sound is a sound, not a line)
 
 **Answer from the web**:

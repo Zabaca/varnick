@@ -993,6 +993,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(TaskToolRequestHead.self, from: line)?.tasks != nil {
             return await TaskAccess.shared.answer(line)
         }
+        // A voice session's search request (option 09 of `listening-never-answers`) is told apart the same way, by its own key.
+        if head.op == nil, PeerJSON.decode(VoiceSearchRequestHead.self, from: line)?.search != nil {
+            return await VoiceSearchAccess.shared.answer(line)
+        }
         // `upgrade` and `restart` are read before the version (the relay does the same), and only for a Mac in the list: not a device.
         if let op = head.op.flatMap(PeerOp.init), PeerProtocol.answersAnyVersion(op) {
             guard let by = head.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
@@ -1021,7 +1025,7 @@ final class PeerManager: ObservableObject {
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
             // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
             guard let by = request.by, UUID(uuidString: by) != nil,
-                  peers.contains(where: { $0.id == by }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
+                  peers.contains(where: { Zmx.sameID($0.id, by) }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
             }
             switch request.op {
@@ -1043,6 +1047,13 @@ final class PeerManager: ObservableObject {
         case .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened:
             // Automations on a headless host are that host's: a Mac keeps its own in its own files, through Settings and the tools.
             return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "This Mac") keeps its own automations: only a headless host answers these"))
+        case .voiceAudio, .voiceAsk, .voiceStatus:
+            // Voice mode (option 05 of `phone-page-is-only-a-browser-tab`): for a Mac in the list or a device, as `start` is, read from the file the relay reads.
+            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { Zmx.sameID($0.id, by) }) || MacPeerHost().listsDevice(by) else {
+                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
+            }
+            guard let model else { return starting }
+            return PeerJSON.line(await VoiceRemote.shared.answer(request, by: by, model: model))
         case .attach, .status, .screen, .watch, .tabs, .take, .file, .files, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))

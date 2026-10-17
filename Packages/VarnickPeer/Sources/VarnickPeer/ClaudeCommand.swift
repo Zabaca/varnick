@@ -15,7 +15,7 @@ public enum ClaudeCommand {
     /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
     /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
     /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. The rules for the entries are in `docs/agents/where-it-breaks.md`.
-    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false) -> String {
+    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
@@ -39,9 +39,14 @@ public enum ClaudeCommand {
         if problems {
             // Each entry goes last in its event's list, where it stood before the switch; PreToolUse has no other.
             hooks["SessionStart", default: []].append(.init(command: WorkHooks.sessionStart))
-            hooks["PreToolUse"] = [.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink)]
+            hooks["PreToolUse", default: []].append(.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink))
             hooks["PostToolUse", default: []].append(.init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark))
             hooks["SubagentStop", default: []].append(.init(command: WorkHooks.subagentStop))
+        }
+        if voice {
+            // The voice session's two markers (option 09 of `listening-never-answers`), after every other entry of their events.
+            hooks["UserPromptSubmit", default: []].append(.init(command: VoiceSession.takenCommand))
+            hooks["PreToolUse", default: []].append(.init(matcher: VoiceSession.webMatcher, command: VoiceSession.webCommand))
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -189,13 +194,14 @@ public enum ClaudeCommand {
     /// part of the contract, and user text stays one argument each. `agent` is the one the host has found
     /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
     /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
-    /// and stops at the next option, `--settings`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
+    /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
+    /// start like `taskResult`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
-                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false) -> [String] {
+                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
-            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult)]
+            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])

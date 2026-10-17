@@ -263,6 +263,31 @@ extension TranscriptReader {
         return (tail, start > 0)
     }
 
+    /// The text of the last assistant message in the last 64 KB of the transcript that is dated no earlier than `since`: the answer of a voice
+    /// session's turn when the Stop input has no `last_assistant_message` (an older Claude Code). Nil when there is none.
+    public static func lastAssistantText(path: String, since: Date) -> String? {
+        guard let (tail, startsMidLine) = readTail(path) else { return nil }
+        return lastAssistantText(tail: tail, startsMidLine: startsMidLine, since: since)
+    }
+
+    static func lastAssistantText(tail: Data, startsMidLine: Bool, since: Date) -> String? {
+        var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
+        if startsMidLine, !lines.isEmpty { lines.removeFirst() }
+        let dates = dateParser()
+        for line in lines.reversed() {
+            // A line that doesn't parse may be one being written.
+            guard let entry = line.withUnsafeBytes({ object($0) }) else { continue }
+            guard entry["type"] as? String == "assistant", entry["isSidechain"] as? Bool != true,
+                  let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)) else { continue }
+            if at < since { return nil }
+            let blocks = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+            let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return text }
+        }
+        return nil
+    }
+
     static func stoppedAt(tail: Data, startsMidLine: Bool) -> Date? {
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
         if startsMidLine, !lines.isEmpty { lines.removeFirst() }

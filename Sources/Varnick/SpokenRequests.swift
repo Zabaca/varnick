@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import VarnickPeer
 
 /// Hey Varnick (ADR 0015): while Listening is on, a mic phrase that starts with the wake phrase becomes a spoken request, which
 /// Varnick answers aloud. Nothing is selected or opened, and the one thing shown is the arrow of a request about the screen
@@ -160,7 +161,7 @@ final class SpokenRequests {
         phase = .answering
         epoch += 1
         let epoch = epoch
-        let saying = SpokenPipeline.Outcome.nothingToSearch.spoken
+        let saying = Settings.shared.voiceSessionOn ? VoiceLines.wakeAlone : SpokenPipeline.Outcome.nothingToSearch.spoken
         working = Task { [weak self] in
             guard !Task.isCancelled else { return }
             self?.record(saying)
@@ -205,6 +206,8 @@ final class SpokenRequests {
     /// Starts routing, searching and judging for `text` at once, unless that already runs for exactly this text. A run for
     /// older text is cancelled and its result dropped whenever it ends. Nothing is written or spoken from here.
     private func speculate(on text: String) {
+        // With the voice session on nothing runs while the request is being said: the session gets it after the hold (option 09).
+        guard !Settings.shared.voiceSessionOn else { return }
         var restarts = 0
         if let current = speculation {
             guard current.text != text else { return }
@@ -231,13 +234,25 @@ final class SpokenRequests {
 
     private func dispatch() {
         // Every change to the text of a request being collected went through `speculate`, so this run is for exactly this text.
-        guard case .collecting(let request) = phase, let speculated = speculation else { return }
+        guard case .collecting(let request) = phase else { return }
+        let voice = Settings.shared.voiceSessionOn
+        let speculated = speculation
+        // The switch was turned on or off while the request was said: nothing was prepared for the other way, so the request is dropped.
+        guard voice || speculated != nil else {
+            holding?.cancel()
+            phase = .idle
+            return
+        }
         holding?.cancel()
         phase = .answering
         epoch += 1
         let epoch = epoch
         working = Task { [weak self] in
-            await self?.answer(request, speculated: speculated)
+            if voice {
+                await self?.answerByVoiceSession(request)
+            } else if let speculated {
+                await self?.answer(request, speculated: speculated)
+            }
             guard let self, self.epoch == epoch else { return }
             self.speculation = nil
             self.phase = .idle
@@ -264,9 +279,12 @@ final class SpokenRequests {
         let voice = Speaker.shared.queue()
         /// The lines said, by kind: fixed lines are named, the answer is "answer". Never what was said.
         var lines: [(kind: String, said: Date)] = []
+        /// Each line is written to the transcript as it is handed to the voice, so the file keeps the order they are said in: the `[mic]` request already
+        /// there, "Let me check.", "Looking that up.", then the answer.
         func say(_ kind: String, _ text: String) {
             guard !text.isEmpty else { return }
             lines.append((kind, Date()))
+            record(text)
             voice.say(text)
         }
 
@@ -336,8 +354,7 @@ final class SpokenRequests {
                 run?.screen?.miss = .gone
             }
         }
-        // The answer or the closing line is written to the transcript; "Let me check." and "Looking that up." say nothing it doesn't.
-        record(saying)
+        // The answer or the closing line is written to the transcript, as "Let me check." and "Looking that up." were when they were said.
         say("answer", saying)
         let speeches = await voice.finished()
         if drawn, !Task.isCancelled { ArrowOverlay.shared.hide(after: ArrowOverlay.lingers) }
@@ -362,6 +379,75 @@ final class SpokenRequests {
                                  upAfterSpeech: arrowUp.map { $0.timeIntervalSince(request.lastEnd) })
               + "lines: \(spoken), "
               + "voice \(speeches.last?.by ?? "-")")
+    }
+
+    /// With the voice session on (option 09 of `listening-never-answers`), the request goes to the host's voice session and its lines are said as the
+    /// session's request goes through them, each when the one before it ends (`Speaker.queue`): "Let me check." when the session has taken it,
+    /// "Looking that up." when Claude goes to the web, then the answer, cleaned and cut to two sentences. Nothing of the request, the answer or what
+    /// Claude does is logged: the timing line holds durations and kinds.
+    private func answerByVoiceSession(_ request: Request) async {
+        let began = Date()
+        let voice = Speaker.shared.queue()
+        var lines: [(kind: String, said: Date)] = []
+        /// Every line goes to the transcript as it is handed to the voice (`record`), so the file keeps the order they are said in.
+        func say(_ kind: String, _ text: String) {
+            guard !text.isEmpty else { return }
+            lines.append((kind, Date()))
+            record(text)
+            voice.say(text)
+        }
+        var how = "-"
+        var tookAfter: TimeInterval?
+        var looked = false
+        var ending = "-"
+        var endedAfter: TimeInterval?
+        for await update in model.voiceSession.ask(request.text, device: .mac) {
+            switch update {
+            case .began(let why):
+                how = why.map { "started, \($0.rawValue)" } ?? "reused"
+            case .refused(let refusal):
+                ending = "refused, \(refusal.logKind)"
+                say("failed", refusal.spoken)
+            case .event(let event):
+                switch event {
+                case .taken:
+                    tookAfter = Date().timeIntervalSince(began)
+                    say("let me check", VoiceLines.taken)
+                case .lookingUp:
+                    looked = true
+                    say("looking that up", VoiceLines.lookingUp)
+                case .needsYou:
+                    ending = "needs you"
+                    say("needs you", VoiceLines.needsYou)
+                case .answered(let text):
+                    ending = "answered"
+                    let saying = VoiceReply.speakable(text) ?? VoiceLines.noAnswer
+                    say("answer", saying)
+                case .noAnswer:
+                    ending = "no answer"
+                    say("answer", VoiceLines.noAnswer)
+                case .failed(let failure):
+                    ending = "failed, \(failure.logKind)"
+                    say("failed", failure == .notTaken ? VoiceLines.notTaken : VoiceLines.failed)
+                case .deadline:
+                    ending = "deadline"
+                    say("slow", VoiceLines.slow)
+                }
+                if ending != "-", endedAfter == nil { endedAfter = Date().timeIntervalSince(began) }
+            }
+        }
+        // Cancelled (Hey Varnick off, Listening stopped): the voice stops with it, and the session's turn goes on.
+        guard !Task.isCancelled else { return }
+        let speeches = await voice.finished()
+        func afterSpeech(_ date: Date?) -> String { date.map { $0.timeIntervalSince(request.lastEnd).secondsText } ?? "-" }
+        let spoken = lines.enumerated().map { index, line in
+            "\(line.kind) said \(afterSpeech(line.said)), first heard \(afterSpeech(index < speeches.count ? speeches[index].first : nil))"
+        }.joined(separator: ", ")
+        NSLog("Varnick: spoken request timing (voice session): said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
+              + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
+              + "held \(began.timeIntervalSince(request.lastArrived).secondsText), session \(how), "
+              + "taken after \(tookAfter?.secondsText ?? "-"), web \(looked ? "seen" : "not seen"), "
+              + "ended \(ending) after \(endedAfter?.secondsText ?? "-"), lines: \(spoken), voice \(speeches.last?.by ?? "-")")
     }
 
     /// The route, search, judge and kept count of the timing line: durations, kinds and counts, never a word, a project's name or a row.
@@ -433,5 +519,60 @@ final class SpokenRequests {
     /// asked about (ADR 0015): deleting this call leaves the answer out.
     private func record(_ saying: String) {
         Transcript.append(.varnick, saying)
+    }
+}
+
+/// The lines Hey Varnick says for the voice session (option 09 of `listening-never-answers`); another surface words its own.
+enum VoiceLines {
+    static let taken = "Let me check."
+    static let lookingUp = WebAnswer.looking
+    static let needsYou = "Claude needs your OK in Varnick."
+    static let noAnswer = "I couldn't answer that."
+    static let failed = "Claude Code isn't answering."
+    static let notTaken = "Claude didn't take that."
+    static let slow = "That's taking a while. I'll let you know when it's done."
+    static let wakeAlone = "Ask me something."
+    static let off = "The voice session is off."
+    static let needsKeepSessions = "The voice session needs Keep sessions running."
+    static let busy = "I'm still on your last request."
+    static let needsSkipAccepted = "Run claude with the dangerously skip permissions flag once in a pane, accept its warning, and ask again."
+}
+
+extension VoiceSessionHost.Refusal {
+    /// What Hey Varnick says: the cause where it is the user's to fix, else that Claude Code isn't answering.
+    var spoken: String {
+        switch self {
+        case .off: VoiceLines.off
+        case .needsKeepSessions: VoiceLines.needsKeepSessions
+        case .busy: VoiceLines.busy
+        case .needsSkipAccepted: VoiceLines.needsSkipAccepted
+        case .notSent: VoiceLines.notTaken
+        case .couldntStart, .notLoggedIn: VoiceLines.failed
+        }
+    }
+}
+
+extension VoiceSessionHost.Refusal {
+    /// The kind for the timing line: never a reason's own words.
+    var logKind: String {
+        switch self {
+        case .off: "off"
+        case .needsKeepSessions: "needs keep sessions"
+        case .needsSkipAccepted: "needs skip accepted"
+        case .notLoggedIn: "not logged in"
+        case .busy: "busy"
+        case .couldntStart: "couldn't start"
+        case .notSent: "not sent"
+        }
+    }
+}
+
+extension VoiceWatch.Failure {
+    var logKind: String {
+        switch self {
+        case .notTaken: "not taken"
+        case .turnFailed: "turn failed"
+        case .sessionGone: "session gone"
+        }
     }
 }

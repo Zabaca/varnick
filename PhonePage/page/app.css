@@ -177,3 +177,15 @@ button.chip[aria-pressed="true"] { background: var(--accent); color: var(--bg); 
 .new-status.error { color: var(--warn); }
 #start { min-height: 52px; font-size: 17px; }
 #start:disabled { opacity: .45; }
+
+/* Voice mode fills the screen: the exchange scrolls, and the state line and Start stay at the bottom. */
+body.in-voice { height: var(--page-height, 100dvh); overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
+#voice { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#voice .bar { padding: 8px 0; }
+.voice-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.voice-line { margin: 0; padding: 8px 12px; border-radius: 12px; max-width: 88%; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); }
+.voice-line.you { align-self: flex-end; border-color: var(--accent); }
+.voice-line.note { align-self: center; max-width: 100%; background: none; border: none; font-size: 13px; color: var(--warn); text-align: center; }
+.voice-state { margin: 0; font-size: 18px; font-weight: 600; text-align: center; }
+#voice-start { min-height: 52px; font-size: 17px; }
+#voice-open { min-height: 48px; }
