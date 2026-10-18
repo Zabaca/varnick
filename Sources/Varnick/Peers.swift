@@ -1020,7 +1020,7 @@ final class PeerManager: ObservableObject {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
             }
             return PeerJSON.line(await model.hostDone(request))
-        case .start, .resume, .end, .arrange, .reopen:
+        case .start, .resume, .end, .arrange, .reopen, .restartPane:
             guard let model else { return starting }
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
             // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
@@ -1033,6 +1033,7 @@ final class PeerManager: ObservableObject {
             case .resume: return PeerJSON.line(await model.hostResumeConversation(request, by: by))
             case .arrange: return PeerJSON.line(await model.hostArrange(request, by: by))
             case .reopen: return PeerJSON.line(await model.hostReopen(request, by: by))
+            case .restartPane: return PeerJSON.line(await model.hostRestartPane(request, by: by))
             default: return PeerJSON.line(await model.hostEnd(request, by: by))
             }
         case .projects:

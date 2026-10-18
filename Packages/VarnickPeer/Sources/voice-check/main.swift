@@ -329,7 +329,7 @@ let askID = "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d"
 let otherID = "9c1a7d52-0e3b-4a6f-8d21-6b4e5f7a8c90"
 let bytes = { (count: Int) in Data(repeating: 1, count: count) }
 
-expect("protocol: this is 31", PeerProtocol.version == 31)
+expect("protocol: this is 32", PeerProtocol.version == 32)
 
 var voiceRequest = PeerRequest(.voiceAsk)
 voiceRequest.voice = PeerVoiceAsk(id: askID, text: "what time is it", moment: 1_760_000_000, zone: "America/Denver", units: "us")

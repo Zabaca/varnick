@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 31
+    public static let version = 32
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -180,6 +180,11 @@ public enum PeerOp: String, Codable, Sendable {
     case voiceAudio
     case voiceAsk
     case voiceStatus
+    /// Restart a Claude pane (`PeerRequest.tab` and `pane`) that the asker controls (protocol 32): the host ends the pane's claude and starts it again in
+    /// the same pane with `--resume` on its conversation, still labelled for the asker with the origin it had, and replies once the session runs. A Mac
+    /// does it for a pane another machine controls, which its own Restart cannot (`ClaudeSession.restartForPeer`); a headless host does it in its own
+    /// code. Only the machine in control may ask, and a listed device may.
+    case restartPane
 }
 
 /// What kind of machine answers an `upgrade`.

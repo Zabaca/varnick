@@ -3659,6 +3659,39 @@ final class LauncherModel: ObservableObject {
         return .success()
     }
 
+    /// A peer's `restartPane` (protocol 32): the machine in control of a tab restarts one of its Claude panes, ending its claude and starting it again
+    /// in the same pane with `--resume`, labelled for the asker (`ClaudeSession.restartForPeer`). The tab has to be the asker's whole, as for `end`
+    /// of a pane. The reply comes once the new session runs and names the asker.
+    func hostRestartPane(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        let here = PeerIdentity.name ?? "this Mac"
+        guard Zmx.isEnabled else {
+            return .failure("Keep sessions running is off on \(here). Turn it on in Settings there, since a session another machine attaches to runs in zmx.")
+        }
+        guard let tabID = request.tab.flatMap(UUID.init(uuidString:)), let paneID = request.pane.flatMap(UUID.init(uuidString:)) else {
+            return .failure("Not a Varnick tab or pane id")
+        }
+        guard let tab = tabs.first(where: { $0.id == tabID && $0.host == nil }), let pane = tab.sessions.first(where: { $0.id == paneID }) else {
+            return .failure("That pane isn't open on \(here)")
+        }
+        guard pane.isClaude else { return .failure("Only a Claude session restarts") }
+        if let denied = await refusalUnlessControlled(tab, by: peer) { return denied }
+        if let failure = await pane.restartForPeer(peer) { return .failure(failure) }
+        let name = Zmx.sessionName(paneID)
+        for _ in 0..<80 {
+            let labelled = await Task.detached { Zmx.labels(of: name).map { Zmx.isVarnick($0) && Zmx.sameID(Zmx.control(in: $0), peer) } ?? false }.value
+            if labelled {
+                var reply = PeerReply.success()
+                reply.folder = pane.record.directory
+                reply.tab = tab.id.uuidString.lowercased()
+                return reply
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            // Claude exiting as it started closes the pane.
+            if !tabs.contains(where: { $0.contains(pane) }) { return .failure("Claude exited as it started on \(here)") }
+        }
+        return .failure("The session didn't start again on \(here)")
+    }
+
     /// A peer's `arrange`: the machine in control moved a divider or renamed the tab.
     func hostArrange(_ request: PeerRequest, by peer: String) async -> PeerReply {
         guard let id = request.tab.flatMap(UUID.init(uuidString:)), let layout = request.layout else {
