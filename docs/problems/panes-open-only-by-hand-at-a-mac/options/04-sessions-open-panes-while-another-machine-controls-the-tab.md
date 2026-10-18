@@ -78,7 +78,7 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 
 - A headless host's sessions, and a session in a tab of another machine shown here (option 02).
 - Closing one pane from the phone.
-- Lifting the refusal for Panel access's other tools in a controlled tab (an open question below).
+- Lifting the refusal for Panel access's other tools in a controlled tab (`panel`, `board_read` and `pane_read` are lifted, see the decision below; `show`, `keys` and the Outline stay refused).
 - Telling the controller at once rather than at its next listing: it would need a request the host sends, which it never does.
 
 ## Further Notes
@@ -99,5 +99,5 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 - **Unverified race:** a Take over by another machine at the moment a pane is made can leave the new pane labelled for the old controller. The tab then has no control, and a second Take over mends it, since it relabels every running pane.
 - **Covers part of option 02:** that option's first bullet, a tab another machine controls on a Mac. Option 02 stays proposed for the headless host.
 - **Open decisions, each with the recommendation first:**
-  - **`pane_close` while the controller has the pane open.** Recommended: refused while a client is attached to its session. On the phone that is the pane shown. A Mac in control attaches every Claude and terminal pane of the tab once it takes it (ADR 0034), so there those are closed by the user's own close key, and pages, apps and files by the session. Else: option 01's rule alone, so a session may close the pane the user is looking at on the phone.
-  - **`pane_read` and `board_read` in a controlled tab.** Recommended: leave them refused in this option, as the user asked about opening. Lifting them is a small follow-up, and would let a session read the helper it opened while the phone controls the tab. `panel`, `show`, `keys` and the Outline act on or describe the Mac's screen, which nobody at the phone sees, and stay refused either way.
+  - **`pane_close` while the controller has the pane open.** Recommended: refused while a client is attached to its session. On the phone that is the pane shown. A Mac in control attaches every Claude and terminal pane of the tab once it takes it (ADR 0034), so there those are closed by the user's own close key, and pages, apps and files by the session. Else: option 01's rule alone, so a session may close the pane the user is looking at on the phone. **Decided 2026-10-17: the recommendation.**
+  - **`pane_read` and `board_read` in a controlled tab.** Recommended: leave them refused in this option, as the user asked about opening. Lifting them is a small follow-up, and would let a session read the helper it opened while the phone controls the tab. `panel`, `show`, `keys` and the Outline act on or describe the Mac's screen, which nobody at the phone sees, and stay refused either way. **Decided 2026-10-17, against the recommendation (the user wants sessions unlimited): the refusal is lifted for `pane_read`, `board_read` and `panel` in a tab of this Mac that another machine controls. `show`, `keys`, the Outline's tools and the screen tools keep it; nothing that sends keys to a pane changes.**

@@ -3507,6 +3507,23 @@ final class LauncherModel: ObservableObject {
         return await Task.detached { names.compactMap { Zmx.labels(of: $0) } }.value
     }
 
+    /// Who has the keyboard of a tab of this Mac, read from the labels of its running Claude and terminal panes: a session in the tab adds panes for
+    /// that machine (`PanelAccess.panes`, option 04 of `panes-open-only-by-hand-at-a-mac`). `machine` only when every one of them names the same
+    /// machine and it isn't this Mac; `here` when none names another; `mixed` mid take over; `nobody` with nothing running to read.
+    enum TabController: Equatable {
+        case machine(String), here, mixed, nobody
+    }
+
+    func controller(of tab: ClaudeTab) async -> TabController {
+        let labels = await runningLabels(of: tab)
+        guard !labels.isEmpty else { return .nobody }
+        let controls = labels.map { Zmx.control(in: $0) }
+        let others = controls.compactMap { $0 }.filter { !Zmx.sameID($0, PeerIdentity.id) }
+        guard !others.isEmpty else { return .here }
+        guard others.count == controls.count, let first = others.first, others.allSatisfy({ Zmx.sameID($0, first) }) else { return .mixed }
+        return .machine(first)
+    }
+
     /// Nil when the asker is in control of the tab: every running Claude and terminal pane of it names the asker, a tab being one machine's
     /// whole. Only that machine changes its layout (ADR 0034), so the host checks it whatever the asker believes. Else the refusal.
     private func refusalUnlessControlled(_ tab: ClaudeTab, by peer: String) async -> PeerReply? {

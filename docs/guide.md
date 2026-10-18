@@ -371,8 +371,10 @@ is not brought up, so with the panel hidden or another tab showing, the pane is 
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude
 subscription, shows on the board and raises notices like any pane. **It follows your Skip permissions setting, but never skips
 permission checks when the session that opened it was started without skipping them.** `pane_close` closes a pane that session
-opened, as ⌘W would, until you first click, type in or focus it: after that it is yours. Neither works in a tab another Mac or
-a device controls. Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
+opened, as ⌘W would, until you first click, type in or focus it: after that it is yours. Both work in a tab another Mac or the
+phone controls, too: the pane is added for that machine and shows there within about 5 seconds, and `pane_close` leaves a Claude or
+terminal pane that machine has open at that moment. In such a tab `panel`, `board_read` and `pane_read` answer as they do anywhere;
+`show`, `keys` and the Outline's tools still don't. Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows

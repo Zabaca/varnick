@@ -236,12 +236,18 @@ final class PanelAccess {
         var counts: String?
     }
 
+    /// The tools that answer a session whose pane another machine controls, in a tab of this Mac: the two pane tools (option 04 of
+    /// `panes-open-only-by-hand-at-a-mac`) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
+    /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read"]
+
     /// In order: Varnick starting, the pane, then the tool.
     private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
-        let caller = try callingPane(request.pane, in: model)
+        let lifted = Self.answersControlled.contains(request.tool)
+        let caller = try callingPane(request.pane, in: model, allowingControlled: lifted)
         prune(in: model)
-        if PaneMCP.names.contains(request.tool) { return try panes(request, model, caller: caller) }
+        if PaneMCP.names.contains(request.tool) { return try await panes(request, model, caller: caller) }
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
         if request.tool == "show" {
             let (text, kind) = try show(request.args, model, caller: caller)
@@ -254,7 +260,7 @@ final class PanelAccess {
         guard acts else {
             let text = try await view.read(request.args, caller: caller)
             // A read may have waited (the Outline's file): the pane can have changed meanwhile.
-            _ = try callingPane(request.pane, in: model)
+            _ = try callingPane(request.pane, in: model, allowingControlled: lifted)
             return Answered(text: text)
         }
         guard let action = request.args["action"], type.actionSpecs.contains(where: { $0.name == action }) else {
@@ -275,11 +281,13 @@ final class PanelAccess {
     }
 
     /// The calling pane's id, or why it may not call.
-    private func callingPane(_ text: String, in model: LauncherModel) throws -> UUID {
+    private func callingPane(_ text: String, in model: LauncherModel, allowingControlled: Bool = false) throws -> UUID {
         switch CallingPane.find(text, in: model) {
         case .found(let id, _, _): return id
         case .missing: throw PanelRefusal.noPane
-        case .controlled: throw PanelRefusal.controlled
+        case .controlled(_, let session):
+            guard allowingControlled else { throw PanelRefusal.controlled }
+            return session.id
         }
     }
 
@@ -425,7 +433,7 @@ final class PanelAccess {
             focus = "the search field"
         }
         // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`; no other pane is named here.
-        if !listsCaller, case .found(_, let tab, _) = CallingPane.find(caller.uuidString, in: model) {
+        if !listsCaller, let tab = CallingPane.find(caller.uuidString, in: model).located?.tab {
             lines.append("This session: \(id(for: caller, caller: caller)) (in the tab \"\(tab.name ?? tab.focused.label)\")")
         }
         if model.pendingSplit != nil {

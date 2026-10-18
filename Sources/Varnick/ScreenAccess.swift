@@ -141,17 +141,26 @@ indirect enum ScreenRefusal: Error {
 }
 
 /// The pane a session's tool call comes from, for Screen access and Panel access alike: a Claude pane on this Mac, which no other Mac or
-/// device controls (it would show a card, with no screen of its own).
+/// device controls (it would show a card, with no screen of its own). Panel access lifts that for the pane tools and the reads
+/// (`PanelAccess.answersControlled`), which `located` serves.
 enum CallingPane {
     case found(id: UUID, tab: ClaudeTab, session: ClaudeSession)
     case missing
-    case controlled
+    case controlled(tab: ClaudeTab, session: ClaudeSession)
+
+    /// The tab and session, whether or not another machine controls the session.
+    var located: (tab: ClaudeTab, session: ClaudeSession)? {
+        switch self {
+        case .found(_, let tab, let session), .controlled(let tab, let session): (tab, session)
+        case .missing: nil
+        }
+    }
 
     @MainActor static func find(_ text: String, in model: LauncherModel) -> CallingPane {
         guard let id = UUID(uuidString: text) else { return .missing }
         for tab in model.tabs {
             guard let session = tab.sessions.first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { continue }
-            if case .controlled = session.away { return .controlled }
+            if case .controlled = session.away { return .controlled(tab: tab, session: session) }
             return .found(id: id, tab: tab, session: session)
         }
         return .missing
