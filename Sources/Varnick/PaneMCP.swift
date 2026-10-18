@@ -42,7 +42,7 @@ enum PaneMCP {
             + "does not. An app runs that app's code, outside Claude Code's permission checks, and a page loads in Varnick's browser with the user's cookies. It is an ordinary pane: the user can watch it, type into it and close it, it raises notices "
             + "and is on the board, and it lists these tools too. Open only what the user asked for or what the work plainly needs: a Claude session draws on the "
             + "user's Claude subscription and memory, nothing limits how many panes are opened, and each open halves a place again. Use "
-            + "pane_read and board_read to read a terminal's screen or a session's turn. Refused in a tab that another Mac or a device controls.",
+            + "pane_read and board_read to read a terminal's screen or a session's turn. In a tab that another Mac or the phone controls the pane is added for that machine (a Claude or terminal pane is labelled for it) and shows there within about 5 seconds.",
         properties: [
             "kind": ["type": "string", "enum": OpenedPaneKind.allCases.map(\.rawValue), "description": "What to open."],
             "folder": ["type": "string", "description": "For terminal and claude: the folder to start in. Defaults to this session's folder; it must be this session's project or inside it, a worktree under it included."],
@@ -57,7 +57,7 @@ enum PaneMCP {
     private static let closeTool = tool(close,
         summary: "Closes a pane this session opened with pane_open, as the user's close key would: a Claude pane's conversation goes to the tab's history and a "
             + "terminal ends. `id` is the pane's id from pane_open's reply. Refused for this session's own pane, for a pane it did not open, and for one the "
-            + "user has focused since: the first time the user focuses a pane a session opened, it is theirs. Refused in a tab that another Mac or a device controls.",
+            + "user has focused since: the first time the user focuses a pane a session opened, it is theirs. In a tab that another Mac or the phone controls it closes the pane there too (the controller sees it go), but not a Claude or terminal pane that machine has open right now.",
         properties: ["id": ["type": "string", "description": "The pane's id (s…) from pane_open."]],
         required: ["id"])
 }

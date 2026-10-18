@@ -32,6 +32,8 @@ enum PanelRefusal: Error {
     case keysRefused(String)
     /// `keys` sent some of its characters and keys and then stopped, with the reason.
     case keysStopped(String, sent: PanelKeyCount, asked: PanelKeyCount)
+    /// A pane tool's refusal in a tab another machine controls: the same message, marked in the log.
+    indirect case inControlledTab(PanelRefusal)
 
     @MainActor var message: String {
         switch self {
@@ -50,12 +52,14 @@ enum PanelRefusal: Error {
         case .refused(let why): "Nothing was changed: \(why)"
         case .keysRefused(let why): "Nothing was sent: \(why)"
         case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
+        case .inControlledTab(let refusal): refusal.message
         }
     }
 
     /// Counts for the log: how far a `keys` call got, never what it pressed.
     var logCounts: String {
         if case .keysStopped(_, let sent, let asked) = self { return sent.of(asked) }
+        if case .inControlledTab(let refusal) = self { return refusal.logCounts }
         return ""
     }
 
@@ -76,6 +80,7 @@ enum PanelRefusal: Error {
         case .refused: "edit refused"
         case .keysRefused: "keys refused"
         case .keysStopped: "keys stopped"
+        case .inControlledTab(let refusal): refusal.logKind + " controlled"
         }
     }
 }
@@ -236,12 +241,18 @@ final class PanelAccess {
         var counts: String?
     }
 
+    /// The tools that answer a session whose pane another machine controls, in a tab of this Mac: the two pane tools (option 04 of
+    /// `panes-open-only-by-hand-at-a-mac`) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
+    /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read"]
+
     /// In order: Varnick starting, the pane, then the tool.
     private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
-        let caller = try callingPane(request.pane, in: model)
+        let lifted = Self.answersControlled.contains(request.tool)
+        let caller = try callingPane(request.pane, in: model, allowingControlled: lifted)
         prune(in: model)
-        if PaneMCP.names.contains(request.tool) { return try panes(request, model, caller: caller) }
+        if PaneMCP.names.contains(request.tool) { return try await panes(request, model, caller: caller) }
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
         if request.tool == "show" {
             let (text, kind) = try show(request.args, model, caller: caller)
@@ -254,7 +265,7 @@ final class PanelAccess {
         guard acts else {
             let text = try await view.read(request.args, caller: caller)
             // A read may have waited (the Outline's file): the pane can have changed meanwhile.
-            _ = try callingPane(request.pane, in: model)
+            _ = try callingPane(request.pane, in: model, allowingControlled: lifted)
             return Answered(text: text)
         }
         guard let action = request.args["action"], type.actionSpecs.contains(where: { $0.name == action }) else {
@@ -275,11 +286,13 @@ final class PanelAccess {
     }
 
     /// The calling pane's id, or why it may not call.
-    private func callingPane(_ text: String, in model: LauncherModel) throws -> UUID {
+    private func callingPane(_ text: String, in model: LauncherModel, allowingControlled: Bool = false) throws -> UUID {
         switch CallingPane.find(text, in: model) {
         case .found(let id, _, _): return id
         case .missing: throw PanelRefusal.noPane
-        case .controlled: throw PanelRefusal.controlled
+        case .controlled(_, let session):
+            guard allowingControlled else { throw PanelRefusal.controlled }
+            return session.id
         }
     }
 
@@ -424,9 +437,11 @@ final class PanelAccess {
             lines.append("Showing: the search (\(Self.modeText(model.mode)); the field is \(model.query.isEmpty ? "empty" : "not empty"))")
             focus = "the search field"
         }
-        // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`; no other pane is named here.
-        if !listsCaller, case .found(_, let tab, _) = CallingPane.find(caller.uuidString, in: model) {
+        // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`, and the panes of its own tab (none of
+        // another's): the ids of panes it opened before a restart, which the board does not list, come from here.
+        if !listsCaller, let tab = CallingPane.find(caller.uuidString, in: model).located?.tab {
             lines.append("This session: \(id(for: caller, caller: caller)) (in the tab \"\(tab.name ?? tab.focused.label)\")")
+            lines += tabLines(tab, caller: caller, showing: false)
         }
         if model.pendingSplit != nil {
             lines.append("Over it: the split picker")
@@ -454,9 +469,9 @@ final class PanelAccess {
     }
 
     /// A tab: its name and its panes, each with its id, kind and title, the focused one and this session's marked.
-    private func tabLines(_ tab: ClaudeTab, caller: UUID) -> [String] {
+    private func tabLines(_ tab: ClaudeTab, caller: UUID, showing: Bool = true) -> [String] {
         let name = tab.name ?? tab.focused.label
-        var lines = ["Showing: the tab \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s"):"]
+        var lines = [(showing ? "Showing: the tab" : "This session's tab (not showing):") + " \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s"):"]
         for pane in tab.sessions {
             var marks: [String] = []
             if pane === tab.focused { marks.append("focused") }

@@ -453,6 +453,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true) + [paneIDVariable]
         startInTerminal(shell, ["-l"], environment: env)
+        // As a Claude pane started for a peer does (`launchClaude`): this client lets go once the label names the peer.
+        if startedFor != nil { checkControlAfterAttach() }
     }
 
     /// Runs the command in the pane's zmx session when that is on, else directly. zmx runs it
@@ -1172,6 +1174,17 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     private enum TakeOver { case taken, gone, refused }
+
+    /// A pane started for another machine (`startedFor`) that this Mac's client has not yet let go of: `takeOver(tabOf:)` has no card to take for it.
+    var isStartingForPeer: Bool { startedFor != nil && runsInZmx && !isOnPeer && !clientEnded && !finished && away == nil }
+
+    /// Take over on the tab reaching such a pane: it is labelled for this Mac, so its client stays and nothing hands it back.
+    func takeOverWhileStarting() {
+        guard let me = PeerIdentity.id else { return }
+        startedFor = nil
+        let name = Zmx.sessionName(record.id)
+        Task.detached { if Zmx.labels(of: name) != nil { _ = Zmx.setControl(name, to: me) } }
+    }
 
     /// On the host: the Mac in control closed its pane for a session this Mac started itself, and the
     /// host's `end` cleared the label and detached it (`LauncherModel.hostEnd`). The card becomes the live

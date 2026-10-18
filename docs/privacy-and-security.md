@@ -301,6 +301,10 @@ Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031
 - **open panes beside its own:** a terminal, a Claude session that draws on your Claude subscription, a custom app whose code runs outside
   Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below).
 
+The same holds in a tab that the phone or another Mac is driving: a session there can read every terminal screen, the board, and what this
+Mac's panel shows, including, when the Outline shows, its zoom path, its filter and the start of the bullet the caret is in, and open panes in the tab for that machine. It
+cannot press keys or change what the panel shows from there.
+
 What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
 the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);

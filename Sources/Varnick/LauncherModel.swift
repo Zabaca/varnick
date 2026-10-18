@@ -2886,6 +2886,8 @@ final class LauncherModel: ObservableObject {
         let cards = tab.sessions.filter(\.canTakeOver)
         guard let host = tab.host else {
             for card in cards { card.performTakeOver() }
+            // A pane a session just opened for the other machine still has this Mac's client, so it is no card yet: relabel it too, or the tab is mixed.
+            for starting in tab.sessions where starting.isStartingForPeer { starting.takeOverWhileStarting() }
             return
         }
         for card in cards { card.beginTakeOver() }
@@ -3502,9 +3504,25 @@ final class LauncherModel: ObservableObject {
     }
 
     /// The labels of the tab's running Claude and terminal panes, read off the main actor.
-    private func runningLabels(of tab: ClaudeTab) async -> [String] {
-        let names = tab.sessions.filter(\.runsInZmx).map { Zmx.sessionName($0.id) }
+    private func runningLabels(of tab: ClaudeTab, excluding left: ClaudeSession? = nil) async -> [String] {
+        let names = tab.sessions.filter { $0.runsInZmx && $0 !== left }.map { Zmx.sessionName($0.id) }
         return await Task.detached { names.compactMap { Zmx.labels(of: $0) } }.value
+    }
+
+    /// Who has the keyboard of a tab of this Mac, from the labels of its running panes (`PanelAccess.panes`): `machine` when they all name the same
+    /// one that isn't this Mac, `here` when none names another, `mixed` mid take over, `nobody` with nothing running. `excluding` leaves one pane out.
+    enum TabController: Equatable {
+        case machine(String), here, mixed, nobody
+    }
+
+    func controller(of tab: ClaudeTab, excluding left: ClaudeSession? = nil) async -> TabController {
+        let labels = await runningLabels(of: tab, excluding: left)
+        guard !labels.isEmpty else { return .nobody }
+        let controls = labels.map { Zmx.control(in: $0) }
+        let others = controls.compactMap { $0 }.filter { !Zmx.sameID($0, PeerIdentity.id) }
+        guard !others.isEmpty else { return .here }
+        guard others.count == controls.count, let first = others.first, others.allSatisfy({ Zmx.sameID($0, first) }) else { return .mixed }
+        return .machine(first)
     }
 
     /// Nil when the asker is in control of the tab: every running Claude and terminal pane of it names the asker, a tab being one machine's

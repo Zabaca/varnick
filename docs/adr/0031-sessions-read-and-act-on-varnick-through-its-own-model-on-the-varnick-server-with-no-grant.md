@@ -112,3 +112,9 @@ Where this contradicts the text above (the switch read at every call, the Outlin
 - **What a call is checked against** is unchanged minus the switch: Varnick starting, the pane (a Claude pane on this Mac that nobody else controls), then the tool. The pane tools add the tab's lock and the hidden tab. The refusals inside the tools stand: the 2-second key rule, closing only the panes a session opened, the Problems board and Outline switches in Settings › Experimental.
 - **The stored defaults keys** `panelAccess` and `sessionsOpenPanes` are removed at launch, as `voiceSessionOn` was.
 - **Privacy.** A session you start can now read every terminal screen and the board, and change your tabs, with no setting to refuse it; docs/privacy-and-security.md says so once.
+
+## Amendment: a tab another machine controls (2026-10-17)
+
+Two rules above no longer refuse a tab of this Mac that the phone or another Mac controls: "The pane must be a Claude pane on this Mac that no other Mac or device controls" (Answered by `PanelAccess`) and "This Mac's own tabs only" (the first amendment), as the second amendment restates them under "What a call is checked against" (option 04 of `panes-open-only-by-hand-at-a-mac`; the layout rule is [ADR 0034](0034-a-tab-lives-on-one-host-which-keeps-its-layout-panes-and-mark-and-other-devices-view-or-take-over-the-tab-whole.md)'s amendment). A headless host and a session in another machine's tab are as before.
+
+Which tools get past the rule, and how the call is checked, is in docs/agents/where-it-breaks.md, Panel access (`PanelAccess.answersControlled`): the pane tools, and at the user's word the reads that only describe. What sends a key or shows a view, and the screen tools, keep the rule.
