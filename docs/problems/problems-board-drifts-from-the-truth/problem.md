@@ -4,7 +4,7 @@ description: The Problems board puts each problem in a column from its option st
 impact: The user can't trust the board: it shows built work as waiting on a decision, abandoned work as being built, and solved problems as open. Keeping it true takes catch-up commits by hand, six so far (58c1649, 1e57d71, ac6aceb, c42bc6a, 0d1d161, 373f3bf). Chips and Building say less than the agents actually did, so the board can't answer who is working on what.
 severity: mid
 evidence: Two read-only audits on 2026-10-17 at bda4a64, over git (merges, statuses, branch ties), the code, the pane folders and Claude Code's transcripts on the user's machine; figures from the user's own data stay off the repository. Code read at bda4a64. Claude Code 2.1.302, installed here, read from the strings in its binary for its hook inputs and its resume path; nothing was run. Git checked in a throwaway repository for what deleting a branch does to its tie. The statuses the audit found wrong were corrected in 373f3bf.
-status: open
+status: closed
 ---
 
 ## What the user wants
