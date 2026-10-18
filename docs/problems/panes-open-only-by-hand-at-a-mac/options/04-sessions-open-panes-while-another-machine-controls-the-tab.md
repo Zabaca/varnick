@@ -57,6 +57,7 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 - **Closing** ends the pane as the controller's close does. A Claude or terminal pane's client count comes from its session's status at the call.
 - **No saved state** beyond option 01's: `openedBy` and the record's origin are saved as now.
 - **The log** as option 01's, plus whether the tab was controlled from elsewhere; never the controller's name or id.
+- **Finding its panes after a restart.** Pane ids reset with Varnick, and `panel` named only a tab on screen, so a session in a tab the phone controls could not find a page it opened earlier. Decided 2026-10-17 at the user's request: when the caller's own tab is not showing, `panel` lists that tab's panes (id, kind, title, this session, opened by this session) after its `This session:` line, never another tab's.
 - **Docs:**
   - ADR 0034: a dated amendment to "only the machine in control changes the layout": a session in the tab adds and closes panes for that machine, labelled for it.
   - ADR 0031: its amendment's "this Mac's own tabs only" line.

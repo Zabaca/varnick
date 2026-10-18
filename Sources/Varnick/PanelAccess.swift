@@ -437,9 +437,11 @@ final class PanelAccess {
             lines.append("Showing: the search (\(Self.modeText(model.mode)); the field is \(model.query.isEmpty ? "empty" : "not empty"))")
             focus = "the search field"
         }
-        // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`; no other pane is named here.
+        // The caller's own pane id whatever shows, so it can `show` its pane back without a `board_read`, and the panes of its own tab (none of
+        // another's): the ids of panes it opened before a restart, which the board does not list, come from here.
         if !listsCaller, let tab = CallingPane.find(caller.uuidString, in: model).located?.tab {
             lines.append("This session: \(id(for: caller, caller: caller)) (in the tab \"\(tab.name ?? tab.focused.label)\")")
+            lines += tabLines(tab, caller: caller, showing: false)
         }
         if model.pendingSplit != nil {
             lines.append("Over it: the split picker")
@@ -467,9 +469,9 @@ final class PanelAccess {
     }
 
     /// A tab: its name and its panes, each with its id, kind and title, the focused one and this session's marked.
-    private func tabLines(_ tab: ClaudeTab, caller: UUID) -> [String] {
+    private func tabLines(_ tab: ClaudeTab, caller: UUID, showing: Bool = true) -> [String] {
         let name = tab.name ?? tab.focused.label
-        var lines = ["Showing: the tab \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s"):"]
+        var lines = [(showing ? "Showing: the tab" : "This session's tab (not showing):") + " \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s"):"]
         for pane in tab.sessions {
             var marks: [String] = []
             if pane === tab.focused { marks.append("focused") }
