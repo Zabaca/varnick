@@ -126,6 +126,24 @@ export const offersTake = (tab) => tab.panes.some(isOpenable) && !tab.mine;
 /** Whether Add pane is offered for the tab: this phone is in control of it, and it has a pane to put the new one beside (option 03 of panes-open-only-by-hand-at-a-mac). */
 export const offersAdd = (tab) => tab.mine === true && tab.panes.length > 0;
 
+/**
+ * Whether Close is offered in the switcher: this phone controls the tab and it has more than one pane. The tab's only pane is closed by End, which ends
+ * the tab the same way (the host decides whether a pane is the last, `closePane` in launch.ts).
+ */
+export const offersClose = (tab) => tab.mine === true && tab.panes.length > 1;
+
+/** What Close asks before it closes the pane shown: what stops, in the words of its kind. */
+export function closeQuestion(pane, host) {
+  switch (pane.kind) {
+    case "claude": return `Close “${paneLabel(pane)}”? Claude stops and its conversation goes to the tab's history. The tab keeps its other panes.`;
+    case "terminal": return `Close this terminal? It ends on ${host || "its host"}, and whatever runs in it stops. The tab keeps its other panes.`;
+    case "app": return `Close ${paneLabel(pane)}? Its server stops on ${host || "its host"}. The tab keeps its other panes.`;
+    case "file": return `Close ${paneLabel(pane)}? The file itself isn't touched. The tab keeps its other panes.`;
+    case "web": return `Close the page at ${paneLabel(pane)}? The tab keeps its other panes.`;
+    default: return `Close this pane? The tab keeps its other panes.`;
+  }
+}
+
 /** Whether the switcher is drawn: with more than one pane, and with one when Add pane is its button. */
 export const showsSwitcher = (tab) => tab.panes.length > 1 || offersAdd(tab);
 

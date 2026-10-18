@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, closeQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
@@ -203,6 +203,35 @@ describe("Add pane", () => {
     expect(relativeTo("/p/cc", "/p/cc")).toBe("./");
     expect(relativeTo("/p/cc/", "/p/cc/src/deep")).toBe("./src/deep");
     expect(relativeTo("/p/cc", "/elsewhere")).toBe("/elsewhere");
+  });
+});
+
+describe("Close", () => {
+  test("is offered in a tab this phone controls once it has more than one pane", () => {
+    expect(offersClose({ mine: true, panes: [claude(a), terminal(b)] })).toBe(true);
+    expect(offersClose({ mine: true, panes: [claude(a), other(b, "file")] })).toBe(true);
+    // The only pane is closed by End, which ends the tab the same way.
+    expect(offersClose({ mine: true, panes: [claude(a)] })).toBe(false);
+    expect(offersClose({ mine: false, panes: [claude(a), terminal(b)] })).toBe(false);
+  });
+
+  test("asks in the words of the pane's kind, and says the tab keeps its other panes", () => {
+    const asks = [
+      closeQuestion(claude(a, { title: "Fix it" }), "Mac mini"),
+      closeQuestion(terminal(a), "Mac mini"),
+      closeQuestion(other(a, "app", { app: "scratch" }), "Mac mini"),
+      closeQuestion(other(a, "file", { file: "/p/cc/src/a.ts" }), "Mac mini"),
+      closeQuestion(other(a, "web", { url: "https://example.com/x" }), "Mac mini"),
+      closeQuestion(other(a, "transcript"), "Mac mini"),
+    ];
+    expect(asks[0]).toContain("“Fix it”");
+    expect(asks[0]).toContain("conversation goes to the tab's history");
+    expect(asks[1]).toContain("ends on Mac mini");
+    expect(asks[2]).toContain("scratch");
+    expect(asks[3]).toContain("a.ts");
+    expect(asks[3]).toContain("isn't touched");
+    expect(asks[4]).toContain("example.com");
+    for (const ask of asks) expect(ask).toContain("other panes");
   });
 });
 

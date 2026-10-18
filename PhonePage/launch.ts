@@ -7,6 +7,7 @@ import { optional, same, shapeTab, type HomePane, type HomeTab, type RelayResult
 import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
 import { launchTimeoutMs, reopenTimeoutMs } from "./relay";
+import { endText } from "./terminal";
 
 /** What the flows need of `Relay`: one relay request as a device. */
 export interface Asker {
@@ -162,6 +163,9 @@ export interface RestartAsk {
 
 /** `POST /api/restart`'s body: a tab and a pane of it, and nothing else is read. */
 export const parseRestartBody = (body: unknown): Parsed<RestartAsk> => readPlace(body);
+
+/** `POST /api/close`'s body: a tab and a pane of it, and nothing else is read. */
+export const parseCloseBody = (body: unknown): Parsed<RestartAsk> => readPlace(body);
 
 /** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
 export function parseResumeBody(body: unknown): Parsed<string> {
@@ -436,6 +440,20 @@ export async function restartPane(asker: Asker, device: Device, host: string, as
   if (!found.pane.running) return failed(409, "That session isn't running: there is nothing to restart");
   const restarted = await asker.ask("restartPane", device.id, { tab: ask.tab, pane: ask.pane }, launchTimeoutMs);
   return restarted.ok ? { status: 200, body: { ok: true } } : failed(502, restarted.error);
+}
+
+/**
+ * `POST /api/close` (an addition to option 05 of `panes-open-only-by-hand-at-a-mac`): close one pane of a tab this phone controls, whatever its kind,
+ * with the host's existing `end`: a Claude or terminal pane by its session with the tab, any other by the pane with the tab. Both are the closes ADR 0034
+ * has for the Mac's own close of a pane, so there is no new request. The host, not this server, decides whether the pane is the tab's last, and then
+ * handles it as the tab's `end`: it ends if its origin names this phone, else it is handed back (`text` says which).
+ */
+export async function closePane(asker: Asker, device: Device, host: string, ask: RestartAsk): Promise<{ status: number; body: Json }> {
+  const found = await splittable(asker, device, host, ask.tab, ask.pane);
+  if ("body" in found) return found;
+  const hasSession = found.pane.kind === "claude" || found.pane.kind === "terminal";
+  const closed = await asker.ask("end", device.id, hasSession ? { tab: ask.tab, session: sessionNameFor(ask.pane) } : { tab: ask.tab, pane: ask.pane });
+  return closed.ok ? { status: 200, body: { ok: true, released: closed.reply.released === true, text: endText(closed.reply, host) } } : failed(502, closed.error);
 }
 
 /** The tab in a `tabs` reply with this id, as the host lists it. */

@@ -17,7 +17,7 @@ import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
+import { agentsOf, closePane, parseAgentsFolder, parseCloseBody, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
@@ -368,7 +368,7 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/restart" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
         && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
@@ -416,6 +416,13 @@ async function main(): Promise<void> {
         if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
         const launched = await splitTab(relay, device, host.name, ask.value, () => crypto.randomUUID(), host.headless);
         return json(launched.body, launched.status);
+      }
+      // Close one pane (where-it-breaks, The tab view on the phone), under the timeout above: the host's `end`, which may wait on zmx.
+      if (path === "/api/close") {
+        const ask = parseCloseBody(body);
+        if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
+        const closed = await closePane(relay, device, host.name, ask.value);
+        return json(closed.body, closed.status);
       }
       // Restart (protocol 32; where-it-breaks, The tab view on the phone), under the timeout above.
       if (path === "/api/restart") {

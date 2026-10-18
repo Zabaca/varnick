@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import {
-  agentsOf, isInsideFolder, openElsewhere, parentWithin, parseSplitDir, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
+  agentsOf, closePane, isInsideFolder, openElsewhere, parentWithin, parseSplitDir, parseAgentsFolder, parseCloseBody, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
   restartPane, shapeAgents, shapeProjects, splitFiles, splitOffer, splitTab, startSession,
   type Asker,
 } from "./launch";
@@ -799,6 +799,76 @@ describe("what Add pane offers and the file picker (option 05)", () => {
   test("the host's refusal of a folder reaches the page in the host's words", async () => {
     const { asker } = fakeRelay({ tabs: listed(), files: { ok: false, error: "That folder is outside the tab's folders" } });
     expect(await splitFiles(asker, device, "Mac mini", tab, first, null)).toEqual({ status: 502, body: { ok: false, error: "That folder is outside the tab's folders" } });
+  });
+});
+
+describe("closing one pane (an addition to option 05)", () => {
+  const first = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const second = "bbbbbbbb-0000-4000-8000-0000000000b1";
+  const page = "cccccccc-0000-4000-8000-0000000000c1";
+  const app = "dddddddd-0000-4000-8000-0000000000d1";
+  const idle = "eeeeeeee-0000-4000-8000-0000000000e1";
+  const listed = (control: string | null = device.id, id = tab) => ok({
+    tabs: [{
+      tab: id, control, clients: 1,
+      panes: [
+        { id: first, kind: "claude", title: "Fix it", running: true, control },
+        { id: second, kind: "terminal", title: "Terminal", running: true, control },
+        { id: page, kind: "web", title: "Page", url: "https://example.com/" },
+        { id: app, kind: "app", title: "Scratch", app: "scratch" },
+        { id: idle, kind: "claude", title: "Idle", running: false },
+      ],
+    }],
+  });
+
+  test("the body is a tab and a pane, lowercased, and nothing else is read", () => {
+    expect(parseCloseBody({ tab: tab.toUpperCase(), pane: first.toUpperCase(), session: "varnick-x", by: "x" })).toEqual({ ok: true, value: { tab, pane: first } });
+    for (const bad of [undefined, null, "", "x", `${tab}\n`, 5]) {
+      expect(parseCloseBody({ tab: bad, pane: first })).toMatchObject({ ok: false });
+      expect(parseCloseBody({ tab, pane: bad })).toMatchObject({ ok: false });
+    }
+    expect(parseCloseBody(null)).toMatchObject({ ok: false });
+  });
+
+  test("a Claude or terminal pane is closed by its session with the tab, even one that isn't running", async () => {
+    for (const pane of [first, second, idle]) {
+      const { asker, calls } = fakeRelay({ tabs: listed(), end: ok({}) });
+      expect(await closePane(asker, device, "linux box", { tab, pane })).toEqual({ status: 200, body: { ok: true, released: false, text: "Ended" } });
+      const end = calls.find((call) => call.op === "end")!;
+      expect(end.by).toBe(device.id);
+      expect(end.fields).toEqual({ tab, session: `varnick-${pane}` });
+    }
+  });
+
+  test("a page, an app and any other pane is closed by the pane with the tab", async () => {
+    for (const pane of [page, app]) {
+      const { asker, calls } = fakeRelay({ tabs: listed(), end: ok({}) });
+      expect((await closePane(asker, device, "Mac mini", { tab, pane })).status).toBe(200);
+      expect(calls.find((call) => call.op === "end")!.fields).toEqual({ tab, pane });
+    }
+  });
+
+  test("the host's handing the tab back when the pane was its last is told", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), end: ok({ released: true }) });
+    expect(await closePane(asker, device, "Mac mini", { tab, pane: first })).toEqual({ status: 200, body: { ok: true, released: true, text: "Handed back to Mac mini, still running" } });
+  });
+
+  test("a tab that isn't listed, that the phone doesn't control, or a pane that isn't of it, closes nothing", async () => {
+    const missing = fakeRelay({ tabs: listed(device.id, other), end: ok({}) });
+    expect((await closePane(missing.asker, device, "Mac mini", { tab, pane: first })).status).toBe(404);
+    for (const control of [other, null]) {
+      const { asker, calls } = fakeRelay({ tabs: listed(control), end: ok({}) });
+      expect((await closePane(asker, device, "Mac mini", { tab, pane: first })).status).toBe(409);
+      expect(calls.some((call) => call.op === "end")).toBe(false);
+    }
+    const strange = fakeRelay({ tabs: listed(), end: ok({}) });
+    expect((await closePane(strange.asker, device, "Mac mini", { tab, pane: other })).status).toBe(400);
+    expect([missing, strange].some(({ calls }) => calls.some((call) => call.op === "end"))).toBe(false);
+  });
+
+  test("the host's refusal reaches the page in the host's words", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), end: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" } });
+    expect(await closePane(asker, device, "Mac mini", { tab, pane: first })).toEqual({ status: 502, body: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" } });
   });
 });
 

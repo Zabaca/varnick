@@ -8,9 +8,9 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
+import { confirmClose, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
-  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, closeQuestion, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -67,6 +67,16 @@ function renderSwitcher(t) {
   }
   t.add = offersAdd(t.data);
   if (!t.add) return;
+  // Close and + stay at the end of the row together, whatever its scroll.
+  const actions = element("span", "pane-actions");
+  nav.append(actions);
+  if (offersClose(t.data)) {
+    const close = element("button", "pane-close", "×");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close the pane shown");
+    close.addEventListener("click", () => { if (current === t) closeShown(t); });
+    actions.append(close);
+  }
   const plus = element("button", "pane-add", "+");
   plus.type = "button";
   plus.setAttribute("aria-label", "Add pane");
@@ -76,7 +86,37 @@ function renderSwitcher(t) {
       failed: (error) => { if (current === t) $("session-sub").textContent = `Couldn't add the pane: ${error}`; },
     });
   });
-  nav.append(plus);
+  actions.append(plus);
+}
+
+/**
+ * Closes the pane shown, after the page's own question (never `confirm()`): the host's `end` for one pane, whatever its kind. When the host handed the
+ * tab back instead (the pane was its last, and the tab isn't this phone's to end), the page leaves it as End does; a tab the host ended is found gone by
+ * the next listing. Otherwise the pane leaves the switcher at once and the next pane in it is shown.
+ */
+async function closeShown(t) {
+  const pane = t.data.panes.find((candidate) => candidate.id === t.pane);
+  if (!pane || t.closing) return;
+  if (!(await confirmClose(closeQuestion(pane, t.host))) || t.closed) return;
+  t.closing = true;
+  $("session-sub").textContent = "Closing…";
+  const result = await postJSON("/api/close", { tab: t.id, pane: pane.id }, "the host didn't answer");
+  t.closing = false;
+  if (t.closed) return;
+  if (!result.ok) {
+    $("session-sub").textContent = `Couldn't close it: ${result.error}`;
+    return;
+  }
+  if (result.released) {
+    const done = t.done;
+    closeTab();
+    return done(result.text);
+  }
+  dropAdded(t);
+  t.data = { ...t.data, panes: t.data.panes.filter((candidate) => candidate.id !== pane.id) };
+  renderSwitcher(t);
+  showPane(t, choosePane(t.data, null));
+  load(t);
 }
 
 /** Gives up opening the pane this page added, and its one take with it. */
@@ -258,7 +298,7 @@ function failed(t, error) {
  */
 export function openTab({ tab, pane, host, done, take = null }) {
   closeTab();
-  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0 };
+  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0, closing: false };
   current = t;
   $("session").hidden = false;
   $("panes").hidden = true;

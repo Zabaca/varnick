@@ -194,7 +194,7 @@ pane you are looking at, and switches to it. **App** lists the custom apps of th
 (`localhost:3000` or `example.com`); **File** browses the shown pane's folder one level at a time, and Up stops at that folder. On the host the new pane
 sits beside that pane (a file goes where the file tree puts it). A page at an outside address shows as a note with an Open button, since the phone doesn't frame
 it; a page at the host's own address and an app are framed. On a headless host Add pane offers Claude and Terminal only. On a tab you left on the Mac there is
-no +: Take over first, which detaches the Mac.
+no +: Take over first, which detaches the Mac. Beside + a **×** closes the pane you are looking at (after you confirm), in a tab of more than one pane; to close the only pane, End the tab. The host decides whether the pane was the tab's last, as when you close it on the Mac.
 
 **Restart** sits in the header of a Claude session beside Redraw and End, while the phone is in control of the tab (the same rule as +). It asks first, in the
 page, then ends that session's Claude and starts it again in the same pane, picking the conversation up where it was, as the Mac's Restart does. The new Claude

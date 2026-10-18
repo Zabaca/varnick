@@ -558,6 +558,9 @@ export function confirmEnd(title, host, whole) {
   return askInDialog(`End “${title}”? ${whole ? "A tab" : "A session"} this phone started ends. Any other is handed back to ${host || "its host"} and keeps running.`, "End");
 }
 
+/** Asks whether to close one pane of a tab (`question` is `closeQuestion`'s); true on Close. */
+export const confirmClose = (question) => askInDialog(question, "Close");
+
 async function endSession(s) {
   if (!(await confirmEnd(s.title, s.host, s.tab !== null)) || s.closed) return;
   $("end").disabled = true;
