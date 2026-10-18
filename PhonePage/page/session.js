@@ -21,9 +21,7 @@ let current = null;
 const visible = () => document.visibilityState === "visible";
 
 function setSub(s, state) {
-  // What a failed Restart said stays in the line until the session is left, when nothing else is being said.
-  const text = state || s.problem;
-  $("session-sub").textContent = text ? `${s.host} · ${text}` : s.host;
+  $("session-sub").textContent = state ? `${s.host} · ${state}` : s.host;
 }
 
 function setTitle(s, title) {
@@ -493,8 +491,8 @@ export function openSession({ name, title, host, done, take = false, tab = null,
     view: "", ws: null, term: null, fit: null, observer: null, timer: null, repaints: [], layout: null, layoutTimer: null, rotated: false, tries: 0, generation: 0, ctrlOn: false, closed: false,
     // mine: this page held the session (output arrived); note: "Taken over on X"; error: the relay's refusal; openedAt: when the socket opened.
     mine: false, note: "", error: "", openedAt: 0,
-    // restart: the tab and pane Restart acts on, while this phone may offer it (`offerRestart`); restarting: one is under way; problem: why the last failed.
-    restart, restarting: false, problem: "",
+    // restart: the tab and pane Restart acts on while the phone may offer it (`offerRestart`); restarting: one is under way; restartedAt: when the last settled.
+    restart, restarting: false, restartedAt: 0,
   };
   current = s;
   $("session").hidden = false;
@@ -532,10 +530,12 @@ export function releaseSession() {
   s.observer?.disconnect();
   s.term?.dispose();
   $("term").replaceChildren();
+  $("restart").hidden = true;
+  $("restart").disabled = false;
 }
 
 /** Asks in the page's dialog (never `confirm()`); true on its action button. */
-async function ask(text, action) {
+async function askInDialog(text, action) {
   $("confirm-text").textContent = text;
   $("confirm-go").textContent = action;
   const dialog = $("confirm");
@@ -545,9 +545,17 @@ async function ask(text, action) {
   return dialog.returnValue === "go";
 }
 
+/** Tells the user something that may be long, in the page's dialog, which wraps; resolves when it is dismissed. */
+async function tell(text) {
+  $("alert-text").textContent = text;
+  const dialog = $("alert");
+  dialog.showModal();
+  await new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
+}
+
 /** Asks whether to end `title`, a tab or a session; true on End. What ending does is the host's: a tab this phone started ends, any other is handed back. */
 export function confirmEnd(title, host, whole) {
-  return ask(`End “${title}”? ${whole ? "A tab" : "A session"} this phone started ends. Any other is handed back to ${host || "its host"} and keeps running.`, "End");
+  return askInDialog(`End “${title}”? ${whole ? "A tab" : "A session"} this phone started ends. Any other is handed back to ${host || "its host"} and keeps running.`, "End");
 }
 
 async function endSession(s) {
@@ -570,9 +578,9 @@ function paintRestart(s) {
   $("restart").hidden = !(s.view === "terminal" && s.restart);
 }
 
-/** Whether a Restart is under way, for the tab view, which must not take the pane down while the host lists it as not running. */
-export function isRestarting() {
-  return current?.restarting === true;
+/** Whether the tab view should leave the pane as it is: a Restart is under way, or settled after `since` (a listing asked before it may show the pane down). */
+export function holdsForRestart(since) {
+  return current?.restarting === true || (current?.restartedAt ?? 0) > since;
 }
 
 /** The tab view says whether Restart is offered over the open session now (`offersRestart`): `{tab, pane}`, or null. */
@@ -583,25 +591,22 @@ export function offerRestart(offer) {
   paintRestart(s);
 }
 
-/**
- * Restart, as the Mac's Restart button: the host ends the pane's claude and starts it again in the same pane, resuming the conversation. The
- * session ends under the terminal meanwhile, so its close is ignored (`onclose`), and when the host answers the terminal attaches again, asking
- * the status first as any reconnect does. A failure says why in the bar's second line, and attaches again in case the session is still there.
- */
+/** Restart (where-it-breaks, The tab view on the phone): the terminal's close is ignored meanwhile, and it attaches again when the host has answered. */
 async function restartSession(s) {
   if (!s.restart || s.restarting) return;
-  if (!(await ask(restartQuestion(s.title), "Restart")) || s.closed || !s.restart) return;
+  if (!(await askInDialog(restartQuestion(s.title), "Restart")) || s.closed || !s.restart) return;
   const { tab, pane } = s.restart;
   s.restarting = true;
-  s.problem = "";
   $("restart").disabled = true;
   setSub(s, "Restarting…");
   const result = await postJSON("/api/restart", { tab, pane }, "the host didn't answer");
   s.restarting = false;
+  s.restartedAt = Date.now();
   $("restart").disabled = false;
   if (s.closed) return;
-  if (!result.ok) s.problem = `Couldn't restart it: ${result.error}`;
+  // Attached again either way, in case the session is still there; the reason is in a dialog, since the bar is too narrow for it.
   reattach(s);
+  if (!result.ok) await tell(result.error);
 }
 
 // The controls are wired once, and act on whichever session is open.

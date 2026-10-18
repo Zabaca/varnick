@@ -265,11 +265,7 @@ extension HeadlessPeerHost {
 
     // MARK: restart
 
-    /// `restartPane` (protocol 32): the machine in control of a tab restarts one of its Claude panes. The pane's zmx session is killed and confirmed
-    /// gone, then `claude --resume` on the conversation it follows starts in the same pane, still labelled for the asker with the origin it had, and
-    /// the reply comes once it runs (`launch`). The record is marked starting first, so a reconcile in between does not end it. A pane with no
-    /// transcript restarts fresh only when nothing was ever sent in it; one that lost its transcript is refused, since its prompt would be lost. The
-    /// Mac's equivalent is `LauncherModel.hostRestartPane`.
+    /// `restartPane` (protocol 32): where-it-breaks, The tab view on the phone, has the order. The Mac's equivalent is `LauncherModel.hostRestartPane`.
     private func restartPane(_ request: PeerRequest, by: String) -> PeerReply {
         guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
         guard let tab = request.tab?.lowercased(), UUID(uuidString: tab) != nil, let pane = request.pane?.lowercased(), let uuid = UUID(uuidString: pane) else {
@@ -287,7 +283,6 @@ extension HeadlessPeerHost {
         }
         let conversation = StateFolder.conversations(of: records)[pane] ?? pane
         let resumable = TranscriptReader.hasConversation(directory: record.folder ?? config.defaultFolder, conversation: conversation)
-        guard resumable || record.isUntouched(conversation: conversation) else { return .failure("\(name) has no transcript of that conversation to resume") }
         let before = record
         func putBack() {
             _ = try? state.update(pane) {
@@ -295,16 +290,25 @@ extension HeadlessPeerHost {
                 ($0.starting, $0.bootID, $0.started, $0.conversation) = (before.starting, before.bootID, before.started, before.conversation)
             }
         }
+        // Claimed under the state lock: a start or a restart under way holds the record, and a second request would kill the session the first is starting.
+        var claimed = false
         do {
-            _ = try state.update(pane) { ($0.starting, $0.bootID, $0.started, $0.conversation) = (true, HeadlessSession.currentBootID, Date(), conversation) }
+            _ = try state.update(pane) {
+                guard $0.starting != true else { return }
+                claimed = true
+                ($0.starting, $0.bootID, $0.started, $0.conversation) = (true, HeadlessSession.currentBootID, Date(), conversation)
+            }
         } catch {
             return stateFailure(error)
         }
+        guard claimed else { return .failure("That session is starting on \(name): try again in a moment") }
+        // Without a transcript it starts fresh, as the Mac's restart does: with its prompt while it never left its first conversation, else under the conversation it follows.
+        let fresh = resumable || conversation == pane ? nil : conversation
         if let failure = Zmx.endConfirmed(uuid) {
             putBack()
             return .failure("Couldn't restart: \(failure)")
         }
-        return launch(record, control: by, origin: Zmx.origin(in: labels), resuming: resumable ? conversation : nil, freshUnder: resumable ? nil : conversation) { putBack() }
+        return launch(record, control: by, origin: Zmx.origin(in: labels), resuming: resumable ? conversation : nil, freshUnder: fresh) { putBack() }
     }
 
     // MARK: reopen

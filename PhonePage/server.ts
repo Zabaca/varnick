@@ -416,8 +416,7 @@ async function main(): Promise<void> {
         const launched = await splitTab(relay, device, host.name, ask.value, () => crypto.randomUUID());
         return json(launched.body, launched.status);
       }
-      // Restart (protocol 32): a Claude pane of a tab this phone controls ends and starts again, resuming its conversation. It waits for the host
-      // like a start does (the timeout above).
+      // Restart (protocol 32; where-it-breaks, The tab view on the phone), under the timeout above.
       if (path === "/api/restart") {
         const ask = parseRestartBody(body);
         if (!ask.ok) return json({ ok: false, error: ask.error }, 400);

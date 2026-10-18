@@ -73,6 +73,14 @@ function readClaude(body: Record<string, unknown>): Parsed<{ agent: string | nul
   return { ok: true, value: { agent, prompt } };
 }
 
+/** A tab and a pane of it, as a split and a restart name them: lowercase ids. */
+function readPlace(body: unknown): Parsed<{ tab: string; pane: string }> {
+  if (!isObject(body)) return refuse("The request wasn't a JSON object");
+  if (typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
+  if (typeof body.pane !== "string" || !uuidPattern.test(body.pane)) return refuse("That isn't a pane id");
+  return { ok: true, value: { tab: body.tab.toLowerCase(), pane: body.pane.toLowerCase() } };
+}
+
 export interface SplitAsk {
   /** The tab and the pane of it the new pane goes beside: lowercase ids. */
   tab: string;
@@ -84,11 +92,10 @@ export interface SplitAsk {
 
 /** `POST /api/split`'s body: tab, pane, kind (`claude` or `terminal`) and for Claude the agent and prompt; a terminal with either is refused, and no folder is read. */
 export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
+  const place = readPlace(body);
+  if (!place.ok) return place;
+  const { tab, pane } = place.value;
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
-  if (typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
-  if (typeof body.pane !== "string" || !uuidPattern.test(body.pane)) return refuse("That isn't a pane id");
-  const tab = body.tab.toLowerCase();
-  const pane = body.pane.toLowerCase();
   if (body.kind === "terminal") {
     const given = (value: unknown): boolean => value !== undefined && value !== null && value !== "";
     if (given(body.agent) || given(body.prompt)) return refuse("A terminal takes no agent or prompt");
@@ -100,18 +107,12 @@ export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
 }
 
 export interface RestartAsk {
-  /** The tab and the Claude pane of it to restart: lowercase ids. */
   tab: string;
   pane: string;
 }
 
 /** `POST /api/restart`'s body: a tab and a pane of it, and nothing else is read. */
-export function parseRestartBody(body: unknown): Parsed<RestartAsk> {
-  if (!isObject(body)) return refuse("The request wasn't a JSON object");
-  if (typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
-  if (typeof body.pane !== "string" || !uuidPattern.test(body.pane)) return refuse("That isn't a pane id");
-  return { ok: true, value: { tab: body.tab.toLowerCase(), pane: body.pane.toLowerCase() } };
-}
+export const parseRestartBody = (body: unknown): Parsed<RestartAsk> => readPlace(body);
 
 /** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
 export function parseResumeBody(body: unknown): Parsed<string> {
@@ -274,19 +275,14 @@ export async function splitTab(asker: Asker, device: Device, host: string, ask: 
   return failed(502, started.error);
 }
 
-/**
- * Restart a Claude pane of a tab the phone controls (protocol 32): the same gates as Add pane (the tab is listed, this phone is in control of it,
- * it has the pane), and the pane has to be a Claude session that runs. The host ends the pane's claude and starts it again in the same pane,
- * resuming its conversation, and answers once it runs: the phone's terminal then attaches again. Asked once: a request whose answer was lost
- * is not asked again, since a second restart would end the claude the first one started.
- */
+/** `POST /api/restart` (protocol 32; where-it-breaks, The tab view on the phone): the gates of Add pane, and a Claude session that runs. Asked once. */
 export async function restartPane(asker: Asker, device: Device, host: string, ask: RestartAsk): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
-  if (found.pane.kind !== "claude") return { status: 400, body: { ok: false, error: "Only a Claude session restarts" } };
-  if (!found.pane.running) return { status: 409, body: { ok: false, error: "That session isn't running: there is nothing to restart" } };
+  if (found.pane.kind !== "claude") return failed(400, "Only a Claude session restarts");
+  if (!found.pane.running) return failed(409, "That session isn't running: there is nothing to restart");
   const restarted = await asker.ask("restartPane", device.id, { tab: ask.tab, pane: ask.pane }, launchTimeoutMs);
-  return restarted.ok ? { status: 200, body: { ok: true } } : { status: 502, body: { ok: false, error: restarted.error } };
+  return restarted.ok ? { status: 200, body: { ok: true } } : failed(502, restarted.error);
 }
 
 /** The tab in a `tabs` reply with this id, as the host lists it. */

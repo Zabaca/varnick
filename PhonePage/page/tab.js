@@ -8,7 +8,7 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmEnd, isRestarting, offerRestart, openSession, releaseSession } from "/session.js";
+import { confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
   choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, paneOfSession, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
@@ -192,6 +192,7 @@ async function readFile(t, pane) {
 /** Asks the host for the tab and brings the page up to date: the switcher, and the pane shown if it can no longer be. */
 async function load(t) {
   const generation = ++t.generation;
+  const asked = Date.now();
   const result = await fetchTab(t.id);
   if (t.closed || generation !== t.generation) return;
   if (!result.ok) {
@@ -219,8 +220,9 @@ async function load(t) {
   // The pane stays unless it is gone, or it began or stopped running.
   // A page or an app is shown again when the host begins or stops proxying it; a new address of the same pane is the viewer's own browsing.
   const framingChanged = shown && Boolean(framedAddress(shown)) !== Boolean(framedAddress(now ?? shown));
-  // A Restart in flight takes the pane down and brings it back: session.js attaches again, so a pane listed as not running meanwhile stays shown.
-  const restarting = isRestarting();
+  // A Restart takes the pane down and brings it back, and session.js attaches again: a listing asked before it settled may show the pane down, and
+  // that must not tear the terminal down (nor take Restart away).
+  const restarting = holdsForRestart(asked);
   if (fresh && isOpenable(fresh)) {
     t.open = null;
     showPane(t, fresh);
@@ -232,7 +234,7 @@ async function load(t) {
     if (!framedAddress(now)) paintControl(t);
   }
   // The phone's control of the tab, or the pane, can have changed since the session opened: Restart follows it.
-  if (t.session) offerRestart(restartOffer(t, now));
+  if (t.session && !restarting) offerRestart(restartOffer(t, now));
 }
 
 function failed(t, error) {

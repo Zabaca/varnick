@@ -180,10 +180,7 @@ public enum PeerOp: String, Codable, Sendable {
     case voiceAudio
     case voiceAsk
     case voiceStatus
-    /// Restart a Claude pane (`PeerRequest.tab` and `pane`) that the asker controls (protocol 32): the host ends the pane's claude and starts it again in
-    /// the same pane with `--resume` on its conversation, still labelled for the asker with the origin it had, and replies once the session runs. A Mac
-    /// does it for a pane another machine controls, which its own Restart cannot (`ClaudeSession.restartForPeer`); a headless host does it in its own
-    /// code. Only the machine in control may ask, and a listed device may.
+    /// Restarts a Claude pane (`PeerRequest.tab` and `pane`) of a tab the asker controls, in place, resuming it (protocol 32; where-it-breaks, The tab view on the phone).
     case restartPane
 }
 

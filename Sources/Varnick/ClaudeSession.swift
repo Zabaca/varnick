@@ -1113,7 +1113,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     /// The card shows another machine in control and nothing is changing that, so Take over does something.
     var canTakeOver: Bool {
-        guard clientEnded, !finished, !takingOver, case .controlled = away else { return false }
+        guard clientEnded, !finished, !takingOver, !restarting, case .controlled = away else { return false }
         return true
     }
 
@@ -1517,22 +1517,20 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // MARK: Restart for a peer
 
-    /// Why a peer's restart can't be done, nil when it can: a Claude pane of this Mac that was started and runs in zmx, where a peer can have it.
-    /// Unlike `canRestart` it takes the panes a peer restarts: one showing a card because that peer controls it, and one just started for it.
+    /// Why a peer's restart can't be done, nil when it can. Unlike `canRestart` it takes a card (the peer controls the pane), a pane just started for the
+    /// peer and a restored pane not shown yet; those are the panes a peer restarts.
     private var refusalToRestartForPeer: String? {
-        guard isClaude, !isOnPeer, started, !finished, !endedByUser else { return "That isn't a Claude session running on this Mac" }
-        guard inZmx else { return "That session isn't kept in zmx, where another machine can reach it" }
+        guard isClaude, !isOnPeer, !finished, !endedByUser else { return "That isn't a Claude session running on this Mac" }
+        guard started ? inZmx : Zmx.isEnabled else { return "That session isn't kept in zmx, where another machine can reach it" }
         guard !restarting else { return "That session is restarting already" }
         return nil
     }
 
-    /// A peer's restart of a pane it controls (`LauncherModel.hostRestartPane`, the phone's Restart): as `restart()` does, the zmx session is ended and
-    /// confirmed gone, the pane's client (if it still has one) hung up, and claude starts again in the same pane with `--resume`, reading the current
-    /// hooks, MCP set and Skip permissions (`launchClaude`). The new session is labelled for `peer` with the origin the record has, as a session
-    /// started for it is, and this pane's own client lets go of it once it sees the label (`checkControlAfterAttach`), so the pane goes back to its card.
-    /// Nil once claude has been started; otherwise why it was not, with the pane as it was or, past the point of ending zmx's session, down.
+    /// A peer's restart of a pane it controls (`LauncherModel.hostRestartPane`); where-it-breaks, The tab view on the phone, has the order and why.
+    /// Nil once claude has been started, else why not.
     func restartForPeer(_ peer: String) async -> String? {
         if let refusal = refusalToRestartForPeer { return refusal }
+        let wasStarted = started
         restarting = true
         restartFailure = nil
         asking = nil
@@ -1541,7 +1539,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             restartFailed(failure)
             return "Couldn't restart: " + failure
         }
-        let gone = await hangUpClient()
+        let gone = wasStarted ? await hangUpClient() : true
         guard !finished else { return "That pane was closed" }
         guard gone else {
             restartFailed("the old Claude wouldn't exit")
@@ -1553,6 +1551,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             return "That pane was closed"
         }
         startedFor = peer
+        // A restored pane not shown yet starts as `hostResume` starts one, resuming and labelled for the peer.
+        guard wasStarted else {
+            start()
+            return nil
+        }
         clientEnded = false
         confirmingEnd = false
         away = nil
