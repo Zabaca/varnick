@@ -370,8 +370,7 @@ struct OutlinePanelView: PanelAccessView {
         guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         let outline = model.outline
         await outline.loadForSession()
-        // The load may have waited: either switch can have been turned off meanwhile.
-        guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+        // The load may have waited: the Outline switch can have been turned off meanwhile.
         guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         if let problem = outline.load.problem {
             throw PanelRefusal.outlineUnavailable("The outline isn't available: \(problem)." + (outline.load == .loading

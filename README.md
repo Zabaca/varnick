@@ -77,15 +77,16 @@ Anything else leaves only when you turn it on:
 - **Screen access** lets Claude sessions read the window in front, or take a picture of it (which shows everything
   on it, typed text included), which goes to Anthropic with the session, and click, type, drag and resize windows
   for you without asking. A picture of your whole screen includes Varnick's own window and every password field.
-- **Panel access** lets Claude sessions read what Varnick's own panel shows: whether it is open, which tab, pane or
-  board is in it, which has the keyboard, the session board's cards (every session's title, folder, turn and
-  note), the text on the screen of any terminal pane, other sessions' and shells' too, whatever it shows, and your
-  Outline's bullets and notes (which are otherwise kept on this Mac only), and can switch the panel to the search, the
-  board, the Outline or a pane. They can also edit your Outline without asking: each edit is one ⌘Z step, and the bullet
-  you are typing in goes in as a typed change, around your caret. They can press keys in the panel while it is open and you are not typing in
-  it, but never the ones that end, mark done or restart a session, start one, quit or paste. That goes to Anthropic with the session. It needs no permission.
-  A switch of its own under it, **Sessions can open panes**, lets them open a pane beside their own and close the ones they opened.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
+
+Claude sessions in Varnick's panes can also, with no switch, read what Varnick's own panel shows: whether it is open, which tab, pane or
+board is in it, which has the keyboard, the session board's cards (every session's title, folder, turn and
+note), the text on the screen of any terminal pane, other sessions' and shells' too, whatever it shows, and your
+Outline's bullets and notes (which are otherwise kept on this Mac only), and can switch the panel to the search, the
+board, the Outline or a pane. They can also edit your Outline without asking: each edit is one ⌘Z step, and the bullet
+you are typing in goes in as a typed change, around your caret. They can press keys in the panel while it is open and you are not typing in
+it, but never the ones that end, mark done or restart a session, start one, quit or paste. They can also open a pane beside their own and close
+the ones they opened. What they read goes to Anthropic with the session. It needs no permission.
 
 Everything Varnick reads, records and sends, and what it lets others do, is in
 [Privacy and security](docs/privacy-and-security.md).

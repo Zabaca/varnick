@@ -210,8 +210,6 @@ final class Settings: ObservableObject {
     nonisolated static let keepSessionsRunningKey = "keepSessionsRunning"
     static let skipPermissionsKey = "skipPermissions"
     static let screenAccessKey = "screenAccess"
-    static let panelAccessKey = "panelAccess"
-    static let sessionsOpenPanesKey = "sessionsOpenPanes"
     static let relevanceFilterOnKey = "relevanceFilterOn"
     static let relevanceFilterKey = "relevanceFilter"
     static let defaultFontSize: Double = 12.5
@@ -222,14 +220,6 @@ final class Settings: ObservableObject {
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
-    /// Gives the Claude sessions started or restarted while it is on tools for Varnick itself (`PanelAccess`): what its panel shows,
-    /// through Varnick's own model, with no permission. Off until turned on; read at every call, so turning it off stops running sessions
-    /// too. Independent of Screen access.
-    @Published var panelAccess: Bool { didSet { defaults.set(panelAccess, forKey: Self.panelAccessKey) } }
-    /// Gives the Claude sessions started or restarted while it and Panel access are on `pane_open` and `pane_close` (`PaneOpening`): a terminal, a
-    /// Claude session, a custom app, a page or a file beside the session's own pane, and closing the ones it opened. Off until turned on; read at
-    /// every call together with Panel access, so turning either off stops running sessions too.
-    @Published var sessionsOpenPanes: Bool { didSet { defaults.set(sessionsOpenPanes, forKey: Self.sessionsOpenPanesKey) } }
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -436,8 +426,6 @@ final class Settings: ObservableObject {
     private init() {
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
-        panelAccess = defaults.bool(forKey: Self.panelAccessKey)
-        sessionsOpenPanes = defaults.bool(forKey: Self.sessionsOpenPanesKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
@@ -447,6 +435,9 @@ final class Settings: ObservableObject {
         ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
         // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
         defaults.removeObject(forKey: "voiceSessionOn")
+        // The retired Panel access and Sessions can open panes switches (read by builds up to 2026-10-17): dropped, and not carried over (ClaudeSession.launchClaude says who gets the sets now).
+        defaults.removeObject(forKey: "panelAccess")
+        defaults.removeObject(forKey: "sessionsOpenPanes")
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -735,15 +726,9 @@ struct SettingsView: View {
                                 ScreenPermissionsView(askRestart: askRestart)
                                 Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                            SettingRow(title: "Panel access",
-                                       detail: "Sessions started or restarted while this is on get tools to read what Varnick's panel shows: whether it is open, which tab, pane or board is in it, which pane has the keyboard, and the mode of the search field, never what is typed in it. They can also read the session board: every session's title, folder, Mac, turn, note and the problem it is linked to. They can read the text on the screen of every terminal pane, other sessions' and shells' too, whatever it shows, secrets included, but not its scrollback. While the Outline is on (Settings › Experimental), they can read your Outline: every bullet and note, whether or not it is open, which are otherwise kept on this Mac only. They can edit your Outline too, without asking: every edit is one ⌘Z step, and an edit to the bullet you are typing in goes in as a typed change, around your caret. All of this goes to Anthropic with the session. They can also change what the panel shows, as its keys do (the search, the board, the Outline, a pane's tab, the transcript), without opening or closing the panel, and never turn on Listening. And they can press keys in the panel, as your own keys go, while it is open and you are not typing in it (never the keys that end, mark done or restart a session, start one, quit or paste). It works through Varnick itself and needs no permission.") {
-                                Toggle("", isOn: $settings.panelAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
-                            SettingRow(title: "Sessions can open panes",
-                                       detail: "Needs Panel access. Sessions started or restarted while both are on get tools to open a terminal, a Claude session, a custom app such as Scratch, a page or a file beside their own pane, and to close the panes they opened until you first click, type in or focus one. The new pane never takes the keyboard and the panel is never brought up. A Claude session they open draws on your Claude subscription and never skips permission checks when the session that opened it does not. A custom app they open runs its code, and a page loads with your cookies. Nothing limits how many panes they open. See the guide, Panel access.") {
-                                Toggle("", isOn: $settings.sessionsOpenPanes).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                    .disabled(!settings.panelAccess)
-                            }
+                            Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
                             SettingRow(title: "Keep sessions running",
                                        detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {
                                 if !Zmx.isAvailable {
@@ -816,7 +801,7 @@ struct SettingsView: View {
                             case .listening:
                             SettingRow(title: "Hey Varnick",
                                        detail: settings.ownStepsOn ? "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session. It is answering with Varnick's own steps (Settings › Experimental), not through the voice session, which is off; what that sends is described there."
-                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude, and end it by saying \"over\": a pause never ends a request. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access and Panel access if they are on, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. \"Hey Varnick\" also starts Voice mode, and so does its shortcut (Settings › Shortcuts, which also ends it): until it ends, every line the microphone hears goes to the session as part of a request, with no wake phrase, and \"over\" sends the request, a TV or another voice in the room included. It ends when you press the shortcut or choose End Voice mode in the menu bar, a minute after Varnick last finished speaking with nothing said, when another app starts using the microphone (a call), when Claude decides you are done or the line wasn't meant for it, or when the session needs your OK, fails or takes so long that Varnick stops waiting. A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
+                                       : "While Listening is on, say \"Hey Varnick\" and ask for a page, a bookmark or a Claude session, or anything you would ask Claude, and end it by saying \"over\": a pause never ends a request. Each request goes to a Claude Code session of yours in Home, out of sight until you open it (Show). It has everything your sessions have: your settings, CLAUDE.md files and plugins, Bash, the files and the web, Varnick's tools (Screen access if it is on, Panel access, notifications, automations and Tasks) and a search of your history, bookmarks and Claude sessions. It runs with permissions skipped, so it never asks: anything the microphone hears, a video or another voice in the room included, can make it run commands on this Mac. \"Hey Varnick\" also starts Voice mode, and so does its shortcut (Settings › Shortcuts, which also ends it): until it ends, every line the microphone hears goes to the session as part of a request, with no wake phrase, and \"over\" sends the request, a TV or another voice in the room included. It ends when you press the shortcut or choose End Voice mode in the menu bar, a minute after Varnick last finished speaking with nothing said, when another app starts using the microphone (a call), when Claude decides you are done or the line wasn't meant for it, or when the session needs your OK, fails or takes so long that Varnick stops waiting. A sound marks entering and leaving, the menu bar icon turns red, and the transcript says when. What you say and everything it reads, searches, runs and sees go to Anthropic with the session, as with any session of yours, and each request draws on your Claude plan; nothing of a spoken request goes to TypeSafe or to Text generation. The first request starts the session, later ones are typed into it, and it is kept until 10 minutes after your last request. Its answer is spoken and written to the transcript. A question it asks you raises Needs you, and the session opens from its notice or Show; once you open it, it is an ordinary session again, and from its next start it follows your own Skip permissions and has no search tool. The Phone page's Voice mode talks to the same session: your phone sends its microphone's audio to this Mac, which turns it into text and makes the reply's voice, so anything your phone's microphone hears while Voice mode is on can run commands here too. Needs Keep sessions running, Claude Code logged in and its one-time warning for skip-permissions mode accepted (run claude --dangerously-skip-permissions once in a pane and accept). Settings › Experimental can swap it for Varnick's own steps.") {
                                 VStack(alignment: .trailing, spacing: 4) {
                                     if Listener.shared.state.isUnavailable {
                                         Text(Listener.shared.state.note ?? "Needs macOS 26").font(.system(size: 12)).foregroundStyle(.orange)

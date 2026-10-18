@@ -292,8 +292,16 @@ to Anthropic, leave Screen access off, or close what you don't want seen first.
 
 ### Anthropic, through Panel access
 
-With Panel access on (off by default), the Claude sessions started or restarted after you turn it on can read what
-Varnick's panel shows, through Varnick itself (ADR 0031). What they read goes to Anthropic with the session and stays
+Panel access has no switch (ADR 0031's amendment of 2026-10-17 says which sessions have it), so a Claude session you start in a
+Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031):
+
+- **read the screen of any terminal pane, secrets included,** other sessions' and shells' too, which goes to Anthropic with the session;
+- **read the session board and, with the Outline on, your Outline,** and change the Outline without asking;
+- **change what the panel shows and press keys in it,** while it is open and you are not typing in it;
+- **open panes beside its own:** a terminal, a Claude session that draws on your Claude subscription, a custom app whose code runs outside
+  Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below).
+
+What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
 the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
 and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session
@@ -307,23 +315,22 @@ echoes. Only the live screen is read, wherever you have scrolled to, and anythin
 controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
-It reads no window through Accessibility and needs no permission, and turning the switch off stops every session's
-tools at once. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
-text. Reading a pane's screen resizes, writes to and focuses nothing in it. If you don't want what a terminal shows
-sent to Anthropic, leave Panel access off.
+It reads no window through Accessibility and needs no permission. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
+text. Reading a pane's screen resizes, writes to and focuses nothing in it. What a terminal shows can't be kept from a
+session: keep a secret off a screen while a session is running.
 
 They can also read **your Outline** (`outline_read`, only while Settings › Experimental › Outline is on), which is otherwise kept in a file on this Mac and nowhere else:
 every bullet's text and note and whether it is completed, collapsed or a mirror, from Home or from a bullet down, or the
 rows as you see them with your zoom, filter and caret. All of it goes to Anthropic with the session and stays in its
 transcript on this Mac. The read loads `outline.json` as showing the Outline would and never writes it, and a file
 Varnick can't read is refused. Varnick's log holds a count of lines, never a bullet's text or a filter word. If you
-don't want your bullets sent to Anthropic, leave Panel access off.
+don't want your bullets sent to Anthropic, leave the Outline off.
 
 A session can also change your Outline (`outline_act`) without asking: add bullets, edit a bullet's text or note, complete,
 delete, move, indent, outdent, collapse or mirror one. Each change goes through the Outline's own edits and is one step of
 your undo (⌘Z), and an edit to the bullet you are typing in goes in as if typed, your caret kept at its place in your text. Varnick's log holds the action and a count
-of lines, never a bullet's text. If you don't want a session to change your Outline, leave Panel access off. With
-Settings › Experimental › Outline off, `outline_act` is refused too, even for an edit already under way.
+of lines, never a bullet's text. With Settings › Experimental › Outline off, `outline_act` is refused, even for an edit already
+under way.
 
 A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
 `!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
@@ -335,17 +342,15 @@ A session can also press keys in the panel (`keys`): text and key combos for the
 to the panel's own key handling, as your keys go. Nothing is sent to another app and no permission is used. It works only while
 the panel is open with the keyboard, never opens it, and stops at once when you type in it. It never presses the keys that end,
 mark done or restart a session, Varnick's shortcuts that work anywhere, quit, paste, or Return where it would start a Claude
-session, turn on Listening or open a page. Varnick's log holds the tool and counts, never the keys. If you don't want a session
-to press keys in your panel, leave Panel access off.
+session, turn on Listening or open a page. Varnick's log holds the tool and counts, never the keys.
 
-With **Sessions can open panes** also on (off by default), those sessions can open a terminal, a Claude session, a custom app, a page
+Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page
 or a file beside their own pane, in their own tab on this Mac, and close the panes they opened until you first use one. They read
-nothing more than Panel access lets them, but opening a pane is not free of risk: a custom app they open runs that app's code
+nothing more than the tools above let them, but opening a pane is not free of risk: a custom app they open runs that app's code
 outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, and a Claude session
 they open draws on your Claude subscription. Whether it skips permission checks is in the guide (Panel access); the limits are in
 docs/agents/where-it-breaks.md (Panel access). Varnick's log holds the tool, the kind of pane, the outcome and the time, never a prompt,
-an address or a path. If you
-don't want a session to change your tabs, leave this off.
+an address or a path.
 
 ### A model server you name
 
@@ -552,7 +557,7 @@ The Voice session runs with permissions skipped: Claude Code never asks before a
 permissions says (that was the choice made for it, so a spoken request is not stopped at a dialog nobody is looking at). So anything the
 microphone hears that starts "Hey Varnick" (or, in voice mode, anything, below) can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
 your own voice misheard, a video or a call played through the speakers (Listening hears the Mac's audio too), or another person in the room.
-It also has Varnick's tools your other sessions have (Screen access and Panel access when they are on, notifications, automations and Tasks),
+It also has Varnick's tools your other sessions have (Screen access when it is on, Panel access, notifications, automations and Tasks),
 which can click, type and press keys without asking. Settings › Listening says so beside Hey Varnick. If that is too much, turn on Settings › Experimental ›
 Answer with Varnick's own steps: that Hey Varnick only reads, searches and answers, and opens nothing (the voice session is then off, and so is Voice mode on the phone).
 

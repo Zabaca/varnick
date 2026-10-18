@@ -60,7 +60,7 @@ To build it yourself instead, see [`building.md`](building.md).
   ([privacy and security](privacy-and-security.md#home-is-marked-trusted-in-claude-code)). Resumed sessions keep their own folder.
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
-- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, Panel access, the
+- **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
   Phone page, the Problems board, the Outline, Tasks and Automations (Experimental, below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
@@ -195,8 +195,8 @@ Pages, apps and files can't be added from the phone.
 
 **Restart** sits in the header of a Claude session beside Redraw and End, while the phone is in control of the tab (the same rule as +). It asks first, in the
 page, then ends that session's Claude and starts it again in the same pane, picking the conversation up where it was, as the Mac's Restart does. The new Claude
-reads the host's settings as they are now: Sessions can open panes and the rest, and Skip permissions for a session that follows the setting (one started with
-its own choice keeps it). So Restart is how a session gets a switch you turned on after it started. The header says Restarting…, then Reconnecting…, and the
+reads the host's settings as they are now, Skip permissions for a session that follows the setting (one started with
+its own choice keeps it). So Restart is how a session gets a setting you changed after it started. The header says Restarting…, then Reconnecting…, and the
 screen comes back when the new Claude is up; a failure says why in a box. It works on a Mac and on a headless host, and every machine must run the same build.
 A pane that was sent nothing, or has no transcript, starts fresh, with its first prompt if it never left its first conversation.
 
@@ -339,8 +339,8 @@ ask before it closes, brings the tab up, which closes Settings. ⌘⇧M while Se
 
 ## Panel access
 
-Settings › Claude › **Panel access** (off by default, and independent of Screen access) gives the Claude sessions
-you start or restart in Varnick's panes tools for Varnick itself, from the same `varnick` MCP server. `panel` says
+**Panel access** has no switch: Claude sessions in Varnick's panes have tools for Varnick itself, from the same `varnick` MCP server
+(which sessions: ADR 0031's amendment of 2026-10-17). `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
 the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session
@@ -364,8 +364,7 @@ still as it read it (it is told to read again if you typed in it since). In the 
 caret keeps its place in your text, your next key adds to the new text, and ⌘Z takes back the session's change alone; while an input
 method is composing there, it waits for the composition to end.
 
-Under Panel access, **Sessions can open panes** (off by default, and needing Panel access) gives the sessions you start or
-restart while both are on two more tools. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
+Two more tools, **opening panes**, have no switch either, and the voice session lacks them. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
 (with a first message if the session gives one), a custom app such as Scratch, a page or a file beside the session's own pane,
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
@@ -384,9 +383,7 @@ Settings, the Restart Varnick card or the split picker shows, for two seconds af
 and, with the panel hidden, for a pane's tab or while a terminal is on screen. Showing the Outline puts the caret in a
 bullet only if the panel already has the keyboard. The tools work through
 Varnick's own state, so they need no permission, no Accessibility and no Screen Recording. What a session reads goes to
-Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access). A
-session gains the tools when it starts, so restart a running one (⌘⌥R) after turning the switch on; turning it off
-stops every session's tools at once.
+Anthropic with the session: see [privacy and security](privacy-and-security.md#anthropic-through-panel-access).
 
 ## Custom apps
 
@@ -459,7 +456,7 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   at a time: a slot that falls due while the last run still works or waits on you is skipped. Keep sessions running must be on.
 - **Permissions follow Settings › Claude's Skip permissions,** as a prompt you type does, unless the automation says Ask (its allowed
   tools run, anything else waits for you with Needs you), Allowed tools only (anything not allowed is refused with no dialog, and
-  Claude goes on or ends) or Skip. A run never gets Screen access or Panel access tools, but like every pane it has Varnick's
+  Claude goes on or ends) or Skip. A run never gets Screen access, Panel access or pane tools, but like every pane it has Varnick's
   macOS permissions, so a shell command it may run can reach the screen: see [privacy and security](privacy-and-security.md#automations-act-while-you-are-away).
 - **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
   hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.

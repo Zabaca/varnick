@@ -67,7 +67,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var allowedTools: [String]?
 
     /// The automation this session is a run of (option 01 of `prompts-cant-run-on-a-schedule`), for the whole life of the record: a run's MCP
-    /// server lists `notify` alone, whatever Screen access and Panel access say, at every start of it. Optional so older records load, and an older
+    /// server lists `notify` alone, whatever Screen access says, at every start of it. Optional so older records load, and an older
     /// build ignores it.
     var automation: UUID?
 
