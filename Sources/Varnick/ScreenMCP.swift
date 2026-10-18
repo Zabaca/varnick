@@ -1,8 +1,8 @@
 import Foundation
 import VarnickPeer
 
-// Screen access for sessions, the relay half (ADR 0023): `Varnick --mcp --pane <id>` is the MCP server every Claude pane starts, with the screen
-// tools when Settings › Claude › Screen access is on and Panel access's (`PanelMCP`, ADR 0031) always. It turns each tool call into one line on the peer
+// Screen access for sessions, the relay half (ADR 0023): `Varnick --mcp --pane <id>` is the MCP server every Claude pane starts, with the sets
+// `ClaudeSession.launchClaude` names for it (Panel access's is `PanelMCP`, ADR 0031). It turns each tool call into one line on the peer
 // socket and prints the reply. It never reads or acts: the running Varnick does, in `ScreenAccess` and `PanelAccess`. The request and
 // reply types are both halves'.
 
@@ -245,8 +245,7 @@ enum ScreenMCP {
         static let taskResult = Sets(rawValue: 32)
         /// `search` (option 09 of `listening-never-answers`): History, Bookmarks and Claude sessions, listed for the voice session alone.
         static let voiceSearch = Sets(rawValue: 64)
-        /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`): in every Claude pane, a run's and the voice session's
-        /// excepted, behind no switch. Their calls travel as Panel access's requests.
+        /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`). Their calls travel as Panel access's requests.
         static let panes = Sets(rawValue: 128)
 
         static let screenArgument = "--screen"
@@ -274,9 +273,8 @@ enum ScreenMCP {
     }
 
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
-    /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets.
-    /// `--notify` is always there, and the callers name `--panel` and `--panes` for every pane but a run's (and the voice session's `--panes`); Screen
-    /// access is the one set a switch still decides.
+    /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets
+    /// (`ClaudeSession.launchClaude` says which). `--notify` is always there.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
                               voiceSearch: Bool = false, panes: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,

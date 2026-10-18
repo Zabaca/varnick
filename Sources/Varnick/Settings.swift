@@ -435,7 +435,7 @@ final class Settings: ObservableObject {
         ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
         // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
         defaults.removeObject(forKey: "voiceSessionOn")
-        // The retired Panel access and Sessions can open panes switches (read by builds up to 2026-10-17): both sets are on in every pane now.
+        // The retired Panel access and Sessions can open panes switches (read by builds up to 2026-10-17): dropped, and not carried over (ClaudeSession.launchClaude says who gets the sets now).
         defaults.removeObject(forKey: "panelAccess")
         defaults.removeObject(forKey: "sessionsOpenPanes")
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
@@ -726,6 +726,9 @@ struct SettingsView: View {
                                 ScreenPermissionsView(askRestart: askRestart)
                                 Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
                             SettingRow(title: "Keep sessions running",
                                        detail: "Claude and terminal panes keep running when Varnick restarts, quits or crashes, and reconnect when it is back. Closing a pane ends it.") {
                                 if !Zmx.isAvailable {

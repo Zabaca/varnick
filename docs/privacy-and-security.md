@@ -292,12 +292,16 @@ to Anthropic, leave Screen access off, or close what you don't want seen first.
 
 ### Anthropic, through Panel access
 
-Panel access has no switch (ADR 0031's amendment of 2026-10-17): every Claude session started or
-restarted in a Varnick pane, from the build that removed it on, can read what Varnick's panel shows, through Varnick
-itself (ADR 0031), and a session started before that build has none of it until it restarts. A run of an automation or a Task's step has none of it,
-and a session on a headless host has `notify` alone. A session you start therefore can read the screen of
-every terminal pane, the session board, and (with the Outline on) your Outline, and can change your Outline, what the panel
-shows and your tabs, with no setting to refuse it. What they read goes to Anthropic with the session and stays
+Panel access has no switch (ADR 0031's amendment of 2026-10-17 says which sessions have it), so a Claude session you start in a
+Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031):
+
+- **read the screen of any terminal pane, secrets included,** other sessions' and shells' too, which goes to Anthropic with the session;
+- **read the session board and, with the Outline on, your Outline,** and change the Outline without asking;
+- **change what the panel shows and press keys in it,** while it is open and you are not typing in it;
+- **open panes beside its own:** a terminal, a Claude session that draws on your Claude subscription, a custom app whose code runs outside
+  Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below).
+
+What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
 the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
 and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session

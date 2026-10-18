@@ -339,8 +339,8 @@ ask before it closes, brings the tab up, which closes Settings. ⌘⇧M while Se
 
 ## Panel access
 
-**Panel access** has no switch: every Claude session in Varnick's panes, from the build that removed the switch on (restart an
-older one, ⌘⌥R), has tools for Varnick itself, from the same `varnick` MCP server. A run of an automation or a Task's step has none of them. `panel` says
+**Panel access** has no switch: Claude sessions in Varnick's panes have tools for Varnick itself, from the same `varnick` MCP server
+(which sessions: ADR 0031's amendment of 2026-10-17). `panel` says
 whether the panel is visible, key and pinned, what it shows (the search and its mode, never what is typed in it; a
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
 the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session

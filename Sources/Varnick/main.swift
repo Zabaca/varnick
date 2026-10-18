@@ -735,7 +735,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--peer"), i + 1 < CommandLine.a
     exit(PeerRelay.run(CommandLine.arguments[i + 1], host: MacPeerHost()))
 }
 
-// `Varnick --mcp --pane <id> [--screen] [--panel] [--automations] [--notify]` is the MCP server every Claude pane starts (Screen access and Automations add their sets when on; Panel access's and the pane tools' are always named)
+// `Varnick --mcp --pane <id> [--screen] [--panel] [--automations] [--panes] [--notify]` is the MCP server every Claude pane starts, with the sets `ClaudeSession.launchClaude` names
 // (`ScreenMCP`): JSON-RPC on standard input and output, each tool call one line on the peer socket. The arguments name the sets of tools
 // it lists (the screen tools when none is named). It never reads or acts. Like `--peer`, it runs before anything of the app starts, and
 // it exits when its input ends.
