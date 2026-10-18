@@ -7,31 +7,39 @@ import {
   askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
 import {
-  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs, minSpeechMs,
-  newView, noiseRunMs, pauseMs, pauseNote, preRollMs, requestCapMs, silenceMs, stateLine, toBase64, uploadRate, Utterance,
+  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs,
+  minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
+  toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
 import { block, Downsampler } from "./page/voice-worklet.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const id = "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d";
-const chunk = (extra: Record<string, unknown> = {}) => ({ id, seq: 0, last: false, audio: "AAAA", ...extra });
+const run = "7f3c9a10-2b4d-4e8f-a6c1-0d9e8f7a6b5c";
+const chunk = (extra: Record<string, unknown> = {}) => ({ id, run, seq: 0, last: false, audio: "AAAA", ...extra });
 
 describe("an audio chunk from the page", () => {
-  test("is an id, a place, whether it is last and the audio, with the hint", () => {
+  test("is a segment's id, its Voice mode run, a place, whether it is last and the audio, with the hint", () => {
     expect(parseAudioBody(chunk({ moment: 1760000000, zone: "America/Denver", units: "us" }))).toEqual({
-      ok: true, value: { id, seq: 0, last: false, audio: "AAAA", moment: 1760000000, zone: "America/Denver", units: "us" },
+      ok: true, value: { id, run, seq: 0, last: false, audio: "AAAA", moment: 1760000000, zone: "America/Denver", units: "us" },
     });
-    expect(parseAudioBody(chunk({ id: id.toUpperCase() }))).toMatchObject({ ok: true, value: { id } });
+    expect(parseAudioBody(chunk({ id: id.toUpperCase(), run: run.toUpperCase() }))).toMatchObject({ ok: true, value: { id, run } });
+  });
+
+  test("a page that names no run is an old one, and is told to reload", () => {
+    const { run: _, ...old } = chunk();
+    expect(parseAudioBody(old)).toEqual({ ok: false, error: "Voice mode's page is out of date: reload it" });
   });
 
   test("and nothing else is read: a rate, a device or a session in the body is not carried", () => {
     const parsed = parseAudioBody(chunk({ rate: 48000, by: "someone", session: "varnick-x", take: true }));
-    expect(parsed.ok && Object.keys(parsed.value).sort()).toEqual(["audio", "id", "last", "seq"]);
+    expect(parsed.ok && Object.keys(parsed.value).sort()).toEqual(["audio", "id", "last", "run", "seq"]);
   });
 
   test("anything else is refused", () => {
     const bad: unknown[] = [
-      null, [], "x", chunk({ id: "not-a-uuid" }), chunk({ id: 5 }), chunk({ seq: -1 }), chunk({ seq: 1.5 }), chunk({ seq: 60 }), chunk({ seq: "0" }),
+      null, [], "x", chunk({ id: "not-a-uuid" }), chunk({ id: 5 }),
+      chunk({ run: undefined }), chunk({ run: "not-a-uuid" }), chunk({ run: 5 }), chunk({ seq: -1 }), chunk({ seq: 1.5 }), chunk({ seq: 60 }), chunk({ seq: "0" }),
       chunk({ last: "yes" }), chunk({ last: undefined }), chunk({ audio: "" }), chunk({ audio: 5 }), chunk({ audio: "not base64!" }),
       chunk({ audio: "A".repeat(maxChunkText + 4) }), chunk({ moment: "now" }), chunk({ moment: -1 }), chunk({ moment: Infinity }),
       chunk({ zone: "../../etc" }), chunk({ zone: "x".repeat(65) }), chunk({ zone: 5 }), chunk({ units: "furlongs" }),
@@ -51,8 +59,8 @@ describe("an audio chunk from the page", () => {
   });
 
   test("the rate is the server's, and a hint left out is left out", () => {
-    expect(audioFields({ id, seq: 3, last: true, audio: "AAAA" }).voice).toEqual({ id, seq: 3, last: true, audio: "AAAA", rate: 16000 });
-    expect(JSON.parse(buildRequest(V, "voiceAudio", "device", audioFields({ id, seq: 0, last: false, audio: "AAAA" }))).by).toBe("device");
+    expect(audioFields({ id, run, seq: 3, last: true, audio: "AAAA" }).voice).toEqual({ id, run, seq: 3, last: true, audio: "AAAA", rate: 16000 });
+    expect(JSON.parse(buildRequest(V, "voiceAudio", "device", audioFields({ id, run, seq: 0, last: false, audio: "AAAA" }))).by).toBe("device");
   });
 });
 
@@ -89,7 +97,7 @@ describe("what the host said", () => {
       voice: {
         id, next: 4, done: true,
         events: [
-          { kind: "heard", text: "hello" }, { kind: "taken" }, { kind: "futureKind" }, 7,
+          { kind: "heard", text: "hello" }, { kind: "collected", text: "so far" }, { kind: "taken" }, { kind: "futureKind" }, 7,
           { kind: "needsYou", session }, { kind: "needsYou", session: "../../x" },
           { kind: "answered", text: "It is noon.", spoken: "It is noon.", audio: "AAAA", failure: 5 },
           { kind: "answered", audio: "not base64!" },
@@ -101,7 +109,7 @@ describe("what the host said", () => {
       body: {
         ok: true, id, next: 4, done: true,
         events: [
-          { kind: "heard", text: "hello" }, { kind: "taken" }, { kind: "needsYou", session }, { kind: "needsYou" },
+          { kind: "heard", text: "hello" }, { kind: "collected", text: "so far" }, { kind: "taken" }, { kind: "needsYou", session }, { kind: "needsYou" },
           { kind: "answered", text: "It is noon.", spoken: "It is noon.", audio: "AAAA" }, { kind: "answered" },
         ],
       },
@@ -146,6 +154,23 @@ describe("where a request ends", () => {
     expect(answers[5]).toBe("speech");
     expect(answers.slice(6, 6 + quietFrames - 1).every((answer) => answer === "speech")).toBe(true);
     expect(answers.at(-1)).toBe("end");
+  });
+
+  test("\"over\" said alone is short: a request being collected lets a sound of shortSpeechMs be a segment, and a blip is still not one", () => {
+    const over = [loud, loud, ...Array(quietFrames).fill(quiet)];
+    expect(shortSpeechMs).toBeLessThan(minSpeechMs);
+    // Normally two loud frames are a blip and nothing is sent.
+    expect(run(over).includes("begin")).toBe(false);
+    expect(run(over).at(-1)).toBe("drop");
+    const collecting = calibrated();
+    collecting.minSpeech = shortSpeechMs;
+    const answers = run(over, collecting);
+    expect(answers.includes("begin")).toBe(true);
+    expect(answers.at(-1)).toBe("end");
+    // A single frame, a click, is still not one.
+    const click = calibrated();
+    click.minSpeech = shortSpeechMs;
+    expect(run([loud, ...Array(quietFrames).fill(quiet)], click).at(-1)).toBe("drop");
   });
 
   test("a blip is dropped, and sends nothing", () => {
@@ -283,21 +308,21 @@ describe("a request on its way to the host", () => {
     utterance.begin();
     for (let i = 0; i < 40; i++) utterance.add(block());
     await utterance.chain;
-    // It failed while the user was still speaking: the page is not to hold the microphone for an answer.
+    // It failed while the user was still speaking: the page has nothing to follow.
     expect(utterance.failed).toBe("The voice session is off.");
-    expect(utterance.awaitsAnswer).toBe(false);
+    expect(utterance.followable).toBe(false);
     expect(await utterance.finish()).toBe("The voice session is off.");
     expect(posts).toEqual([0]);
     expect(told).toEqual(["The voice session is off."]);
   });
 
-  test("a request that was a request and sent whole waits for the answer", async () => {
+  test("a segment that was a segment and sent whole is followed", async () => {
     const utterance = new Utterance("u", async () => ({ ok: true }));
-    expect(utterance.awaitsAnswer).toBe(false);
+    expect(utterance.followable).toBe(false);
     utterance.begin();
-    expect(utterance.awaitsAnswer).toBe(true);
+    expect(utterance.followable).toBe(true);
     expect(await utterance.finish()).toBeNull();
-    expect(utterance.awaitsAnswer).toBe(true);
+    expect(utterance.followable).toBe(true);
   });
 
   test("a failure in the last chunk is the request's", async () => {
@@ -306,7 +331,7 @@ describe("a request on its way to the host", () => {
     utterance.begin();
     utterance.add(block());
     expect(await utterance.finish()).toBe("The host didn't answer.");
-    expect(utterance.awaitsAnswer).toBe(false);
+    expect(utterance.followable).toBe(false);
   });
 });
 
@@ -407,6 +432,155 @@ describe("the view the host's events make", () => {
     const before = newView();
     applyEvents(before, [{ kind: "heard", text: "x" }]);
     expect(before.exchange).toEqual([]);
+  });
+});
+
+describe("a request that ends only at over", () => {
+  const collected = (text: string) => ({ kind: "collected", text });
+
+  test("a segment that did not end it shows the request so far, still being built, and the page goes on listening", () => {
+    let view = { ...newView(), state: "sending" };
+    view = applyEvents(view, [collected("what was I working on")], "s1");
+    expect(view).toMatchObject({ pending: "what was I working on", state: "collecting", asking: null });
+    expect(stateLine.collecting).toContain("over");
+    expect(view.exchange).toEqual([]);
+    // Each collected event is all of the request so far: it replaces, it does not add.
+    view = applyEvents(view, [collected("what was I working on yesterday afternoon")], "s2");
+    expect(view.pending).toBe("what was I working on yesterday afternoon");
+    expect(view.state).toBe("collecting");
+  });
+
+  test("the segment that ended it turns the line into the user's request and the answer follows", () => {
+    let view = applyEvents(newView(), [collected("what time is it")], "s1");
+    view = applyEvents(view, [{ kind: "heard", text: "what time is it in Tokyo" }, { kind: "taken" }], "s2");
+    expect(view).toMatchObject({ pending: null, asking: "s2", state: "working", done: false });
+    expect(view.exchange).toEqual([{ who: "you", text: "what time is it in Tokyo" }]);
+    view = applyEvents(view, [{ kind: "answered", text: "It is noon.", audio: "AAAA" }], "s2");
+    expect(view).toMatchObject({ asking: null, state: "speaking", done: true, play: "AAAA" });
+  });
+
+  test("a segment said while the last request is being answered waits its turn: its words are shown, the state line stays the ask's", () => {
+    let view = applyEvents(newView(), [{ kind: "heard", text: "what time is it" }, { kind: "taken" }], "s1");
+    view = applyEvents(view, [collected("and in Tokyo")], "s2");
+    expect(view).toMatchObject({ pending: "and in Tokyo", state: "working", asking: "s1" });
+    view = applyEvents(view, [{ kind: "lookingUp" }], "s1");
+    expect(view.state).toBe("lookingUp");
+    // The answer ends the ask, and the page is then collecting the next request.
+    view = applyEvents(view, [{ kind: "answered", text: "Noon." }], "s1");
+    expect(view).toMatchObject({ asking: null, state: "collecting", pending: "and in Tokyo", done: true });
+    expect(view.exchange.map((line) => line.who)).toEqual(["you", "varnick"]);
+  });
+
+  test("a segment that could not be made into words says so and leaves the request, and an ask in progress, as they were", () => {
+    let view = applyEvents({ ...newView(), state: "sending" }, [collected("what time")], "s1");
+    view = applyEvents(view, [{ kind: "failed", text: "I couldn't make out the audio." }], "s2");
+    expect(view).toMatchObject({ pending: "what time", state: "collecting" });
+    expect(view.exchange).toEqual([{ who: "note", text: "I couldn't make out the audio." }]);
+    const asked = applyEvents(newView(), [{ kind: "heard", text: "x" }, { kind: "taken" }], "s1");
+    const meanwhile = applyEvents(asked, [{ kind: "failed", text: "I couldn't make out the audio." }], "s2");
+    expect(meanwhile).toMatchObject({ asking: "s1", state: "working", done: false });
+    // The ask's own failure ends it.
+    expect(applyEvents(asked, [{ kind: "failed", text: "Claude didn't take that." }], "s1")).toMatchObject({ asking: null, state: "listening", done: true });
+  });
+
+  test("an empty request, from a segment with nothing in it, shows no line", () => {
+    const view = applyEvents({ ...newView(), state: "sending" }, [collected("")], "s1");
+    expect(view).toMatchObject({ pending: null, state: "listening" });
+  });
+
+  test("a segment never changes the state of a user who is speaking", () => {
+    const view = applyEvents({ ...newView(), state: "hearing" }, [collected("one")], "s1");
+    expect(view).toMatchObject({ pending: "one", state: "hearing" });
+  });
+
+  test("an \"over\" the Mac kept for later, because it was on another request, says so and keeps the line", () => {
+    const view = applyEvents({ ...newView(), state: "sending" }, [{ kind: "collected", text: "and in Tokyo", spoken: "Still on the last one.", failure: "busy" }], "s1");
+    expect(view).toMatchObject({ pending: "and in Tokyo", state: "collecting" });
+    expect(view.exchange).toEqual([{ who: "note", text: "Still on the last one." }]);
+  });
+
+  test("the page asks what it is to wait on", () => {
+    expect(settled({ ...newView(), pending: "x" })).toBe("collecting");
+    expect(settled(newView())).toBe("listening");
+  });
+});
+
+describe("the segments being followed", () => {
+  const ok = (next: number, done = false, events: unknown[] = []) => ({ ok: true, next, done, events });
+
+  test("are polled newest first, and their news comes oldest first", () => {
+    const segments = new Segments();
+    for (const id of ["a", "b", "c"]) segments.add(id);
+    expect(segments.order()).toEqual(["c", "b", "a"]);
+    const news = segments.settle(new Map<string, unknown>([
+      ["c", ok(1, true, [{ kind: "collected", text: "c" }])], ["b", ok(1, true, [{ kind: "collected", text: "b" }])], ["a", ok(2, false, [{ kind: "heard", text: "a" }, { kind: "taken" }])],
+    ]));
+    expect(news.map((item) => item.id)).toEqual(["a", "b", "c"]);
+    // Done ones leave; one still being answered stays, and is asked for from where it left off.
+    expect(segments.order()).toEqual(["a"]);
+    expect(segments.after("a")).toBe(2);
+    expect(segments.after("gone")).toBe(0);
+  });
+
+  test("a segment with nothing new says nothing, and one that is done says so even with no events", () => {
+    const segments = new Segments();
+    segments.add("a");
+    segments.add("b");
+    expect(segments.settle(new Map<string, unknown>([["a", ok(0)], ["b", ok(0, true)]]))).toEqual([{ id: "b", events: [], done: true, lost: null }]);
+    expect(segments.size).toBe(1);
+  });
+
+  test("one that cannot be reached is given up on after the same number of tries in a row, and a good poll starts the count again", () => {
+    const segments = new Segments();
+    segments.add("a");
+    const fail = new Map<string, unknown>([["a", { ok: false, error: "The host didn't answer." }]]);
+    for (let i = 0; i < pollFailures - 1; i++) expect(segments.settle(fail)).toEqual([]);
+    expect(segments.settle(new Map<string, unknown>([["a", ok(0)]]))).toEqual([]);
+    for (let i = 0; i < pollFailures - 1; i++) expect(segments.settle(fail)).toEqual([]);
+    expect(segments.settle(fail)).toEqual([{ id: "a", events: [], done: true, lost: "The host didn't answer." }]);
+    expect(segments.size).toBe(0);
+  });
+
+  test("a segment that was not polled this round is left alone", () => {
+    const segments = new Segments();
+    segments.add("a");
+    expect(segments.settle(new Map())).toEqual([]);
+    expect(segments.size).toBe(1);
+  });
+});
+
+describe("segments go to the host in the order they were said", () => {
+  test("serial runs tasks one after another, whatever each takes, and a failure is its own", async () => {
+    const run = serial();
+    const order: string[] = [];
+    const slow = run(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); order.push("slow"); return 1; });
+    const broken = run(async () => { order.push("broken"); throw new Error("no"); });
+    const quick = run(async () => { order.push("quick"); return 3; });
+    expect(await slow).toBe(1);
+    await expect(broken).rejects.toThrow("no");
+    expect(await quick).toBe(3);
+    expect(order).toEqual(["slow", "broken", "quick"]);
+  });
+
+  test("a segment said later reaches the host later, though it is quicker to send", async () => {
+    const run = serial();
+    const sent: string[] = [];
+    const post = (name: string, delay: number) => async (body: { seq: number }) => {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      sent.push(`${name}${body.seq}`);
+      return { ok: true };
+    };
+    const block = () => new Int16Array(chunkSamples).fill(3);
+    const first = new Utterance("1", post("a", 15), [], undefined, run);
+    first.begin();
+    first.add(block());
+    const finishedFirst = first.finish();
+    const second = new Utterance("2", post("b", 1), [], undefined, run);
+    second.begin();
+    second.add(block());
+    const finishedSecond = second.finish();
+    expect(await Promise.all([finishedFirst, finishedSecond])).toEqual([null, null]);
+    expect(sent).toEqual(["a0", "a1", "b0", "b1"]);
   });
 });
 

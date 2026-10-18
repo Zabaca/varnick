@@ -196,6 +196,7 @@ body.in-voice { height: var(--page-height, 100dvh); overflow: hidden; display: f
 .voice-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
 .voice-line { margin: 0; padding: 8px 12px; border-radius: 12px; max-width: 88%; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); }
 .voice-line.you { align-self: flex-end; border-color: var(--accent); }
+.voice-line.building { border-style: dashed; opacity: 0.75; }
 .voice-line.note { align-self: center; max-width: 100%; background: none; border: none; font-size: 13px; color: var(--warn); text-align: center; }
 .voice-state { margin: 0; font-size: 18px; font-weight: 600; text-align: center; }
 #voice-start { min-height: 52px; font-size: 17px; }
