@@ -123,6 +123,15 @@ export const offersAdd = (tab) => tab.mine === true && tab.panes.length > 0;
 /** Whether the switcher is drawn: with more than one pane, and with one when Add pane is its button. */
 export const showsSwitcher = (tab) => tab.panes.length > 1 || offersAdd(tab);
 
+/**
+ * Whether Restart is offered over the pane shown: a Claude session that runs, in a tab this phone controls, the same rule as Add pane and End. The host
+ * decides again when it is asked.
+ */
+export const offersRestart = (tab, pane) => tab.mine === true && pane?.kind === "claude" && isOpenable(pane);
+
+/** What Restart asks before it ends the session's claude and starts it again. */
+export const restartQuestion = (title) => `Restart “${title}”? Claude stops what it is doing and starts again in this pane, picking up the conversation where it was.`;
+
 /** The pane a new session is: the session's name is `varnick-` and the pane's id. Null for any other name. */
 export function paneOfSession(session) {
   const match = /^varnick-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(session);

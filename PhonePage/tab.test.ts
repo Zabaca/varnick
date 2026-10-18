@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersTake, paneLabel, paneOfSession, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersRestart, offersTake, paneLabel, paneOfSession, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
 
@@ -165,5 +165,23 @@ describe("Add pane", () => {
   test("the new pane is the session's id", () => {
     expect(paneOfSession(`varnick-${a}`)).toBe(a);
     for (const bad of [null, "", a, `varnick-x`, `varnick-${a}x`, `Varnick-${a}`]) expect(paneOfSession(bad as string)).toBeNull();
+  });
+});
+
+describe("Restart", () => {
+  test("is offered over a Claude session that runs, in a tab this phone controls", () => {
+    expect(offersRestart({ mine: true, panes: [claude(a)] }, claude(a))).toBe(true);
+    expect(offersRestart({ mine: false, panes: [claude(a)] }, claude(a))).toBe(false);
+    expect(offersRestart({ mine: true, panes: [claude(a)] }, claude(a, { running: false }))).toBe(false);
+    expect(offersRestart({ mine: true, panes: [terminal(a)] }, terminal(a))).toBe(false);
+    expect(offersRestart({ mine: true, panes: [other(a, "web")] }, other(a, "web"))).toBe(false);
+    expect(offersRestart({ mine: true, panes: [] }, null)).toBe(false);
+    expect(offersRestart({ mine: true, panes: [] }, undefined)).toBe(false);
+  });
+
+  test("the question names the session and what restarting does", () => {
+    const text = restartQuestion("Fix it");
+    expect(text).toContain("“Fix it”");
+    expect(text).toContain("starts again");
   });
 });
