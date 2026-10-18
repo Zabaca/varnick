@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersRestart, offersTake, paneLabel, paneOfSession, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
+import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
 
 const tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77";
@@ -162,9 +163,46 @@ describe("Add pane", () => {
     expect(showsSwitcher({ mine: false, panes: [claude(a), terminal(b)] })).toBe(true);
   });
 
-  test("the new pane is the session's id", () => {
-    expect(paneOfSession(`varnick-${a}`)).toBe(a);
-    for (const bad of [null, "", a, `varnick-x`, `varnick-${a}x`, `Varnick-${a}`]) expect(paneOfSession(bad as string)).toBeNull();
+  test("a pane just added is shown once listed, except a Claude or terminal pane that isn't running yet", () => {
+    expect(readyToShow(claude(a))).toBe(true);
+    expect(readyToShow(terminal(a, { running: false }))).toBe(false);
+    expect(readyToShow(claude(a, { running: false }))).toBe(false);
+    for (const kind of ["web", "app", "file"]) expect(readyToShow(other(a, kind))).toBe(true);
+  });
+
+  test("the form offers Claude and a terminal always, and the rest only as the server offered them", () => {
+    expect(kindsOffered(null)).toEqual(["claude", "terminal"]);
+    expect(kindsOffered({ kinds: ["claude", "terminal"] })).toEqual(["claude", "terminal"]);
+    expect(kindsOffered({ kinds: ["file", "web", "app"] })).toEqual(["claude", "terminal", "app", "web", "file"]);
+    expect(kindsOffered({ kinds: ["claude", "terminal", "app", "web", "hologram"] })).toEqual(["claude", "terminal", "app", "web"]);
+    expect(kindsOffered({ kinds: "web" })).toEqual(["claude", "terminal"]);
+    expect(kindShown("file", ["claude", "terminal"])).toBe("claude");
+    expect(kindShown("web", ["claude", "terminal", "web"])).toBe("web");
+  });
+
+  test("Add waits for what the kind needs, and sends that kind's own field only", () => {
+    const form = { tab, pane: a, kind: "claude", agent: "reviewer", app: "scratch", url: " localhost:3000 ", file: "/x/y.ts" };
+    expect(addable({ ...form, kind: "claude" })).toBe(true);
+    expect(addable({ ...form, kind: "terminal" })).toBe(true);
+    expect(addable({ ...form, kind: "app", app: null })).toBe(false);
+    expect(addable({ ...form, kind: "app" })).toBe(true);
+    expect(addable({ ...form, kind: "web", url: "  " })).toBe(false);
+    expect(addable({ ...form, kind: "web" })).toBe(true);
+    expect(addable({ ...form, kind: "file", file: null })).toBe(false);
+    expect(addable({ ...form, kind: "file" })).toBe(true);
+    expect(addBody({ ...form, kind: "claude" }, "Look.")).toEqual({ tab, pane: a, kind: "claude", agent: "reviewer", prompt: "Look." });
+    expect(addBody({ ...form, kind: "terminal" }, "typed before")).toEqual({ tab, pane: a, kind: "terminal" });
+    expect(addBody({ ...form, kind: "app" }, "")).toEqual({ tab, pane: a, kind: "app", app: "scratch" });
+    expect(addBody({ ...form, kind: "web" }, "")).toEqual({ tab, pane: a, kind: "web", url: "localhost:3000" });
+    expect(addBody({ ...form, kind: "file" }, "")).toEqual({ tab, pane: a, kind: "file", file: "/x/y.ts" });
+  });
+
+  test("the file picker shows a folder below the pane's folder as a short relative path", () => {
+    expect(entryPath("/p/cc", "a.ts")).toBe("/p/cc/a.ts");
+    expect(entryPath("/", "a.ts")).toBe("/a.ts");
+    expect(relativeTo("/p/cc", "/p/cc")).toBe("./");
+    expect(relativeTo("/p/cc/", "/p/cc/src/deep")).toBe("./src/deep");
+    expect(relativeTo("/p/cc", "/elsewhere")).toBe("/elsewhere");
   });
 });
 

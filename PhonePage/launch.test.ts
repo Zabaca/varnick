@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import {
-  agentsOf, openElsewhere, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
-  restartPane, shapeAgents, shapeProjects, splitAgents, splitTab, startSession,
+  agentsOf, isInsideFolder, openElsewhere, parentWithin, parseSplitDir, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
+  restartPane, shapeAgents, shapeProjects, splitFiles, splitOffer, splitTab, startSession,
   type Asker,
 } from "./launch";
 import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
@@ -456,12 +456,12 @@ describe("what an Add pane may ask", () => {
     expect(parseSplitBody({ tab, pane, kind: "claude", prompt: "a".repeat(promptLimitBytes) })).toMatchObject({ ok: false });
   });
 
-  test("a tab and a pane are ids, and the kind is Claude or a terminal", () => {
+  test("a tab and a pane are ids, and the kind is one Add pane offers", () => {
     for (const bad of [undefined, null, "", "x", `${tab}\n`, 5]) {
       expect(parseSplitBody({ tab: bad, pane, kind: "claude" })).toMatchObject({ ok: false });
       expect(parseSplitBody({ tab, pane: bad, kind: "claude" })).toMatchObject({ ok: false });
     }
-    for (const bad of [undefined, "web", "app", "file", "Claude", 1]) expect(parseSplitBody({ tab, pane, kind: bad })).toMatchObject({ ok: false });
+    for (const bad of [undefined, "Claude", "page", "browser", 1]) expect(parseSplitBody({ tab, pane, kind: bad })).toMatchObject({ ok: false });
     expect(parseSplitBody(null)).toMatchObject({ ok: false });
     expect(parseSplitBody([])).toMatchObject({ ok: false });
   });
@@ -493,7 +493,7 @@ describe("adding a pane", () => {
   test("sends start as the device with the tab, the pane and the axis, no folder and no skipPermissions", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({ tab }) });
     const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab, pane: fixedID } });
     const start = calls.find((call) => call.op === "start")!;
     expect(start.by).toBe(device.id);
     expect(start.fields).toEqual({ start: { id: fixedID, prompt: "Look at the diff.", kind: "claude", agent: "reviewer" }, tab, pane: first, axis: "sideBySide" });
@@ -514,7 +514,7 @@ describe("adding a pane", () => {
 
   test("a pane with no folder has no agents, and an agent for it is refused", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({ tab }) });
-    expect(await splitAgents(asker, device, "linux box", tab, page)).toEqual({ status: 200, body: { ok: true, folder: null, agents: [] } });
+    expect(await splitOffer(asker, device, "linux box", tab, page)).toEqual({ status: 200, body: { ok: true, folder: null, agents: [], apps: [], kinds: ["claude", "terminal", "app", "web"] } });
     expect((await splitTab(asker, device, "linux box", { ...ask, pane: page }, () => fixedID)).status).toBe(400);
     expect(calls.some((call) => call.op === "agents" || call.op === "start")).toBe(false);
     // Without an agent a page can still be split beside.
@@ -570,7 +570,7 @@ describe("adding a pane", () => {
       status: ok({ sessions: { [`varnick-${fixedID}`]: { running: true } } }),
     });
     const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
-    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab } });
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab, pane: fixedID } });
     expect(calls.find((call) => call.op === "status")!.fields).toEqual({ sessions: [`varnick-${fixedID}`] });
   });
 
@@ -581,12 +581,224 @@ describe("adding a pane", () => {
 
   test("the chips come from the pane's folder, for a tab the phone controls only", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents });
-    expect(await splitAgents(asker, device, "linux box", tab.toUpperCase(), first)).toEqual({
-      status: 200, body: { ok: true, folder: worktree, agents: [{ name: "reviewer", description: "", project: false }] },
-    });
+    const offered = await splitOffer(asker, device, "linux box", tab.toUpperCase(), first);
+    expect(offered).toMatchObject({ status: 200, body: { ok: true, folder: worktree, agents: [{ name: "reviewer", description: "", project: false }] } });
     const notMine = fakeRelay({ tabs: listed(other), agents });
-    expect((await splitAgents(notMine.asker, device, "linux box", tab, first)).status).toBe(409);
+    expect((await splitOffer(notMine.asker, device, "linux box", tab, first)).status).toBe(409);
     expect(notMine.calls.some((call) => call.op === "agents")).toBe(false);
+  });
+});
+
+describe("what an Add pane may ask for an app, a page and a file (option 05)", () => {
+  const pane = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const root = "/home/alex/Projects/play/cc";
+
+  test("an app: its folder name, and nothing of another kind", () => {
+    expect(parseSplitBody({ tab, pane, kind: "app", app: "scratch" })).toEqual({ ok: true, value: { tab, pane, kind: "app", app: "scratch" } });
+    for (const bad of [undefined, null, "", "a/b", "..", ".", "a\nb", "a".repeat(200), 5]) expect(parseSplitBody({ tab, pane, kind: "app", app: bad })).toMatchObject({ ok: false });
+    for (const extra of [{ agent: "x" }, { prompt: "hi" }, { url: "localhost:3000" }, { file: `${root}/a` }]) expect(parseSplitBody({ tab, pane, kind: "app", app: "scratch", ...extra })).toMatchObject({ ok: false });
+  });
+
+  test("a page: one trimmed line of at most a URL's usual length, as typed", () => {
+    expect(parseSplitBody({ tab, pane, kind: "web", url: "  localhost:3000/app  " })).toEqual({ ok: true, value: { tab, pane, kind: "web", url: "localhost:3000/app" } });
+    for (const bad of [undefined, null, "", "   ", "a\nb", "a\0b", "https://example.com/" + "a".repeat(2100), 5]) expect(parseSplitBody({ tab, pane, kind: "web", url: bad })).toMatchObject({ ok: false });
+    for (const extra of [{ agent: "x" }, { prompt: "hi" }, { app: "scratch" }, { file: `${root}/a` }]) expect(parseSplitBody({ tab, pane, kind: "web", url: "example.com", ...extra })).toMatchObject({ ok: false });
+  });
+
+  test("a file: a clean absolute path", () => {
+    expect(parseSplitBody({ tab, pane, kind: "file", file: `${root}/src/a.ts` })).toEqual({ ok: true, value: { tab, pane, kind: "file", file: `${root}/src/a.ts` } });
+    for (const bad of [undefined, null, "", "/", "relative.ts", `${root}/../etc/passwd`, `${root}/./a`, `${root}//a`, `${root}/a\nb`, `${root}/${"a".repeat(1100)}`, 5]) {
+      expect(parseSplitBody({ tab, pane, kind: "file", file: bad })).toMatchObject({ ok: false });
+    }
+    for (const extra of [{ agent: "x" }, { prompt: "hi" }, { app: "scratch" }, { url: "example.com" }]) expect(parseSplitBody({ tab, pane, kind: "file", file: `${root}/a`, ...extra })).toMatchObject({ ok: false });
+  });
+
+  test("Claude and a terminal refuse the new kinds' fields", () => {
+    for (const kind of ["claude", "terminal"]) {
+      for (const extra of [{ app: "scratch" }, { url: "example.com" }, { file: `${root}/a` }]) expect(parseSplitBody({ tab, pane, kind, ...extra })).toMatchObject({ ok: false });
+    }
+  });
+
+  test("the folder text rules: inside is the folder itself or below it, and Up stops at the start folder", () => {
+    expect(isInsideFolder(root, root)).toBe(true);
+    expect(isInsideFolder(`${root}/a/b`, root)).toBe(true);
+    expect(isInsideFolder(`${root}x/a`, root)).toBe(false);
+    expect(isInsideFolder("/home/alex", root)).toBe(false);
+    expect(isInsideFolder(`${root}/a`, `${root}/`)).toBe(true);
+    expect(parentWithin(`${root}/a/b`, root)).toBe(`${root}/a`);
+    expect(parentWithin(`${root}/a`, root)).toBe(root);
+    expect(parentWithin(root, root)).toBeNull();
+    expect(parentWithin(`${root}/`, root)).toBeNull();
+    expect(parentWithin("/home/alex", root)).toBeNull();
+    expect(parentWithin(`${root}x`, root)).toBeNull();
+  });
+
+  test("a folder asked for is a clean path, or none", () => {
+    expect(parseSplitDir(null)).toEqual({ ok: true, value: null });
+    expect(parseSplitDir("")).toEqual({ ok: true, value: null });
+    expect(parseSplitDir(`${root}/src`)).toEqual({ ok: true, value: `${root}/src` });
+    for (const bad of ["relative", `${root}/../x`, `${root}/a\nb`]) expect(parseSplitDir(bad)).toMatchObject({ ok: false });
+  });
+});
+
+describe("adding an app, a page and a file (option 05)", () => {
+  const first = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const page = "cccccccc-0000-4000-8000-0000000000c1";
+  const root = "/Users/alex/Projects/play/cc";
+  const listed = (control: string | null = device.id, panes: unknown[] = []) => ok({
+    tabs: [{
+      tab, control, clients: 1,
+      panes: [{ id: first, kind: "claude", title: "Fix it", folder: root, running: true, control }, { id: page, kind: "web", title: "Page", url: "https://example.com/" }, ...panes],
+    }],
+  });
+  const apps = ok({ folder: root, apps: [{ folder: "scratch", name: "Scratch", icon: "pencil", key: "s" }, { folder: "board", name: "Board", icon: null, key: null }] });
+  const split = (fields: Record<string, unknown>, answers: Record<string, RelayResult | RelayResult[]>, headless = false, shown = first) => {
+    const relay = fakeRelay({ tabs: listed(), start: ok({ tab }), ...answers });
+    return { ...relay, run: splitTab(relay.asker, device, "Mac mini", { tab, pane: shown, ...fields } as never, () => fixedID, headless) };
+  };
+
+  test("an app is sent by its folder name after the host lists it for the pane's folder", async () => {
+    const { run, calls } = split({ kind: "app", app: "scratch" }, { apps });
+    expect(await run).toEqual({ status: 200, body: { ok: true, session: null, tab, pane: fixedID } });
+    expect(calls.find((call) => call.op === "apps")!.fields).toEqual({ folder: root });
+    expect(calls.find((call) => call.op === "start")!.fields).toEqual({ start: { id: fixedID, prompt: "", kind: "app", app: "scratch" }, tab, pane: first, axis: "sideBySide" });
+    expect(calls.every((call) => call.by === device.id)).toBe(true);
+  });
+
+  test("an app the host doesn't list for that folder starts nothing", async () => {
+    const { run, calls } = split({ kind: "app", app: "nope" }, { apps });
+    expect((await run).status).toBe(400);
+    expect(calls.some((call) => call.op === "start")).toBe(false);
+    const failing = split({ kind: "app", app: "scratch" }, { apps: { ok: false, error: "Varnick isn't running on Mac mini" } });
+    expect(await failing.run).toEqual({ status: 502, body: { ok: false, error: "Varnick isn't running on Mac mini" } });
+    // A pane with no folder has no apps.
+    const bare = split({ kind: "app", app: "scratch" }, { apps }, false, page);
+    expect((await bare.run).status).toBe(400);
+    expect(bare.calls.some((call) => call.op === "apps" || call.op === "start")).toBe(false);
+  });
+
+  test("a page sends its address as typed and asks for nothing first", async () => {
+    const { run, calls } = split({ kind: "web", url: "localhost:3000" }, {});
+    expect(await run).toEqual({ status: 200, body: { ok: true, session: null, tab, pane: fixedID } });
+    expect(calls.map((call) => call.op)).toEqual(["tabs", "start"]);
+    expect(calls[1].fields).toEqual({ start: { id: fixedID, prompt: "", kind: "web", url: "localhost:3000" }, tab, pane: first, axis: "sideBySide" });
+  });
+
+  test("a file carries its path and the shown pane's folder as the tree's folder", async () => {
+    const { run, calls } = split({ kind: "file", file: `${root}/src/a.ts` }, {});
+    expect((await run).status).toBe(200);
+    expect(calls.find((call) => call.op === "start")!.fields).toEqual({ start: { id: fixedID, prompt: "", kind: "file", file: `${root}/src/a.ts`, folder: root }, tab, pane: first, axis: "sideBySide" });
+  });
+
+  test("a file outside the pane's folder starts nothing", async () => {
+    for (const file of ["/etc/passwd", `${root}x/a.ts`, "/Users/alex/Projects/play/other/a.ts"]) {
+      const { run, calls } = split({ kind: "file", file }, {});
+      expect((await run).status).toBe(400);
+      expect(calls.some((call) => call.op === "start")).toBe(false);
+    }
+    const bare = split({ kind: "file", file: `${root}/a.ts` }, {}, false, page);
+    expect((await bare.run).status).toBe(400);
+  });
+
+  test("a headless host is refused before it is asked anything", async () => {
+    for (const fields of [{ kind: "app", app: "scratch" }, { kind: "web", url: "example.com" }, { kind: "file", file: `${root}/a.ts` }]) {
+      const { run, calls } = split(fields, { apps }, true);
+      const launched = await run;
+      expect(launched.status).toBe(400);
+      expect(launched.body).toMatchObject({ ok: false, error: expect.stringContaining("Mac mini has no browser, custom apps or files") });
+      expect(calls).toEqual([]);
+    }
+    // Claude and a terminal are still added there.
+    expect((await split({ kind: "terminal", agent: null, prompt: "" }, {}, true).run).status).toBe(200);
+  });
+
+  test("the gates of Add pane hold for these kinds", async () => {
+    for (const control of [other, null]) {
+      const relay = fakeRelay({ tabs: listed(control), apps, start: ok({}) });
+      expect((await splitTab(relay.asker, device, "Mac mini", { tab, pane: first, kind: "web", url: "example.com" }, () => fixedID)).status).toBe(409);
+      expect(relay.calls.some((call) => call.op === "start")).toBe(false);
+    }
+    const strange = fakeRelay({ tabs: listed(), start: ok({}) });
+    expect((await splitTab(strange.asker, device, "Mac mini", { tab, pane: other, kind: "web", url: "example.com" }, () => fixedID)).status).toBe(400);
+  });
+
+  test("a lost answer is found by the new pane in the tab's listing, not by a session", async () => {
+    const lost: RelayResult = { ok: false, error: "The relay didn't answer in time" };
+    const made = split({ kind: "web", url: "example.com" }, { start: lost, tabs: [listed(), listed(device.id, [{ id: fixedID, kind: "web", title: "Page", url: "https://example.com/" }])] });
+    expect(await made.run).toEqual({ status: 200, body: { ok: true, session: null, tab, pane: fixedID } });
+    expect(made.calls.some((call) => call.op === "status")).toBe(false);
+    const missing = split({ kind: "web", url: "example.com" }, { start: lost });
+    expect((await missing.run).status).toBe(502);
+  });
+});
+
+describe("what Add pane offers and the file picker (option 05)", () => {
+  const first = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const page = "cccccccc-0000-4000-8000-0000000000c1";
+  const root = "/Users/alex/Projects/play/cc";
+  const listed = (control: string | null = device.id) => ok({
+    tabs: [{ tab, control, clients: 1, panes: [{ id: first, kind: "claude", title: "Fix it", folder: root, running: true, control }, { id: page, kind: "web", title: "Page", url: "https://example.com/" }] }],
+  });
+  const agents = ok({ folder: root, agents: [{ name: "reviewer", description: "", project: false }] });
+  const apps = ok({ folder: root, apps: [{ folder: "scratch", name: "Scratch", icon: "pencil", key: "s" }, { folder: 5, name: "bad" }] });
+
+  test("a Mac host offers all five kinds with the folder's agents and apps", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), agents, apps });
+    expect(await splitOffer(asker, device, "Mac mini", tab, first)).toEqual({
+      status: 200,
+      body: { ok: true, folder: root, agents: [{ name: "reviewer", description: "", project: false }], apps: [{ folder: "scratch", name: "Scratch" }], kinds: ["claude", "terminal", "app", "web", "file"] },
+    });
+    expect(calls.find((call) => call.op === "apps")!.fields).toEqual({ folder: root });
+  });
+
+  test("a headless host offers Claude and a terminal and is not asked for apps", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), agents, apps });
+    const offered = await splitOffer(asker, device, "linux box", tab, first, true);
+    expect(offered.body).toMatchObject({ ok: true, apps: [], kinds: ["claude", "terminal"] });
+    expect(calls.some((call) => call.op === "apps")).toBe(false);
+  });
+
+  test("a pane with no folder offers a page and an app's absence, but no file", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), agents, apps });
+    expect((await splitOffer(asker, device, "Mac mini", tab, page)).body).toMatchObject({ folder: null, apps: [], kinds: ["claude", "terminal", "app", "web"] });
+  });
+
+  test("apps the host won't list are an error beside the rest, not a failed form", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), agents, apps: { ok: false, error: "That Mac isn't listed" } });
+    expect((await splitOffer(asker, device, "Mac mini", tab, first)).body).toMatchObject({ ok: true, apps: [], appsError: "That Mac isn't listed" });
+  });
+
+  const entries = ok({ entries: [{ name: "src", isDirectory: true }, { name: "a.ts", isDirectory: false }, { name: "x/y", isDirectory: false }, { name: "..", isDirectory: true }], more: true });
+
+  test("lists the pane's folder first, and a folder below it with Up", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), files: entries });
+    expect(await splitFiles(asker, device, "Mac mini", tab.toUpperCase(), first, null)).toEqual({
+      status: 200, body: { ok: true, dir: root, root, parent: null, entries: [{ name: "src", folder: true }, { name: "a.ts", folder: false }], more: true },
+    });
+    expect(calls.find((call) => call.op === "files")!.fields).toEqual({ tab, folder: root });
+    const below = await splitFiles(asker, device, "Mac mini", tab, first, `${root}/src/deep`);
+    expect(below.body).toMatchObject({ dir: `${root}/src/deep`, parent: `${root}/src` });
+  });
+
+  test("a folder outside the pane's folder is refused here, and nothing is asked", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), files: entries });
+    for (const dir of ["/Users/alex", `${root}x`, "/etc"]) expect((await splitFiles(asker, device, "Mac mini", tab, first, dir)).status).toBe(400);
+    expect(calls.some((call) => call.op === "files")).toBe(false);
+  });
+
+  test("a tab the phone doesn't control, a pane with no folder, and a headless host list nothing", async () => {
+    const notMine = fakeRelay({ tabs: listed(other), files: entries });
+    expect((await splitFiles(notMine.asker, device, "Mac mini", tab, first, null)).status).toBe(409);
+    const bare = fakeRelay({ tabs: listed(), files: entries });
+    expect((await splitFiles(bare.asker, device, "Mac mini", tab, page, null)).status).toBe(400);
+    const headless = fakeRelay({ tabs: listed(), files: entries });
+    expect((await splitFiles(headless.asker, device, "linux box", tab, first, null, true)).status).toBe(400);
+    for (const { calls } of [notMine, bare, headless]) expect(calls.some((call) => call.op === "files")).toBe(false);
+  });
+
+  test("the host's refusal of a folder reaches the page in the host's words", async () => {
+    const { asker } = fakeRelay({ tabs: listed(), files: { ok: false, error: "That folder is outside the tab's folders" } });
+    expect(await splitFiles(asker, device, "Mac mini", tab, first, null)).toEqual({ status: 502, body: { ok: false, error: "That folder is outside the tab's folders" } });
   });
 });
 

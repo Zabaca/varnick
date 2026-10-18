@@ -81,29 +81,78 @@ function readPlace(body: unknown): Parsed<{ tab: string; pane: string }> {
   return { ok: true, value: { tab: body.tab.toLowerCase(), pane: body.pane.toLowerCase() } };
 }
 
-export interface SplitAsk {
-  /** The tab and the pane of it the new pane goes beside: lowercase ids. */
-  tab: string;
-  pane: string;
-  kind: "claude" | "terminal";
-  agent: string | null;
-  prompt: string;
+/** The longest address an Add pane may send: a URL's usual limit. */
+const addressLimit = 2048;
+
+/** An app's folder name as `apps` lists it: one line, short, and not a path. */
+export function isAppName(value: unknown): value is string {
+  return typeof value === "string" && value !== "" && value.length <= nameLimit && value !== "." && value !== ".." && !value.includes("/") && !anyControl.test(value) && value.isWellFormed();
 }
 
-/** `POST /api/split`'s body: tab, pane, kind (`claude` or `terminal`) and for Claude the agent and prompt; a terminal with either is refused, and no folder is read. */
+/** A page's address as typed: one line, trimmed, at most a URL's usual length. The host decides whether it is an http or https address. */
+export function isAddress(value: unknown): value is string {
+  return typeof value === "string" && value !== "" && value === value.trim() && value.length <= addressLimit && !anyControl.test(value) && value.isWellFormed();
+}
+
+/** A host path as a listing gives it: absolute, one line, with no empty, `.` or `..` part, so it can be checked against a folder by its text. */
+export function isCleanPath(value: unknown): value is string {
+  return isFolder(value) && (value === "/" || value.split("/").slice(1).every((part) => part !== "" && part !== "." && part !== ".."));
+}
+
+const withoutSlash = (folder: string): string => folder.replace(/\/+$/, "");
+
+/** Whether `path` is `folder` itself or below it, by text: the host resolves links and holds the tab's folders. */
+export const isInsideFolder = (path: string, folder: string): boolean => path === folder || path.startsWith(`${withoutSlash(folder)}/`);
+
+/** The folder above `dir` while it is below `root`, else null: where Up goes, and it stops at the shown pane's folder. */
+export function parentWithin(dir: string, root: string): string | null {
+  if (!isInsideFolder(dir, root) || withoutSlash(dir) === withoutSlash(root)) return null;
+  const parent = dir.slice(0, dir.lastIndexOf("/"));
+  return parent === "" ? "/" : parent;
+}
+
+export type SplitAsk = { tab: string; pane: string } & (
+  | { kind: "claude" | "terminal"; agent: string | null; prompt: string }
+  | { kind: "app"; app: string }
+  | { kind: "web"; url: string }
+  | { kind: "file"; file: string }
+);
+
+const given = (value: unknown): boolean => value !== undefined && value !== null && value !== "";
+
+/**
+ * `POST /api/split`'s body: tab, pane, kind and that kind's own fields, and nothing else is read. Claude takes an agent and a prompt, a page its
+ * `url`, an app its `app` (the folder name `apps` lists) and a file its `file` path; a kind with a field of another kind is refused. No folder is read.
+ */
 export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
   const place = readPlace(body);
   if (!place.ok) return place;
   const { tab, pane } = place.value;
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
-  if (body.kind === "terminal") {
-    const given = (value: unknown): boolean => value !== undefined && value !== null && value !== "";
-    if (given(body.agent) || given(body.prompt)) return refuse("A terminal takes no agent or prompt");
-    return { ok: true, value: { tab, pane, kind: "terminal", agent: null, prompt: "" } };
+  const only = (...own: string[]): boolean => ["agent", "prompt", "app", "url", "file"].every((field) => own.includes(field) || !given(body[field]));
+  switch (body.kind) {
+    case "terminal":
+      if (!only()) return refuse("A terminal takes no agent, prompt, app, address or file");
+      return { ok: true, value: { tab, pane, kind: "terminal", agent: null, prompt: "" } };
+    case "claude": {
+      if (!only("agent", "prompt")) return refuse("Claude takes only an agent and a prompt");
+      const claude = readClaude(body);
+      return claude.ok ? { ok: true, value: { tab, pane, kind: "claude", ...claude.value } } : claude;
+    }
+    case "app":
+      if (!only("app")) return refuse("An app takes only its name");
+      return isAppName(body.app) ? { ok: true, value: { tab, pane, kind: "app", app: body.app } } : refuse("Pick an app");
+    case "web": {
+      if (!only("url")) return refuse("A page takes only its address");
+      const url = typeof body.url === "string" ? body.url.trim() : body.url;
+      return isAddress(url) ? { ok: true, value: { tab, pane, kind: "web", url } } : refuse("That isn't a page address on one line");
+    }
+    case "file":
+      if (!only("file")) return refuse("A file takes only its path");
+      return isCleanPath(body.file) && body.file !== "/" ? { ok: true, value: { tab, pane, kind: "file", file: body.file } } : refuse("Pick a file");
+    default:
+      return refuse("Add Claude, a terminal, an app, a page or a file");
   }
-  if (body.kind !== "claude") return refuse("Add Claude or a terminal");
-  const claude = readClaude(body);
-  return claude.ok ? { ok: true, value: { tab, pane, kind: "claude", ...claude.value } } : claude;
 }
 
 export interface RestartAsk {
@@ -124,6 +173,12 @@ export function parseResumeBody(body: unknown): Parsed<string> {
 export function parseAgentsFolder(folder: string | null): Parsed<string | null> {
   if (folder === null || folder === "") return { ok: true, value: null };
   return isFolder(folder) ? { ok: true, value: folder } : refuse("That isn't a folder");
+}
+
+/** `GET /api/split-files`'s folder, when one is asked for: a clean host path. None asks for the shown pane's own folder. */
+export function parseSplitDir(dir: string | null): Parsed<string | null> {
+  if (dir === null || dir === "") return { ok: true, value: null };
+  return isCleanPath(dir) ? { ok: true, value: dir } : refuse("That isn't a folder");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -167,6 +222,39 @@ export function shapeAgents(result: RelayResult): { folder: string | null; rows:
   return { folder: optional(result.reply.folder), rows };
 }
 
+export interface AppRow {
+  /** The app's folder name, which a split names it by. */
+  folder: string;
+  name: string;
+}
+
+export function shapeApps(result: RelayResult): { rows: AppRow[] } | { error: string } {
+  if (!result.ok) return { error: result.error };
+  const rows: AppRow[] = [];
+  for (const app of objects(result.reply.apps)) {
+    if (!isAppName(app.folder)) continue;
+    rows.push({ folder: app.folder, name: typeof app.name === "string" && app.name !== "" && !anyControl.test(app.name) ? app.name.slice(0, nameLimit) : app.folder });
+  }
+  return { rows };
+}
+
+export interface FileRow {
+  name: string;
+  folder: boolean;
+}
+
+/** One level of a folder as the host listed it, in its order (folders first); a name that isn't one line, or is a path, is dropped. */
+export function shapeFiles(result: RelayResult): { rows: FileRow[]; more: boolean } | { error: string } {
+  if (!result.ok) return { error: result.error };
+  const rows: FileRow[] = [];
+  for (const entry of objects(result.reply.entries)) {
+    const name = entry.name;
+    if (typeof name !== "string" || name === "" || name === "." || name === ".." || name.length > 255 || name.includes("/") || anyControl.test(name) || !name.isWellFormed()) continue;
+    rows.push({ name, folder: entry.isDirectory === true });
+  }
+  return { rows, more: result.reply.more === true };
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The flows
 
@@ -175,7 +263,7 @@ export function shapeAgents(result: RelayResult): { folder: string | null; rows:
  * already names that tab, for the page to open and take over.
  */
 export type Launched =
-  | { status: 200; body: { ok: true; session: string | null; tab: string | null } }
+  | { status: 200; body: { ok: true; session: string | null; tab: string | null; pane?: string } }
   | { status: number; body: { ok: false; error: string; openTab?: string } };
 
 const failed = (status: number, error: string, openTab?: string): Launched => ({ status, body: openTab ? { ok: false, error, openTab } : { ok: false, error } });
@@ -242,36 +330,101 @@ async function splittable(asker: Asker, device: Device, host: string, tab: strin
   return found ? { tab: shaped, pane: found } : failed(400, "That pane isn't in that tab");
 }
 
-/** The shown pane's own folder, as the host lists it (a worktree or Home is not a project): the only place its agents are read from. */
+/** The shown pane's own folder, as the host lists it (a worktree or Home is not a project): the only place its agents, apps and files are read from. */
 const folderOf = (pane: HomePane): string | null => (isFolder(pane.folder) ? pane.folder : null);
 
-/** `GET /api/split-agents`: the agents of the folder of a pane of a tab this phone controls, for the chips of Add pane. */
-export async function splitAgents(asker: Asker, device: Device, host: string, tab: string, pane: string): Promise<{ status: number; body: Json }> {
+/** A headless host's own words for a page, an app or a file, which its tabs don't hold (`HeadlessHosting.start`). */
+const noPaneKinds = (host: string): string => `${host} has no browser, custom apps or files: its tabs hold Claude sessions and terminals`;
+
+/**
+ * `GET /api/split-offer`: what Add pane offers for a pane of a tab this phone controls: the agents of its folder, the apps the host can run from it,
+ * and the kinds to show. A headless host offers Claude and a terminal only; a page is offered for any pane, an app and a file need the pane's folder.
+ */
+export async function splitOffer(asker: Asker, device: Device, host: string, tab: string, pane: string, headless = false): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
   if ("body" in found) return found;
   const folder = folderOf(found.pane);
-  if (folder === null) return { status: 200, body: { ok: true, folder: null, agents: [] } };
-  const agents = shapeAgents(await asker.ask("agents", device.id, { folder }));
-  return "error" in agents ? { status: 502, body: { ok: false, error: agents.error } } : { status: 200, body: { ok: true, folder: agents.folder, agents: agents.rows } };
+  const kinds = headless ? ["claude", "terminal"] : folder === null ? ["claude", "terminal", "app", "web"] : ["claude", "terminal", "app", "web", "file"];
+  if (folder === null) return { status: 200, body: { ok: true, folder: null, agents: [], apps: [], kinds } };
+  const [agentsReply, appsReply] = await Promise.all([asker.ask("agents", device.id, { folder }), headless ? null : asker.ask("apps", device.id, { folder })]);
+  const agents = shapeAgents(agentsReply);
+  if ("error" in agents) return { status: 502, body: { ok: false, error: agents.error } };
+  const apps = appsReply === null ? { rows: [] as AppRow[] } : shapeApps(appsReply);
+  const appsFields = "error" in apps ? { apps: [], appsError: apps.error } : { apps: apps.rows };
+  return { status: 200, body: { ok: true, folder: agents.folder, agents: agents.rows, ...appsFields, kinds } };
 }
 
-/** Add a Claude session or a terminal beside a pane of a tab the phone controls: the `start` a Mac sends for a split, with no folder and no `skipPermissions`. */
-export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string): Promise<Launched> {
+/**
+ * `GET /api/split-files`: one level of a folder of a tab this phone controls, for the file picker. The root is the shown pane's folder as the host
+ * lists it, never the page's, and a folder outside it is refused here (the host keeps the tab's folders besides). `parent` is where Up goes: null at the root.
+ */
+export async function splitFiles(asker: Asker, device: Device, host: string, tab: string, pane: string, dir: string | null, headless = false): Promise<{ status: number; body: Json }> {
+  if (headless) return failed(400, noPaneKinds(host));
+  const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
+  if ("body" in found) return found;
+  const root = folderOf(found.pane);
+  if (root === null) return failed(400, "That pane has no folder to pick a file from");
+  const wanted = dir ?? root;
+  if (!isInsideFolder(wanted, root)) return failed(400, "That folder is outside the pane's folder");
+  const listed = shapeFiles(await asker.ask("files", device.id, { tab: tab.toLowerCase(), folder: wanted }));
+  if ("error" in listed) return failed(502, listed.error);
+  return { status: 200, body: { ok: true, dir: wanted, root, parent: parentWithin(wanted, root), entries: listed.rows, more: listed.more } };
+}
+
+/** Whether the host lists a pane with this id in the tab: how a page, an app or a file, which have no session to ask about, shows it was made. */
+async function listsPane(asker: Asker, device: Device, tab: string, id: string): Promise<boolean> {
+  const raw = findTab(await asker.ask("tabs", device.id), tab);
+  return raw !== null && objects(raw.panes).some((pane) => same(pane.id, id));
+}
+
+/**
+ * Add a pane beside a pane of a tab the phone controls: the `start` a Mac sends for a split, with no folder (a file names its tree's folder, the shown
+ * pane's) and no `skipPermissions`. A page, an app and a file are refused on a headless host before it is asked, an app is checked against the apps
+ * of the pane's folder and a file against that folder.
+ */
+export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string, headless = false): Promise<Launched> {
+  if (headless && ask.kind !== "claude" && ask.kind !== "terminal") return failed(400, noPaneKinds(host));
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
-  if (ask.agent !== null) {
-    const folder = folderOf(found.pane);
-    const known = folder === null ? { rows: [] as AgentRow[] } : shapeAgents(await asker.ask("agents", device.id, { folder }));
-    if ("error" in known) return failed(502, known.error);
-    if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of that pane's folder on ${host}`);
-  }
+  const folder = folderOf(found.pane);
   const id = newID();
+  const start: Json = { id, prompt: "", kind: ask.kind };
+  switch (ask.kind) {
+    case "claude":
+    case "terminal":
+      start.prompt = ask.prompt;
+      if (ask.agent !== null) {
+        const known = folder === null ? { rows: [] as AgentRow[] } : shapeAgents(await asker.ask("agents", device.id, { folder }));
+        if ("error" in known) return failed(502, known.error);
+        if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of that pane's folder on ${host}`);
+        start.agent = ask.agent;
+      }
+      break;
+    case "app": {
+      if (folder === null) return failed(400, "That pane has no folder to find apps in");
+      const known = shapeApps(await asker.ask("apps", device.id, { folder }));
+      if ("error" in known) return failed(502, known.error);
+      if (!known.rows.some((app) => app.folder === ask.app)) return failed(400, `${ask.app} isn't an app of that pane's folder on ${host}`);
+      start.app = ask.app;
+      break;
+    }
+    case "web":
+      start.url = ask.url;
+      break;
+    case "file":
+      if (folder === null || !isInsideFolder(ask.file, folder)) return failed(400, "That file is outside the pane's folder");
+      start.file = ask.file;
+      start.folder = folder;
+      break;
+  }
+  const hasSession = ask.kind === "claude" || ask.kind === "terminal";
   const session = sessionNameFor(id);
-  const start: Json = { id, prompt: ask.prompt, kind: ask.kind };
-  if (ask.agent !== null) start.agent = ask.agent;
   const started = await asker.ask("start", device.id, { start, tab: ask.tab, pane: ask.pane, axis: "sideBySide" }, launchTimeoutMs);
-  // A start whose answer was lost may have made the pane: a running session is a success, or a second tap would add another.
-  if (started.ok || (await isRunning(asker, device, session))) return { status: 200, body: { ok: true, session, tab: ask.tab } };
+  // A start whose answer was lost may have made the pane, and a second tap would add another: a Claude or terminal pane is found by its running
+  // session, any other by the host's listing of the tab.
+  if (started.ok || (hasSession ? await isRunning(asker, device, session) : await listsPane(asker, device, ask.tab, id))) {
+    return { status: 200, body: { ok: true, session: hasSession ? session : null, tab: ask.tab, pane: id } };
+  }
   return failed(502, started.error);
 }
 

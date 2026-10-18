@@ -11,6 +11,12 @@ export const tabHash = (tab, pane) => (pane ? `#t=${tab}&p=${pane}` : `#t=${tab}
 /** A pane whose zmx session runs, which the page can open as a terminal or a live screen. */
 export const isOpenable = (pane) => pane.session !== null && pane.running === true;
 
+/**
+ * Whether a pane the page just added can be shown as soon as the host lists it: a page, an app and a file at once (a note, or a frame once the
+ * page server has looked at it), a Claude or terminal pane once its session runs.
+ */
+export const readyToShow = (pane) => (pane.kind === "claude" || pane.kind === "terminal" ? isOpenable(pane) : true);
+
 /** Claude, then terminal, then the rest: the words the switcher uses for a kind. */
 const kindWords = { claude: "Claude", terminal: "Terminal", web: "Page", app: "App", file: "File", transcript: "Transcript" };
 export const kindWord = (kind) => kindWords[kind] ?? "Pane";
@@ -131,9 +137,3 @@ export const offersRestart = (tab, pane) => tab.mine === true && pane?.kind === 
 
 /** What Restart asks before it ends the session's claude and starts it again. */
 export const restartQuestion = (title) => `Restart “${title}”? Claude stops what it is doing and starts again in this pane, picking up the conversation where it was.`;
-
-/** The pane a new session is: the session's name is `varnick-` and the pane's id. Null for any other name. */
-export function paneOfSession(session) {
-  const match = /^varnick-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(session);
-  return match ? match[1] : null;
-}

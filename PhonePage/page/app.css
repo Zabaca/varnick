@@ -148,6 +148,11 @@ dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
 #add p.add-title { margin: 0; font-weight: 600; }
 .add-host { font-weight: 400; color: var(--muted); font-size: 13px; }
 #add-prompt { font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; resize: none; }
+#add-url { font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; }
+/* The file picker scrolls inside the dialog, so a long folder doesn't push Add off the screen. */
+#add-files { max-height: 40dvh; overflow-y: auto; overscroll-behavior: contain; }
+#add-files button.dir, #add-files button.up { font-weight: 600; }
+#add p.add-picked { margin: 0; overflow-wrap: anywhere; }
 #add p.new-status { margin: 0; }
 #add .card-actions { justify-content: flex-end; }
 

@@ -2,7 +2,7 @@
 // (session.js: the live screen, then the terminal after Take over), and only the shown pane's terminal is open. Any other pane is a note: a
 // file's text from the host, or where a page, an app or the Transcript runs; a page or an app the host proxies (ADR 0035) is framed instead,
 // with a link to open it alone. Take over takes the whole tab; End ends it or hands it back. While the phone is in control of the tab the switcher
-// ends in + (Add pane, add.js): a Claude session or a terminal beside the pane shown. The
+// ends in + (Add pane, add.js): a Claude session, a terminal, an app, a page or a file beside the pane shown. The
 // host's listing is asked again every few seconds while the page is visible, so a pane added or closed elsewhere shows. Everything the host
 // sent goes in with textContent, never as markup.
 
@@ -10,7 +10,7 @@ import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
 import { confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
-  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, paneOfSession, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -72,7 +72,7 @@ function renderSwitcher(t) {
   plus.setAttribute("aria-label", "Add pane");
   plus.addEventListener("click", () => {
     const beside = t.data.panes.find((pane) => pane.id === t.pane) ?? t.data.panes[0];
-    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: ({ session }) => added(t, session),
+    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: (result) => added(t, result),
       failed: (error) => { if (current === t) $("session-sub").textContent = `Couldn't add the pane: ${error}`; },
     });
   });
@@ -86,11 +86,11 @@ function dropAdded(t) {
 }
 
 /**
- * The host added a session beside the pane shown: the tab is asked for again, and the new pane opens with take, once, as after a start. It may
- * not be listed yet, so it waits for the next asks (`addedWaitMs`).
+ * The host added a pane beside the pane shown: the tab is asked for again, and the page switches to the new pane. A Claude or terminal pane opens with
+ * take, once, as after a start; a page, an app or a file has no session to take. It may not be listed yet, so it waits for the next asks
+ * (`addedWaitMs`).
  */
-function added(t, session) {
-  const pane = paneOfSession(session);
+function added(t, { session, pane }) {
   if (t.closed || !pane) return;
   t.take = session;
   t.open = pane;
@@ -223,7 +223,7 @@ async function load(t) {
   // A Restart takes the pane down and brings it back, and session.js attaches again: a listing asked before it settled may show the pane down, and
   // that must not tear the terminal down (nor take Restart away).
   const restarting = holdsForRestart(asked);
-  if (fresh && isOpenable(fresh)) {
+  if (fresh && readyToShow(fresh)) {
     t.open = null;
     showPane(t, fresh);
   } else if (first || !now || now.id !== t.pane || (!restarting && ((shown && isOpenable(shown) !== isOpenable(now)) || framingChanged))) {
