@@ -291,6 +291,10 @@ A conversation by voice with a **Host**'s **Voice session**, with no **Wake phra
 - **On a Mac host's Phone page,** a button that talks back and forth with that Mac's Voice session. The phone sends its microphone's audio in chunks, cut at each pause; the Mac turns each into text with Listening's transcriber and collects them, and asks the session only when the user says "over" (the request is never ended by silence); it makes the reply into audio in the Voice setting's voice, which the phone plays; each exchange is shown as text too, the request still being said as a line being built. It works in the foreground, kept alive by a quiet tone, and is not on a headless host, and ends only by its own End, with no minute. [ADR 0043](docs/adr/0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
 _Avoid_: voice chat, dictation
 
+**Segment**:
+What the Phone page's **Voice mode** heard between two pauses, sent to the Mac as it is said. The Mac turns each into text and adds it to the request it is collecting for that phone; the request ends only when a segment ends with "over" (or at the cap). Not a **Spoken request**.
+_Avoid_: utterance, chunk (a chunk is a second of a segment's audio)
+
 **Route**:
 The one call that decides what a **Spoken request** means, Jev's or, when Jev isn't used or fails, the Text generation model's: how likely each source is, whether it asks the time or asks for something Varnick can't do, whether it is about the screen, which **Project** and which time it names, whether only the user's own things can answer it, one result or several, and which of its words to search for. It orders the rows and shapes the session search; it never shuts a source out, and no phrase list decides anything.
 _Avoid_: Router, decide step, classifier

@@ -136,15 +136,14 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   7. Another app taking the microphone, or the system muting it, ends the mode within about 5 s and says why.
   8. Voice session off, or Keep sessions running off: Start then the first request says why at once, before anything is sent. A headless host's page has no button.
 
-- **2026-10-17, at the user's ask:** a Mac's voice session now takes a request only at "over" (ADR 0044's amendment of that date), and the phone's Voice mode follows it (protocol 31; ADR 0043's amendment of that date). The user's decision: a spoken request ends only when the user says "over", never on silence; the cap is 60 s and 1,500 characters, as at the Mac.
-  - The page keeps cutting segments on `silenceMs` of quiet and sends each (in the order said, with the Voice mode run's id). The Mac transcribes each, adds it to the request collected for that phone (`VoiceCollector`, `VoiceMode.overStep`) and asks the voice session only when a segment ends with "over". Meanwhile it returns `collected`, the request so far, which the page shows as the user's line, still being built (dashed).
-  - The request left for a minute without "over" is dropped on the Mac (60 s after the last segment) and on the page (63 s), which says so; so is what a Voice mode run leaves when the next Start begins. The mic stays live between segments and is held from `heard` until the reply has played. The 220 Hz tone, the wake lock and the dead-mic check are unchanged.
+- **2026-10-17, at the user's ask:** a spoken request to the voice session ends only when the user says "over", never on silence (ADR 0044's amendment of that date has the rule and the cap), and the phone's Voice mode follows it (protocol 31; ADR 0043's amendment).
+  - The page keeps cutting segments on `silenceMs` of quiet and sends each. The Mac collects them (`VoiceCollector`, `VoiceMode.overStep`) and asks the voice session when a segment ends with "over" or the cap is reached. Meanwhile it returns `collected`, the request so far, which the page shows as the user's line, still being built (dashed). The mic stays live between segments and is held from `heard` until the reply has played. The 220 Hz tone, the wake lock and the dead-mic check are unchanged.
   - **Hand test, after the Mac and the phone page run protocol 31:**
-    1. Start, say "what time is it", pause for three seconds: a dashed line "what time is it" and the state line says to say "over"; nothing is asked and the Mac's voice session stays silent. Then say "in Tokyo, over": the line becomes "what time is it in Tokyo", "Working…", the answer.
+    1. Start, say "what time is it", pause for three seconds: a dashed line "what time is it", the state line says to say "over"; nothing is asked. Then say "in Tokyo, over": the line becomes "what time is it in Tokyo", "Working…", the answer.
     2. Say a request, then "over" alone after a pause: it is asked. "Over" alone with nothing before it: nothing happens.
     3. Say "move it over there" and pause: not asked ("over" in the middle). Say "that's a hangover" and pause: not asked.
-    4. Say something, stay quiet for over a minute: the line goes with a note that no "over" came. Then say "over": nothing is asked.
+    4. Say something and stay quiet: after a minute it is asked as it stands (the cap, ADR 0044).
     5. Say something, tap End, tap Start, say "over": nothing is asked (the old run's words are gone).
-    6. A request longer than a minute with pauses and no "over": it is asked when a segment arrives past 60 s.
-    7. While the answer is being spoken, say the next request: it is not heard until the reply is over; one said right after "over", before "Working…" shows, is collected as the start of the next.
+    6. Keep talking in pauses past a minute with no "over": it is asked as it stands when a segment arrives past the cap, or at the cap.
+    7. Say a request with "over", then at once the start of another, before "Working…" shows: the second is collected, not refused. While the answer is spoken, the mic is not heard.
     8. Home screen for 2 minutes mid-request (collecting): say "over" on return; say what survives.

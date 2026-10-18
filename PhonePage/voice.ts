@@ -6,9 +6,9 @@
 //   POST /api/voice/ask     the request as text                                                  -> relay `voiceAsk`
 //   GET  /api/voice/status  the ask's events after the ones the page has                         -> relay `voiceStatus`
 //
-// A segment is what the page heard between two pauses (a request ends only when the user says "over", protocol 31): its id is the page's own (a uuid), so
-// a chunk and the polls of the same segment share it, and every segment carries the id of the Voice mode run it belongs to. Nothing a request holds
-// (audio, words, an answer) is logged: the server's access line is the method, the path, the status, the device and the time.
+// A segment is what the page heard between two pauses (where-it-breaks, Voice mode on the phone): its id is the page's own (a uuid), shared by its chunks
+// and polls, and it names the Voice mode run it is in. Nothing a request holds (audio, words, an answer) is logged: the server's access line is the
+// method, the path, the status, the device and the time.
 
 import { isObject, uuidPattern, type Json } from "./json";
 import type { RelayResult } from "./home";
@@ -58,19 +58,19 @@ const parseID = (value: unknown): string | null => (typeof value === "string" &&
 export interface AudioChunk extends Hint {
   id: string;
   /** The Voice mode run: segments of one run, from one device, make one request. */
-  mode: string;
+  run: string;
   seq: number;
   last: boolean;
   audio: string;
 }
 
-/** `POST /api/voice/audio`'s body: `id`, `mode`, `seq`, `last`, `audio` (base64 of the chunk) and the hint, which the last chunk carries. Nothing else is read. */
+/** `POST /api/voice/audio`'s body: `id`, `run`, `seq`, `last`, `audio` (base64 of the chunk) and the hint, which the last chunk carries. Nothing else is read. */
 export function parseAudioBody(body: unknown): Parsed<AudioChunk> {
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
   const id = parseID(body.id);
   if (id === null) return refuse("That isn't a request id");
-  const mode = parseID(body.mode);
-  if (mode === null) return refuse("A chunk names its Voice mode run");
+  const run = parseID(body.run);
+  if (run === null) return refuse("Voice mode's page is out of date: reload it");
   if (typeof body.seq !== "number" || !Number.isInteger(body.seq) || body.seq < 0 || body.seq >= maxChunks) return refuse("That isn't a chunk number");
   if (typeof body.last !== "boolean") return refuse("A chunk says whether it is the last");
   if (typeof body.audio !== "string" || body.audio.length === 0 || body.audio.length > maxChunkText || !base64Pattern.test(body.audio)) {
@@ -78,7 +78,7 @@ export function parseAudioBody(body: unknown): Parsed<AudioChunk> {
   }
   const hint = parseHint(body);
   if (!hint.ok) return hint;
-  return { ok: true, value: { id, mode, seq: body.seq, last: body.last, audio: body.audio, ...hint.value } };
+  return { ok: true, value: { id, run, seq: body.seq, last: body.last, audio: body.audio, ...hint.value } };
 }
 
 export interface TextAsk extends Hint {
@@ -108,8 +108,8 @@ export function parseStatusQuery(query: URLSearchParams): Parsed<{ id: string; a
 
 /** The `voice` field of a relay request. The rate is the server's: a page can't ask for another. */
 export function audioFields(chunk: AudioChunk): { voice: Json } {
-  const { id, mode, seq, last, audio, moment, zone, units } = chunk;
-  return { voice: { id, mode, seq, last, audio, rate: uploadRate, ...(moment !== undefined && { moment }), ...(zone !== undefined && { zone }), ...(units !== undefined && { units }) } };
+  const { id, run, seq, last, audio, moment, zone, units } = chunk;
+  return { voice: { id, run, seq, last, audio, rate: uploadRate, ...(moment !== undefined && { moment }), ...(zone !== undefined && { zone }), ...(units !== undefined && { units }) } };
 }
 
 export function askFields(ask: TextAsk): { voice: Json } {

@@ -1,14 +1,10 @@
 import Foundation
 import VarnickPeer
 
-// Voice mode on the phone, on this Mac (option 05 of `phone-page-is-only-a-browser-tab`, protocols 30 and 31): a device's or a listed Mac's `voiceAudio`,
-// `voiceAsk` and `voiceStatus`, answered here, on the main actor. A segment (what the phone heard between two pauses) arrives in chunks (`VoiceUploads`)
-// and becomes text through Listening's transcriber (`VoiceTranscriber`). Segments are put in the order they were sent and added to the request being
-// collected for that phone (`VoiceCollector`); only a segment that ends with "over" (`VoiceMode.overStep`) asks the voice session, as Hey Varnick's
-// requests do (`VoiceSessionHost.ask`, with the phone's moment, zone and units), and any other is told what has been collected so far. What happens to a
-// segment is kept in a ledger (`VoiceLedger`) that the phone polls; the answer's audio is made here, in the Voice setting's voice (`VoiceRender`). The
-// deciding is in the shared package; this file is the adapter. Nothing of the audio, the words or the answer is logged: the timing
-// line holds durations and kinds. Rules that break: docs/agents/where-it-breaks.md, Voice mode on the phone.
+// Voice mode on the phone, on this Mac (option 05 of `phone-page-is-only-a-browser-tab`; protocols 30 and 31): answers `voiceAudio`, `voiceAsk` and
+// `voiceStatus` on the main actor. The mechanism (segments, a request that ends at "over", the order, the cap) is in docs/agents/where-it-breaks.md, Voice
+// mode on the phone; the deciding is in the shared package (`PeerVoice.swift`) and this file is the adapter. Nothing of the audio, the words or the answer
+// is logged: the timing lines hold durations and kinds.
 
 @MainActor
 final class VoiceRemote {
@@ -17,9 +13,10 @@ final class VoiceRemote {
     private var uploads = VoiceUploads()
     private var ledger = VoiceLedger()
     private var collector = VoiceCollector()
-    /// The last segment's turn to be put on its request: each waits for the one before it, so a short segment that is transcribed first still follows a
-    /// long one that was sent first.
-    private var applied: Task<Void, Never>?
+    /// Per device, the turn of its last segment to be added to its request: each waits for the one before it.
+    private var applied: [String: Task<Void, Never>] = [:]
+    /// Per device, the newest segment of its request, whose ledger entry stays open so the cap's timer can take the request on it, with its `text`.
+    private var holders: [String: (id: String, ask: PeerVoiceAsk, text: String)] = [:]
 
     func answer(_ request: PeerRequest, by: String, model: LauncherModel) async -> PeerReply {
         guard let ask = request.voice, let id = Self.lowercaseUUID(ask.id) else { return .failure("That isn't a voice request") }
@@ -27,7 +24,6 @@ final class VoiceRemote {
         switch request.op {
         case .voiceStatus:
             ledger.prune(now: now)
-            collector.prune(now: now)
             guard let found = ledger.read(id, after: ask.after ?? 0) else { return .failure("That request is gone") }
             var reply = PeerReply.success()
             reply.voice = found
@@ -35,25 +31,26 @@ final class VoiceRemote {
         case .voiceAsk:
             let text = VoicePaste.sanitized(ask.text ?? "")
             guard !text.isEmpty else { return .failure("There was nothing to ask") }
-            if let refusal = refusal(model) { return .failure(refusal) }
+            if let refusal = refusal(model, forAsk: true) { return .failure(refusal) }
             guard ledger.begin(id, now: now) else { return .failure(VoiceLines.busy) }
             Task { await self.ask(id, words: text, ask: ask, model: model, began: now) }
-            return taken(id)
+            return accepted(id)
         case .voiceAudio:
-            guard let mode = ask.mode.flatMap(Self.lowercaseUUID) else { return .failure("Voice mode's page is out of date: reload it") }
+            guard let run = ask.run.flatMap(Self.lowercaseUUID) else { return .failure("Voice mode's page is out of date: reload it") }
             guard let seq = ask.seq, let audio = Data(base64Encoded: ask.audio ?? "") else { return .failure("That audio chunk wasn't readable") }
-            // The first chunk finds out what would refuse the whole ask, before the phone sends the rest.
-            if seq == 0, let refusal = refusal(model) { return .failure(refusal) }
+            // The first chunk finds out what would refuse the segment, before the phone sends the rest. A busy voice session does not: the words go on
+            // the next request.
+            if seq == 0, let refusal = refusal(model, forAsk: false) { return .failure(refusal) }
             switch uploads.add(id: id, seq: seq, last: ask.last == true, rate: ask.rate, audio: audio, now: now) {
             case .refused(let why):
                 return .failure(why)
             case .more:
-                return taken(id)
+                return accepted(id)
             case .complete(let pcm):
-                if let refusal = refusal(model) { return .failure(refusal) }
-                guard ledger.begin(id, asking: false, now: now) else { return .failure(VoiceLines.busy) }
-                segment(id, ask: ask, mode: mode, device: by, pcm: pcm, model: model)
-                return taken(id)
+                if let refusal = refusal(model, forAsk: false) { return .failure(refusal) }
+                guard ledger.begin(id, asking: false, now: now) else { return .failure("Voice mode has too many requests open: try again in a moment") }
+                segment(id, ask: ask, run: run, device: by, pcm: pcm, model: model)
+                return accepted(id)
             }
         default:
             return .failure("Unknown request")
@@ -75,36 +72,41 @@ final class VoiceRemote {
         }
     }
 
-    /// Why a new ask can't begin, in words for the user; nil when it can. What would refuse the voice session itself is asked of it, before anything is
-    /// uploaded or transcribed.
-    private func refusal(_ model: LauncherModel) -> String? {
+    /// Why a new ask or segment can't begin, in words for the user; nil when it can. What would refuse the voice session itself is asked of it, before
+    /// anything is uploaded or transcribed. Only an ask is refused for another request in flight.
+    private func refusal(_ model: LauncherModel, forAsk: Bool) -> String? {
         if let why = model.voiceSession.preflight(model) {
             return why == .off ? why.spoken + " Turn off Answer with Varnick's own steps in Settings › Experimental on this Mac." : why.spoken
         }
-        if ledger.busy() || model.voiceSession.requestInFlight { return VoiceLines.busy }
+        if forAsk, !canTake(model) { return VoiceLines.busy }
         return nil
     }
 
-    private func taken(_ id: String) -> PeerReply {
+    /// Whether the voice session can take a request now: none is being answered, here or at the Mac.
+    private func canTake(_ model: LauncherModel) -> Bool { !ledger.busy() && !model.voiceSession.requestInFlight }
+
+    private func accepted(_ id: String) -> PeerReply {
         var reply = PeerReply.success()
         reply.voice = PeerVoiceReply(id: id)
         return reply
     }
 
-    /// A segment is on its way: its words are made in the background, at once, and put on the request in the order the segments came.
-    private func segment(_ id: String, ask: PeerVoiceAsk, mode: String, device: String, pcm: Data, model: LauncherModel) {
+    /// A segment is on its way: its words are made at once, and added to its device's request in the order the segments came.
+    private func segment(_ id: String, ask: PeerVoiceAsk, run: String, device: String, pcm: Data, model: LauncherModel) {
         let began = Date()
         let transcription = Task { try await Self.transcribe(pcm) }
-        let before = applied
-        applied = Task {
+        let before = applied[device]
+        applied[device] = Task {
             let words = await transcription.result
             await before?.value
-            self.put(id, words: words, ask: ask, mode: mode, device: device, model: model, began: began)
+            guard !Task.isCancelled else { return ledger.finish(id, now: Date()) }
+            addToRequest(id, words: words, ask: ask, run: run, device: device, model: model, began: began)
         }
     }
 
-    /// A segment's words, or why there are none, put on the request being collected for `device`.
-    private func put(_ id: String, words: Result<String, Error>, ask: PeerVoiceAsk, mode: String, device: String, model: LauncherModel, began: Date) {
+    /// A segment's words, or why there are none, added to the request being collected for `device`. The newest segment of a request is left open, so the
+    /// cap's timer can take the request on it; the one before it is closed.
+    private func addToRequest(_ id: String, words: Result<String, Error>, ask: PeerVoiceAsk, run: String, device: String, model: LauncherModel, began: Date) {
         func add(_ event: PeerVoiceEvent) { ledger.add(event, to: id, now: Date()) }
         let text: String
         switch words {
@@ -115,19 +117,59 @@ final class VoiceRemote {
             NSLog("Varnick: voice mode segment timing: failed, \(failure.kind) after \(Date().timeIntervalSince(began).secondsText)")
             return add(PeerVoiceEvent(.failed, text: failure.line, failure: failure.kind))
         }
-        switch collector.add(text, device: device, mode: mode, now: Date()) {
-        case .collected(let request):
-            NSLog("Varnick: voice mode segment timing: collected after \(Date().timeIntervalSince(began).secondsText)")
+        let beganBefore = collector.began(of: device)
+        let step = collector.add(text, device: device, run: run, now: Date(), canTake: canTake(model))
+        let unchanged = collector.began(of: device) == beganBefore
+        NSLog("Varnick: voice mode segment timing: \(step.kind) after \(Date().timeIntervalSince(began).secondsText)")
+        let previous = holders[device]?.id
+        func hold(_ request: String, _ event: PeerVoiceEvent) {
+            if let previous, previous != id { ledger.finish(previous, now: Date()) }
+            holders[device] = (id, ask, request)
+            add(event)
+            if let started = collector.began(of: device), started != beganBefore { watchCap(device: device, began: started, model: model) }
+        }
+        switch step {
+        case .collected(let request) where request.isEmpty:
+            // Nothing is collected (a blank segment, or "over" alone): the request there was, if any, belonged to another run.
+            if let previous { ledger.finish(previous, now: Date()) }
+            holders[device] = nil
+            add(PeerVoiceEvent(.collected, text: ""))
+            ledger.finish(id, now: Date())
+        case .collected(let request) where unchanged && request == holders[device]?.text:
+            // A segment that added nothing: told what there is, and closed.
             add(PeerVoiceEvent(.collected, text: request))
-            // Forgotten if the user goes quiet (or ends Voice mode) with the request unfinished.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(VoiceCollector.idle + 1))
-                self?.collector.prune(now: Date())
-            }
+            ledger.finish(id, now: Date())
+        case .collected(let request):
+            hold(request, PeerVoiceEvent(.collected, text: request))
+        case .busy(let request):
+            hold(request, PeerVoiceEvent(.collected, text: request, spoken: VoiceLines.busy, failure: "busy"))
         case .take(let request):
+            if let previous { ledger.finish(previous, now: Date()) }
+            holders[device] = nil
             ledger.markAsking(id)
             add(PeerVoiceEvent(.heard, text: request))
             Task { await self.ask(id, words: request, ask: ask, model: model, began: began) }
+        }
+    }
+
+    /// The cap: a request is taken as it stands `VoiceCollector.maxSeconds` after its first segment, even if no segment comes (and later if the voice
+    /// session is busy, until it is not).
+    private func watchCap(device: String, began: Date, model: LauncherModel) {
+        Task {
+            try? await Task.sleep(for: .seconds(max(0, VoiceCollector.maxSeconds - Date().timeIntervalSince(began))))
+            while !Task.isCancelled {
+                switch collector.takeDue(device: device, began: began, canTake: canTake(model)) {
+                case nil:
+                    return
+                case .take(let request)?:
+                    guard let held = holders.removeValue(forKey: device) else { return }
+                    ledger.markAsking(held.id)
+                    ledger.add(PeerVoiceEvent(.heard, text: request), to: held.id, now: Date())
+                    return await ask(held.id, words: request, ask: held.ask, model: model, began: Date())
+                default:
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
         }
     }
 

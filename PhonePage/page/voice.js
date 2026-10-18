@@ -1,9 +1,6 @@
 // Voice mode (option 05 of phone-page-is-only-a-browser-tab): talk to the host's voice session. One microphone stream for the whole mode, read by a worklet
-// into 16 kHz blocks. A request ends only when the user says "over" (ADR 0044's amendment of 2026-10-17), never by silence. So the page cuts what it hears
-// into segments at each pause (voicerules.js `Endpointer`), sends each to the host in chunks, one segment after another, and keeps listening. The host's
-// Mac turns each segment into text and adds it to the request it is collecting for this phone; the page polls every segment it sent (`Segments`) and shows
-// the request so far as the user's line, still being built. When a segment ends with "over" the Mac asks its voice session and makes the reply's audio,
-// which this page plays. From the moment the request is taken until its reply has played, the microphone's audio is not sent, so Varnick doesn't hear itself.
+// into 16 kHz blocks, cut into segments at each pause and sent; the host collects them into a request that ends only at "over" (the mechanism is in
+// docs/agents/where-it-breaks.md, Voice mode on the phone). The page polls the segments it sent, shows the request so far, and plays the reply.
 //
 // Kept alive by a quiet tone for as long as the mode runs, because a page that is hidden and silent is frozen by Chrome within about a minute, and a
 // page that plays audio is not (the spike, 2026-10-16). The screen is kept on while the page is shown. If the page is frozen anyway, the next resume
@@ -12,7 +9,7 @@
 
 import { element, getJSON, postJSON } from "/dom.js";
 import {
-  applyEvents, DeadMic, Endpointer, expirePending, fromBase64, hint, newView, pauseNote, pendingExpiryMs, preRollMs, Segments, serial, settled, stateLine, Utterance,
+  applyEvents, DeadMic, Endpointer, fromBase64, hint, minSpeechMs, newView, pauseNote, preRollMs, Segments, serial, settled, shortSpeechMs, stateLine, Utterance,
 } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -38,9 +35,8 @@ export function openVoice({ host, done, openSession }) {
     host, done, openSession, closed: false, running: false, view: newView(), note: "",
     ctx: null, stream: null, node: null, osc: null, lock: null, held: false,
     endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
-    // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, the order they are sent in, and the clock that
-    // drops a request left unfinished.
-    mode: null, segments: new Segments(), send: serial(), polling: false, pendingTimer: null, releaseTimer: null,
+    // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, and the one line their chunks are sent in.
+    run: null, segments: new Segments(), send: serial(), polling: false, releaseTimer: null,
   };
   const v = current;
   $("voice").hidden = false;
@@ -67,7 +63,6 @@ export function closeVoice() {
   document.removeEventListener("visibilitychange", v.onVisibility);
   document.removeEventListener("freeze", v.onFreeze);
   document.removeEventListener("resume", v.onResume);
-  clearTimeout(v.pendingTimer);
   clearTimeout(v.releaseTimer);
   stopAudio(v);
   void v.lock?.release().catch(() => {});
@@ -120,7 +115,7 @@ async function start(v) {
   $("voice-start").disabled = true;
   say(v, "");
   // Each Start is a run of its own: the Mac drops what the last one left unfinished.
-  v.mode = crypto.randomUUID();
+  v.run = crypto.randomUUID();
   try {
     await bring(v);
   } catch (error) {
@@ -269,6 +264,8 @@ function onBlock(v, { pcm, rms }) {
     v.endpoint.reset();
     return;
   }
+  // "Over" said alone is short: while a request is being collected, or a segment of it is out, a short sound counts.
+  v.endpoint.minSpeech = v.view.pending || v.segments.size > 0 ? shortSpeechMs : minSpeechMs;
   switch (v.endpoint.feed(rms, blockMs)) {
     case "idle":
       v.ring.push(pcm);
@@ -308,7 +305,7 @@ function onBlock(v, { pcm, rms }) {
 
 /** A segment for the host: each chunk is a POST, in the one order every segment's chunks go in, and the first the host refuses is shown at once. */
 function newUtterance(v, preRoll) {
-  const post = (body) => postJSON("/api/voice/audio", { ...body, mode: v.mode, ...hint() }, "The host didn't answer.");
+  const post = (body) => postJSON("/api/voice/audio", { ...body, run: v.run, ...hint() }, "The host didn't answer.");
   return new Utterance(crypto.randomUUID(), post, preRoll, (error) => {
     if (v.closed) return;
     v.view = { ...v.view, exchange: [...v.view.exchange, { who: "note", text: error }] };
@@ -322,7 +319,7 @@ function newUtterance(v, preRoll) {
  * pause are the next segment's; it is held only once the host has taken the request (`hear`).
  */
 async function finish(v, utt) {
-  if (!utt.going) return;
+  if (!utt.followable) return;
   if (v.view.state === "hearing") setState(v, "sending");
   const failed = await utt.finish();
   if (v.closed) return;
@@ -385,7 +382,6 @@ async function hear(v, news) {
     return;
   }
   v.view = applyEvents(v.view, news.events, news.id);
-  if (news.events.some((event) => event.kind === "collected" || event.kind === "heard")) watchPending(v);
   const sound = v.view.play;
   v.view = { ...v.view, play: null };
   render(v);
@@ -394,18 +390,6 @@ async function hear(v, news) {
   // A reply that played leaves the page listening; a question for the user, or a request that went past the deadline, keeps its line.
   if (v.view.state === "speaking") setState(v, settled(v.view));
   releaseHold(v, echoTailMs);
-}
-
-/** A request left unfinished is dropped after a minute and a little: the Mac has forgotten it by then, and the page does not keep showing it. */
-function watchPending(v) {
-  clearTimeout(v.pendingTimer);
-  v.pendingTimer = null;
-  if (!v.view.pending) return;
-  v.pendingTimer = setTimeout(() => {
-    if (v.closed) return;
-    v.view = expirePending(v.view);
-    render(v);
-  }, pendingExpiryMs);
 }
 
 /** Plays the reply's WAV (base64) through the context that already runs, so it needs no new permission and the tone goes on under it. */

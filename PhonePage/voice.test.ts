@@ -7,34 +7,39 @@ import {
   askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
 import {
-  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, expirePending, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs,
-  minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pendingExpiryMs, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, silenceMs, stateLine,
+  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs,
+  minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
   toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
 import { block, Downsampler } from "./page/voice-worklet.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
 const id = "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d";
-const mode = "7f3c9a10-2b4d-4e8f-a6c1-0d9e8f7a6b5c";
-const chunk = (extra: Record<string, unknown> = {}) => ({ id, mode, seq: 0, last: false, audio: "AAAA", ...extra });
+const run = "7f3c9a10-2b4d-4e8f-a6c1-0d9e8f7a6b5c";
+const chunk = (extra: Record<string, unknown> = {}) => ({ id, run, seq: 0, last: false, audio: "AAAA", ...extra });
 
 describe("an audio chunk from the page", () => {
   test("is a segment's id, its Voice mode run, a place, whether it is last and the audio, with the hint", () => {
     expect(parseAudioBody(chunk({ moment: 1760000000, zone: "America/Denver", units: "us" }))).toEqual({
-      ok: true, value: { id, mode, seq: 0, last: false, audio: "AAAA", moment: 1760000000, zone: "America/Denver", units: "us" },
+      ok: true, value: { id, run, seq: 0, last: false, audio: "AAAA", moment: 1760000000, zone: "America/Denver", units: "us" },
     });
-    expect(parseAudioBody(chunk({ id: id.toUpperCase(), mode: mode.toUpperCase() }))).toMatchObject({ ok: true, value: { id, mode } });
+    expect(parseAudioBody(chunk({ id: id.toUpperCase(), run: run.toUpperCase() }))).toMatchObject({ ok: true, value: { id, run } });
+  });
+
+  test("a page that names no run is an old one, and is told to reload", () => {
+    const { run: _, ...old } = chunk();
+    expect(parseAudioBody(old)).toEqual({ ok: false, error: "Voice mode's page is out of date: reload it" });
   });
 
   test("and nothing else is read: a rate, a device or a session in the body is not carried", () => {
     const parsed = parseAudioBody(chunk({ rate: 48000, by: "someone", session: "varnick-x", take: true }));
-    expect(parsed.ok && Object.keys(parsed.value).sort()).toEqual(["audio", "id", "last", "mode", "seq"]);
+    expect(parsed.ok && Object.keys(parsed.value).sort()).toEqual(["audio", "id", "last", "run", "seq"]);
   });
 
   test("anything else is refused", () => {
     const bad: unknown[] = [
       null, [], "x", chunk({ id: "not-a-uuid" }), chunk({ id: 5 }),
-      chunk({ mode: undefined }), chunk({ mode: "not-a-uuid" }), chunk({ mode: 5 }), chunk({ seq: -1 }), chunk({ seq: 1.5 }), chunk({ seq: 60 }), chunk({ seq: "0" }),
+      chunk({ run: undefined }), chunk({ run: "not-a-uuid" }), chunk({ run: 5 }), chunk({ seq: -1 }), chunk({ seq: 1.5 }), chunk({ seq: 60 }), chunk({ seq: "0" }),
       chunk({ last: "yes" }), chunk({ last: undefined }), chunk({ audio: "" }), chunk({ audio: 5 }), chunk({ audio: "not base64!" }),
       chunk({ audio: "A".repeat(maxChunkText + 4) }), chunk({ moment: "now" }), chunk({ moment: -1 }), chunk({ moment: Infinity }),
       chunk({ zone: "../../etc" }), chunk({ zone: "x".repeat(65) }), chunk({ zone: 5 }), chunk({ units: "furlongs" }),
@@ -54,8 +59,8 @@ describe("an audio chunk from the page", () => {
   });
 
   test("the rate is the server's, and a hint left out is left out", () => {
-    expect(audioFields({ id, mode, seq: 3, last: true, audio: "AAAA" }).voice).toEqual({ id, mode, seq: 3, last: true, audio: "AAAA", rate: 16000 });
-    expect(JSON.parse(buildRequest(V, "voiceAudio", "device", audioFields({ id, mode, seq: 0, last: false, audio: "AAAA" }))).by).toBe("device");
+    expect(audioFields({ id, run, seq: 3, last: true, audio: "AAAA" }).voice).toEqual({ id, run, seq: 3, last: true, audio: "AAAA", rate: 16000 });
+    expect(JSON.parse(buildRequest(V, "voiceAudio", "device", audioFields({ id, run, seq: 0, last: false, audio: "AAAA" }))).by).toBe("device");
   });
 });
 
@@ -149,6 +154,23 @@ describe("where a request ends", () => {
     expect(answers[5]).toBe("speech");
     expect(answers.slice(6, 6 + quietFrames - 1).every((answer) => answer === "speech")).toBe(true);
     expect(answers.at(-1)).toBe("end");
+  });
+
+  test("\"over\" said alone is short: a request being collected lets a sound of shortSpeechMs be a segment, and a blip is still not one", () => {
+    const over = [loud, loud, ...Array(quietFrames).fill(quiet)];
+    expect(shortSpeechMs).toBeLessThan(minSpeechMs);
+    // Normally two loud frames are a blip and nothing is sent.
+    expect(run(over).includes("begin")).toBe(false);
+    expect(run(over).at(-1)).toBe("drop");
+    const collecting = calibrated();
+    collecting.minSpeech = shortSpeechMs;
+    const answers = run(over, collecting);
+    expect(answers.includes("begin")).toBe(true);
+    expect(answers.at(-1)).toBe("end");
+    // A single frame, a click, is still not one.
+    const click = calibrated();
+    click.minSpeech = shortSpeechMs;
+    expect(run([loud, ...Array(quietFrames).fill(quiet)], click).at(-1)).toBe("drop");
   });
 
   test("a blip is dropped, and sends nothing", () => {
@@ -288,7 +310,7 @@ describe("a request on its way to the host", () => {
     await utterance.chain;
     // It failed while the user was still speaking: the page has nothing to follow.
     expect(utterance.failed).toBe("The voice session is off.");
-    expect(utterance.going).toBe(false);
+    expect(utterance.followable).toBe(false);
     expect(await utterance.finish()).toBe("The voice session is off.");
     expect(posts).toEqual([0]);
     expect(told).toEqual(["The voice session is off."]);
@@ -296,11 +318,11 @@ describe("a request on its way to the host", () => {
 
   test("a segment that was a segment and sent whole is followed", async () => {
     const utterance = new Utterance("u", async () => ({ ok: true }));
-    expect(utterance.going).toBe(false);
+    expect(utterance.followable).toBe(false);
     utterance.begin();
-    expect(utterance.going).toBe(true);
+    expect(utterance.followable).toBe(true);
     expect(await utterance.finish()).toBeNull();
-    expect(utterance.going).toBe(true);
+    expect(utterance.followable).toBe(true);
   });
 
   test("a failure in the last chunk is the request's", async () => {
@@ -309,7 +331,7 @@ describe("a request on its way to the host", () => {
     utterance.begin();
     utterance.add(block());
     expect(await utterance.finish()).toBe("The host didn't answer.");
-    expect(utterance.going).toBe(false);
+    expect(utterance.followable).toBe(false);
   });
 });
 
@@ -471,12 +493,13 @@ describe("a request that ends only at over", () => {
     expect(view).toMatchObject({ pending: "one", state: "hearing" });
   });
 
-  test("a request left unfinished is dropped with a line saying so, after the host has forgotten it", () => {
-    const view = expirePending(applyEvents({ ...newView(), state: "collecting" }, [collected("one")], "s1"));
-    expect(view).toMatchObject({ pending: null, state: "listening" });
-    expect(view.exchange).toEqual([{ who: "note", text: "No “over” for a minute, so that request was dropped." }]);
-    expect(expirePending(newView())).toEqual(newView());
-    expect(pendingExpiryMs).toBeGreaterThan(60_000);
+  test("an \"over\" the Mac kept for later, because it was on another request, says so and keeps the line", () => {
+    const view = applyEvents({ ...newView(), state: "sending" }, [{ kind: "collected", text: "and in Tokyo", spoken: "Still on the last one.", failure: "busy" }], "s1");
+    expect(view).toMatchObject({ pending: "and in Tokyo", state: "collecting" });
+    expect(view.exchange).toEqual([{ who: "note", text: "Still on the last one." }]);
+  });
+
+  test("the page asks what it is to wait on", () => {
     expect(settled({ ...newView(), pending: "x" })).toBe("collecting");
     expect(settled(newView())).toBe("listening");
   });

@@ -1,9 +1,5 @@
-// Voice mode's rules that need no DOM or audio (option 05 of phone-page-is-only-a-browser-tab): where a segment ends, how it is cut into chunks, how the
-// segments being followed are polled, and what the host's events make of the view. Tested by `bun test` (voice.test.ts).
-//
-// A request ends only when the user says "over" (ADR 0044's amendment of 2026-10-17), never by silence. So this page cuts what it hears into segments at
-// each pause, sends every one, and the host adds the words of each to the request it is collecting for this phone; the host asks its voice session when
-// a segment ends with "over". The page shows the request so far as the user's line, still being built.
+// Voice mode's rules that need no DOM or audio (option 05 of phone-page-is-only-a-browser-tab), tested by `bun test` (voice.test.ts). The mechanism (segments
+// and a request that ends at "over") is in docs/agents/where-it-breaks.md, Voice mode on the phone.
 
 /** What the page sends: 16 kHz, 16-bit mono (`VoiceAudio.uploadRate`). */
 export const uploadRate = 16000;
@@ -19,6 +15,8 @@ export const maxUtteranceMs = 30000;
 export const silenceMs = 900;
 /** Speech must last this long, in all, to be a segment and not a click or a cough. */
 export const minSpeechMs = 300;
+/** While a request is being collected, a segment may be as short as this: "over" said alone is about this long, and 300 ms would drop it as a blip. */
+export const shortSpeechMs = 200;
 /** Audio kept from before speech was heard, so the first word isn't clipped. */
 export const preRollMs = 300;
 /** A segment ends here even in speech, so that with its pre-roll and its last chunk (10 ms) it is under what the host takes; the next begins at once. */
@@ -51,6 +49,8 @@ export class Endpointer {
     this.floor = 0;
     this.measuring = calibrationFrames;
     this.quietest = Infinity;
+    /** How long speech must last to be a segment: the page lowers it to `shortSpeechMs` while a request is being collected. */
+    this.minSpeech = minSpeechMs;
     this.reset();
   }
 
@@ -118,7 +118,7 @@ export class Endpointer {
   }
 
   confirm() {
-    if (this.speechMs < minSpeechMs) return "pending";
+    if (this.speechMs < this.minSpeech) return "pending";
     this.state = "speaking";
     return "begin";
   }
@@ -224,7 +224,7 @@ export class Utterance {
   }
 
   /** Whether the host is to be asked what became of it: the segment is one and nothing in it failed. */
-  get going() {
+  get followable() {
     return this.begun && this.failed === null;
   }
 
@@ -356,9 +356,6 @@ export const stateLine = {
   error: "Something went wrong",
 };
 
-/** The host forgets what it collected this long after the last segment (`VoiceCollector.idle`); the page drops its line a little later than that. */
-export const pendingExpiryMs = 63000;
-
 export function newView() {
   return { state: "idle", exchange: [], pending: null, asking: null, session: null, play: null, done: false };
 }
@@ -391,6 +388,8 @@ export function applyEvents(view, events, id) {
     switch (event.kind) {
       case "collected":
         next.pending = event.text ? event.text : null;
+        // An "over" the host kept for later because it was on another request.
+        if (event.failure === "busy") next.exchange.push({ who: "note", text: event.spoken ?? "The Mac is still on the last request." });
         if (waiting.has(next.state)) next.state = settled(next);
         break;
       case "heard":
@@ -435,13 +434,6 @@ export function applyEvents(view, events, id) {
     }
   }
   return next;
-}
-
-/** The request so far has gone unfinished too long: the host has forgotten it, and the page drops its line and says so. */
-export function expirePending(view) {
-  if (!view.pending) return view;
-  const exchange = [...view.exchange, { who: "note", text: "No “over” for a minute, so that request was dropped." }];
-  return { ...view, pending: null, exchange, state: waiting.has(view.state) ? "listening" : view.state };
 }
 
 /** A pause the page can tell of: no frame from the microphone for this long means it was frozen or throttled. */
