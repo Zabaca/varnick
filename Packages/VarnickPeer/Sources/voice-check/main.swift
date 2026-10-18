@@ -329,7 +329,7 @@ let askID = "2b6b0d6e-8f0a-4c1e-9d3a-5a7c1e2f3b4d"
 let otherID = "9c1a7d52-0e3b-4a6f-8d21-6b4e5f7a8c90"
 let bytes = { (count: Int) in Data(repeating: 1, count: count) }
 
-expect("protocol: this is 30", PeerProtocol.version == 30)
+expect("protocol: this is 31", PeerProtocol.version == 31)
 
 var voiceRequest = PeerRequest(.voiceAsk)
 voiceRequest.voice = PeerVoiceAsk(id: askID, text: "what time is it", moment: 1_760_000_000, zone: "America/Denver", units: "us")
@@ -360,7 +360,7 @@ let answered = PeerVoiceEvent.answered(text: "It is noon in Denver. See [the clo
 expect("events: an answer carries its text and its spoken form", answered.text?.hasPrefix("It is noon") == true && answered.spoken == "It is noon in Denver. See the clock." && answered.audio == nil, "\(answered)")
 expect("events: an answer that cleans to nothing is spoken as the line", PeerVoiceEvent.answered(text: "Sources:\n- a", audio: nil).spoken == "I couldn't answer that.")
 expect("events: a long answer is cut", PeerVoiceEvent.answered(text: String(repeating: "word ", count: 5_000), audio: nil).text?.count == PeerVoiceEvent.maxAnswerCharacters)
-expect("events: which ones end an ask", [PeerVoiceEvent.Kind.needsYou, .answered, .noAnswer, .failed, .deadline].allSatisfy { PeerVoiceEvent($0).ends }
+expect("events: which ones end an ask or a segment", [PeerVoiceEvent.Kind.collected, .needsYou, .answered, .noAnswer, .failed, .deadline].allSatisfy { PeerVoiceEvent($0).ends }
        && ![PeerVoiceEvent.Kind.heard, .taken, .lookingUp].contains { PeerVoiceEvent($0).ends })
 
 // Audio: the WAV the phone plays, and the samples.
@@ -422,6 +422,66 @@ for (index, id) in ["a", "b", "c"].enumerated() {
     crowded.add(PeerVoiceEvent(.deadline), to: id, now: after(Double(index)))
 }
 expect("ledger: no more than its limit, the oldest goes", crowded.count == 2 && crowded.read("a", after: 0) == nil && crowded.read("c", after: 0) != nil)
+
+// A phone's request ends only at "over" (protocol 31, ADR 0044's amendment of 2026-10-17): its segments are collected.
+let runA = "5d0b5f2e-3c4d-4e6f-8a7b-9c0d1e2f3a4b"
+let runB = "6e1c6a3f-4d5e-4f70-9b8c-0d1e2f3a4b5c"
+var collector = VoiceCollector()
+func segment(_ name: String, _ line: String, device: String = "phone", run: String = runA, at seconds: TimeInterval, is expected: VoiceCollector.Step) {
+    let got = collector.add(line, device: device, mode: run, now: after(seconds))
+    expect("collector: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+segment("a segment without over is collected, not asked", "what was I working on", at: 0, is: .collected("what was I working on"))
+segment("a long pause between segments changes nothing", "yesterday afternoon", at: 30, is: .collected("what was I working on yesterday afternoon"))
+segment("a segment that is only a cough adds nothing", " . ", at: 31, is: .collected("what was I working on yesterday afternoon"))
+segment("over ends it, and is taken out", "the one about pantry over", at: 32, is: .take("what was I working on yesterday afternoon the one about pantry"))
+segment("then the next request starts clean", "what time is it", at: 33, is: .collected("what time is it"))
+segment("over alone ends it", "Over.", at: 34, is: .take("what time is it"))
+segment("over with nothing collected is nothing", "over", at: 35, is: .collected(""))
+segment("over in the middle of a segment is not the end", "move it over there", at: 36, is: .collected("move it over there"))
+segment("another phone has its own request", "set a timer", device: "other", at: 37, is: .collected("set a timer"))
+segment("the first is still there", "now", at: 38, is: .collected("move it over there now"))
+segment("a new Voice mode run drops what the last left", "hello", run: runB, at: 39, is: .collected("hello"))
+segment("the other phone's request is not touched by it", "for ten minutes over", device: "other", at: 40, is: .take("set a timer for ten minutes"))
+segment("a request unfinished for a minute is forgotten", "again", run: runB, at: 39 + VoiceCollector.idle + 1, is: .collected("again"))
+segment("a request is forgotten from its last segment, not its first", "still", run: runB, at: 39 + VoiceCollector.idle + 30, is: .collected("again still"))
+collector.prune(now: after(39 + VoiceCollector.idle + 30 + VoiceCollector.idle + 1))
+expect("collector: prune forgets what went quiet", collector.count == 0)
+var long = VoiceCollector()
+_ = long.add("one", device: "p", mode: runA, now: after(100))
+_ = long.add("x", device: "p", mode: runA, now: after(130))
+let capped = long.add("two", device: "p", mode: runA, now: after(100 + VoiceCollector.maxSeconds + 1))
+expect("collector: past the cap a request is taken as it stands", capped == .take("one x two"), "got \(capped)")
+var bulky = VoiceCollector()
+let wordy = String(repeating: "word ", count: VoiceSession.maxRequestCharacters / 5 + 20)
+if case .take(let said) = bulky.add(wordy, device: "p", mode: runA, now: after(0)) {
+    expect("collector: at the character cap a request is taken, cut to it", said.count == VoiceSession.maxRequestCharacters)
+} else {
+    expect("collector: at the character cap a request is taken", false)
+}
+expect("collector: the cap is a minute and 1,500 characters, as at the Mac", VoiceCollector.maxSeconds == 60 && VoiceSession.maxRequestCharacters == 1500)
+
+// A segment's ledger entry is not an ask until its request is taken.
+var segments = VoiceLedger(limit: 3)
+expect("ledger: segments can be open together", segments.begin("s1", asking: false, now: t0) && segments.begin("s2", asking: false, now: t0) && !segments.busy())
+segments.add(PeerVoiceEvent(.collected, text: "so far"), to: "s1", now: after(1))
+expect("ledger: collected ends a segment", segments.read("s1", after: 0)?.done == true && segments.read("s2", after: 0)?.done == false)
+expect("ledger: a segment can begin beside an open one", segments.begin("s3", asking: false, now: after(1)))
+segments.markAsking("s3")
+expect("ledger: a request taken makes the host busy", segments.busy() && !segments.begin("ask", now: after(1)))
+expect("ledger: a segment still can, the finished entry making room",
+       segments.begin("s4", asking: false, now: after(2)) && segments.read("s1", after: 0) == nil && segments.count == 3)
+segments.add(PeerVoiceEvent(.answered, text: "a"), to: "s3", now: after(3))
+expect("ledger: the ask's end frees the host", !segments.busy())
+var packed = VoiceLedger(limit: 2)
+expect("ledger: when every entry is open there is no room", packed.begin("a", asking: false, now: t0) && packed.begin("b", asking: false, now: t0) && !packed.begin("c", asking: false, now: t0))
+
+var modeRequest = PeerRequest(.voiceAudio)
+modeRequest.voice = PeerVoiceAsk(id: askID, audio: "AAAA", seq: 0, last: true, rate: 16_000, mode: runA)
+expect("wire: a segment's Voice mode run round-trips", PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(modeRequest))?.voice?.mode == runA)
+expect("wire: collected decodes from the page server's JSON",
+       PeerJSON.decode(PeerVoiceReply.self, from: #"{"id":"x","events":[{"kind":"collected","text":"hi"}],"next":1,"done":true}"#)?.events?.first == PeerVoiceEvent(.collected, text: "hi"))
 
 // MARK: Voice mode on a Mac (option 10 of listening-never-answers)
 

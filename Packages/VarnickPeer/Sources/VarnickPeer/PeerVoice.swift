@@ -1,13 +1,16 @@
 import Foundation
 
-// Voice mode on the phone (option 05 of `phone-page-is-only-a-browser-tab`, protocol 30): what a phone's Phone page and a host say to each other about
-// the host's voice session (`VoiceSession`, option 09 of `listening-never-answers`). Three requests, each one short relay process:
-//   `voiceAudio`  one chunk of an utterance's audio, 16-bit little-endian mono, in order; the last chunk ends the utterance. The Mac turns it into
-//                 text with Listening's transcriber and asks the voice session. The reply says the ask was taken, or why not.
+// Voice mode on the phone (option 05 of `phone-page-is-only-a-browser-tab`, protocols 30 and 31): what a phone's Phone page and a host say to each
+// other about the host's voice session (`VoiceSession`, option 09 of `listening-never-answers`). Three requests, each one short relay process:
+//   `voiceAudio`  one chunk of a segment's audio, 16-bit little-endian mono, in order; the last chunk ends the segment. A segment is what the page
+//                 heard between two pauses, not a request: the user's request ends only when they say "over" (ADR 0044's amendment of 2026-10-17).
+//                 The Mac turns the segment into text with Listening's transcriber and adds it to the request being collected for that device and
+//                 Voice mode run (`VoiceCollector`); it asks the voice session only when a segment ends with "over".
 //   `voiceAsk`    the same ask when the asker has the text already.
-//   `voiceStatus` the ask's events from `after` on, polled about once a second like `task_run_status`: heard (what the Mac made of the audio), taken,
-//                 looking up, needs you (with the voice session's zmx session, to open), answered (the text, the spoken form and its audio as a
-//                 WAV), no answer, failed or past the deadline.
+//   `voiceStatus` the events of a segment (or ask) from `after` on, polled about once a second like `task_run_status`: collected (the request so far,
+//                 which ends a segment that did not end the request), or heard (the whole request, once it ended), taken, looking up, needs you (with
+//                 the voice session's zmx session, to open), answered (the text, the spoken form and its audio as a WAV), no answer, failed or past
+//                 the deadline.
 // Only a Mac answers; a headless host has no transcriber or voice yet. Everything here is a pure function of what was said and when: the Mac's
 // adapter (`VoiceRemote`) keeps the ledger and does the transcribing, the asking and the voice.
 // Rules that break: docs/agents/where-it-breaks.md, Voice mode on the phone.
@@ -20,10 +23,13 @@ public struct PeerVoiceAsk: Codable, Equatable, Sendable {
     public var text: String?
     /// `voiceAudio`: the chunk's audio, base64 of 16-bit little-endian mono samples at `rate`.
     public var audio: String?
-    /// `voiceAudio`: the chunk's place in the utterance, from 0, and whether it is the last.
+    /// `voiceAudio`: the chunk's place in the segment, from 0, and whether it is the last.
     public var seq: Int?
     public var last: Bool?
     public var rate: Int?
+    /// `voiceAudio` (protocol 31): the Voice mode run the segment belongs to, a lowercase uuid the page chooses at Start. Segments of one device and one
+    /// run make one request; a segment of another run drops what the last one left collected, which is how a request is dropped when the mode ends.
+    public var mode: String?
     /// The asker's moment (unix seconds), time zone (an IANA identifier) and units (`us` or `metric`) for the voice hint, on the last chunk or the ask.
     public var moment: Int64?
     public var zone: String?
@@ -31,14 +37,15 @@ public struct PeerVoiceAsk: Codable, Equatable, Sendable {
     /// `voiceStatus`: the number of events the asker has already, so a reply carries only the rest.
     public var after: Int?
 
-    public init(id: String, text: String? = nil, audio: String? = nil, seq: Int? = nil, last: Bool? = nil, rate: Int? = nil, moment: Int64? = nil,
-                zone: String? = nil, units: String? = nil, after: Int? = nil) {
+    public init(id: String, text: String? = nil, audio: String? = nil, seq: Int? = nil, last: Bool? = nil, rate: Int? = nil, mode: String? = nil,
+                moment: Int64? = nil, zone: String? = nil, units: String? = nil, after: Int? = nil) {
         self.id = id
         self.text = text
         self.audio = audio
         self.seq = seq
         self.last = last
         self.rate = rate
+        self.mode = mode
         self.moment = moment
         self.zone = zone
         self.units = units
@@ -59,8 +66,13 @@ public struct PeerVoiceAsk: Codable, Equatable, Sendable {
 /// One thing that happened to an ask, as `voiceStatus` lists it. The kind travels as text, so one a build doesn't know is skipped by the page.
 public struct PeerVoiceEvent: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
-        /// What the Mac made of the audio (`text`).
+        /// The whole request, as the Mac made it of the segments up to the one that ended it with "over" (`text`, without the "over"). The voice
+        /// session is asked next.
         case heard
+        /// A segment was added to the request being collected (`text`: all of it so far, empty when nothing is collected). It ends the segment's own
+        /// events: the request goes on until a segment ends with "over". The page shows `text` as the user's line, still being built, and replaces
+        /// what it showed before.
+        case collected
         /// The voice session took the request.
         case taken
         /// Claude is going to the web.
@@ -97,7 +109,7 @@ public struct PeerVoiceEvent: Codable, Equatable, Sendable {
     public var ends: Bool {
         switch kind {
         case .heard, .taken, .lookingUp: false
-        case .needsYou, .answered, .noAnswer, .failed, .deadline: true
+        case .collected, .needsYou, .answered, .noAnswer, .failed, .deadline: true
         }
     }
 
@@ -272,14 +284,79 @@ public struct VoiceUploads {
     }
 }
 
+// MARK: - The request being collected
+
+/// The request a phone is saying, collected from its segments (protocol 31): what the user said between two pauses is a segment, the Mac transcribes
+/// each, and the request ends only when a segment ends with "over" (`VoiceMode.overStep`, the rule Hey Varnick follows at the Mac, ADR 0044's amendment
+/// of 2026-10-17). Kept by device, in memory, and for one Voice mode run: a segment of another run starts again. Segments are added in the order they
+/// were sent (the page sends them one after another and the Mac applies them in that order), never by silence.
+public struct VoiceCollector {
+    /// What a segment does to the request.
+    public enum Step: Equatable {
+        /// The request goes on and now reads this (empty when the segment held nothing and nothing was collected).
+        case collected(String)
+        /// The request is over and reads this: ask the voice session.
+        case take(String)
+    }
+
+    /// Collected text is forgotten this long after its last segment: the user went away, or ended Voice mode.
+    public static let idle: TimeInterval = 60
+    /// The cap, as at the Mac (`SpokenRequests.maxSeconds`): a request still collecting this long after its first segment, or at
+    /// `VoiceSession.maxRequestCharacters`, is taken as it stands when a segment arrives, not by a clock.
+    public static let maxSeconds: TimeInterval = 60
+
+    private struct Pending {
+        var text: String
+        var mode: String
+        var began: Date
+        var touched: Date
+    }
+
+    private var pending: [String: Pending] = [:]
+
+    public init() {}
+
+    public var count: Int { pending.count }
+
+    /// Adds a segment's `line` to the request of `device` in Voice mode run `mode`.
+    public mutating func add(_ line: String, device: String, mode: String, now: Date) -> Step {
+        prune(now: now)
+        if pending[device]?.mode != mode { pending[device] = nil }
+        let held = pending[device]
+        switch VoiceMode.overStep(line: line, collected: held?.text ?? "") {
+        case .ignore:
+            return .collected(held?.text ?? "")
+        case .take(let text):
+            pending[device] = nil
+            return .take(String(text.prefix(VoiceSession.maxRequestCharacters)))
+        case .collect(let text):
+            let kept = String(text.prefix(VoiceSession.maxRequestCharacters))
+            let began = held?.began ?? now
+            if kept.count >= VoiceSession.maxRequestCharacters || now.timeIntervalSince(began) > Self.maxSeconds {
+                pending[device] = nil
+                return .take(kept)
+            }
+            pending[device] = Pending(text: kept, mode: mode, began: began, touched: now)
+            return .collected(kept)
+        }
+    }
+
+    /// Forgets what no segment has added to for `idle`.
+    public mutating func prune(now: Date) {
+        pending = pending.filter { now.timeIntervalSince($0.value.touched) < Self.idle }
+    }
+}
+
 // MARK: - The ledger
 
-/// What has happened to each ask, for `voiceStatus` to list. One ask is in flight at a time on a host (the voice session's own rule); finished ones are
-/// kept a few minutes so the phone can read their last events, and no more than `limit` are kept.
+/// What has happened to each ask or segment, for `voiceStatus` to list. One ask is in flight at a time on a host (the voice session's own rule), but
+/// any number of segments are being transcribed or collected (an entry that is not `asking`); finished ones are kept a few minutes so the phone can read
+/// their last events, and no more than `limit` are kept.
 public struct VoiceLedger {
     private struct Entry {
         var events: [PeerVoiceEvent] = []
         var done = false
+        var asking: Bool
         var touched: Date
     }
 
@@ -288,21 +365,28 @@ public struct VoiceLedger {
     public let limit: Int
     private var entries: [String: Entry] = [:]
 
-    public init(limit: Int = 8) { self.limit = limit }
+    public init(limit: Int = 16) { self.limit = limit }
 
     public var count: Int { entries.count }
 
-    /// Whether an ask is going: begun and not over.
-    public func busy() -> Bool { entries.values.contains { !$0.done } }
+    /// Whether an ask is going: begun and not over. A segment that is only being collected is not.
+    public func busy() -> Bool { entries.values.contains { $0.asking && !$0.done } }
 
-    /// Opens an ask. False when one is going already, or the id is in use.
-    public mutating func begin(_ id: String, now: Date) -> Bool {
+    /// Opens an ask (`asking`) or a segment. False when an ask is going already and this is one, when the id is in use, or when `limit` entries are all
+    /// still open.
+    public mutating func begin(_ id: String, asking: Bool = true, now: Date) -> Bool {
         prune(now: now)
-        guard !busy(), entries[id] == nil else { return false }
-        if entries.count >= limit, let oldest = entries.min(by: { $0.value.touched < $1.value.touched })?.key { entries[oldest] = nil }
-        entries[id] = Entry(touched: now)
+        guard entries[id] == nil, !(asking && busy()) else { return false }
+        if entries.count >= limit {
+            guard let oldest = entries.filter({ $0.value.done }).min(by: { $0.value.touched < $1.value.touched })?.key else { return false }
+            entries[oldest] = nil
+        }
+        entries[id] = Entry(asking: asking, touched: now)
         return true
     }
+
+    /// A segment's request was taken: the entry is an ask now, and the host is busy until it ends.
+    public mutating func markAsking(_ id: String) { entries[id]?.asking = true }
 
     /// Adds an event to an open ask; an event after the ask's end is dropped.
     public mutating func add(_ event: PeerVoiceEvent, to id: String, now: Date) {

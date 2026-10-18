@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 30
+    public static let version = 31
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -175,8 +175,8 @@ public enum PeerOp: String, Codable, Sendable {
     case runAutomation
     /// A Mac showed a run's tab (`PeerRequest.tab`): the host takes the run mark off the tab and dates the Run opened, so no tick ends it.
     case runOpened
-    /// Voice mode (protocol 30, `PeerVoiceAsk`): one chunk of an utterance's audio, the ask as text, and the events of an ask so far. Only a Mac's app
-    /// answers; a listed device or Mac may ask.
+    /// Voice mode (protocol 30, `PeerVoiceAsk`): one chunk of a segment's audio (protocol 31: what the phone heard between two pauses, collected into a
+    /// request that ends only at "over"), the ask as text, and the events of a segment or ask so far. Only a Mac's app answers; a listed device or Mac may ask.
     case voiceAudio
     case voiceAsk
     case voiceStatus

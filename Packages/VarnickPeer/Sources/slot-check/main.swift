@@ -970,7 +970,7 @@ saveRequest.automation = hostBase
 let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveRequest))
 expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
 expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
-expect("this is protocol 30", PeerProtocol.version == 30)
+expect("this is protocol 31", PeerProtocol.version == 31)
 
 // tick.json: when the timer last ran.
 let tickFolder = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-tick-\(getpid())")
