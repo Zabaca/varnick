@@ -970,7 +970,14 @@ saveRequest.automation = hostBase
 let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveRequest))
 expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
 expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
-expect("this is protocol 31", PeerProtocol.version == 31)
+expect("this is protocol 32", PeerProtocol.version == 32)
+// restartPane (protocol 32): its tab and pane travel as an ordinary request, and an older build's frozen maintenance requests do not include it.
+var restartPaneRequest = PeerRequest(.restartPane)
+restartPaneRequest.tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77"
+restartPaneRequest.pane = "aaaaaaaa-0000-4000-8000-0000000000a1"
+let decodedRestartPane = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(restartPaneRequest))
+expect("restartPane carries a tab and a pane", decodedRestartPane?.op == .restartPane && decodedRestartPane?.tab == restartPaneRequest.tab && decodedRestartPane?.pane == restartPaneRequest.pane)
+expect("restartPane is checked against the protocol version like any request", PeerOp(rawValue: "restartPane") == .restartPane && !PeerProtocol.answersAnyVersion(.restartPane))
 
 // tick.json: when the timer last ran.
 let tickFolder = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-tick-\(getpid())")

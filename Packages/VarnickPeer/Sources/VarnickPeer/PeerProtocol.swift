@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 31
+    public static let version = 32
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -180,6 +180,8 @@ public enum PeerOp: String, Codable, Sendable {
     case voiceAudio
     case voiceAsk
     case voiceStatus
+    /// Restarts a Claude pane (`PeerRequest.tab` and `pane`) of a tab the asker controls, in place, resuming it (protocol 32; where-it-breaks, The tab view on the phone).
+    case restartPane
 }
 
 /// What kind of machine answers an `upgrade`.

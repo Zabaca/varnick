@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import {
-  agentsOf, openElsewhere, parseAgentsFolder, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab, shapeAgents,
-  shapeProjects, splitAgents, splitTab, startSession,
+  agentsOf, openElsewhere, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
+  restartPane, shapeAgents, shapeProjects, splitAgents, splitTab, startSession,
   type Asker,
 } from "./launch";
 import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
@@ -587,5 +587,79 @@ describe("adding a pane", () => {
     const notMine = fakeRelay({ tabs: listed(other), agents });
     expect((await splitAgents(notMine.asker, device, "linux box", tab, first)).status).toBe(409);
     expect(notMine.calls.some((call) => call.op === "agents")).toBe(false);
+  });
+});
+
+describe("restarting a pane (protocol 32)", () => {
+  const first = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const second = "bbbbbbbb-0000-4000-8000-0000000000b1";
+  const page = "cccccccc-0000-4000-8000-0000000000c1";
+  const idle = "dddddddd-0000-4000-8000-0000000000d1";
+  /** The host's `tabs`: a Claude pane, a terminal, a page and a Claude pane whose session isn't running, controlled by `control`. */
+  const listed = (control: string | null = device.id, id = tab) => ok({
+    tabs: [{
+      tab: id, control, clients: 1,
+      panes: [
+        { id: first, kind: "claude", title: "Fix it", running: true, control },
+        { id: second, kind: "terminal", title: "Terminal", running: true, control },
+        { id: page, kind: "web", title: "Page", url: "https://example.com/" },
+        { id: idle, kind: "claude", title: "Idle", running: false },
+      ],
+    }],
+  });
+  const ask = { tab, pane: first };
+
+  test("the body is a tab and a pane, lowercased, and nothing else is read", () => {
+    expect(parseRestartBody({ tab: tab.toUpperCase(), pane: first.toUpperCase(), by: "x", session: "varnick-x", agent: "a", prompt: "p" })).toEqual({ ok: true, value: ask });
+    for (const bad of [undefined, null, "", "x", `${tab}\n`, 5]) {
+      expect(parseRestartBody({ tab: bad, pane: first })).toMatchObject({ ok: false });
+      expect(parseRestartBody({ tab, pane: bad })).toMatchObject({ ok: false });
+    }
+    expect(parseRestartBody(null)).toMatchObject({ ok: false });
+    expect(parseRestartBody([])).toMatchObject({ ok: false });
+  });
+
+  test("asks the host as the device, with the tab and the pane only, and waits as a start does", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), restartPane: ok({ folder, tab }) });
+    expect(await restartPane(asker, device, "linux box", ask)).toEqual({ status: 200, body: { ok: true } });
+    expect(calls.map((call) => call.op)).toEqual(["tabs", "restartPane"]);
+    const restart = calls[1];
+    expect(restart.by).toBe(device.id);
+    expect(restart.fields).toEqual({ tab, pane: first });
+    expect(restart.limitMs).toBeGreaterThan(25_000);
+  });
+
+  test("a tab that isn't listed, or that the phone doesn't control, restarts nothing", async () => {
+    const missing = fakeRelay({ tabs: listed(device.id, other), restartPane: ok({}) });
+    expect((await restartPane(missing.asker, device, "linux box", ask)).status).toBe(404);
+    for (const control of [other, null]) {
+      const { asker, calls } = fakeRelay({ tabs: listed(control), restartPane: ok({}) });
+      expect((await restartPane(asker, device, "linux box", ask)).status).toBe(409);
+      expect(calls.some((call) => call.op === "restartPane")).toBe(false);
+    }
+    expect(missing.calls.some((call) => call.op === "restartPane")).toBe(false);
+  });
+
+  test("only a Claude pane that runs, and that is in the tab", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), restartPane: ok({}) });
+    expect((await restartPane(asker, device, "linux box", { tab, pane: second })).status).toBe(400);
+    expect((await restartPane(asker, device, "linux box", { tab, pane: page })).status).toBe(400);
+    expect((await restartPane(asker, device, "linux box", { tab, pane: idle })).status).toBe(409);
+    expect((await restartPane(asker, device, "linux box", { tab, pane: other })).status).toBe(400);
+    expect(calls.some((call) => call.op === "restartPane")).toBe(false);
+  });
+
+  test("the host's refusal is passed on, and a host whose tabs can't be read restarts nothing", async () => {
+    const refused = fakeRelay({ tabs: listed(), restartPane: { ok: false, error: "Couldn't restart: zmx still lists the session" } });
+    expect(await restartPane(refused.asker, device, "linux box", ask)).toEqual({ status: 502, body: { ok: false, error: "Couldn't restart: zmx still lists the session" } });
+    const down = fakeRelay({ tabs: { ok: false, error: "Varnick isn't running on Mac mini" } });
+    expect(await restartPane(down.asker, device, "Mac mini", ask)).toEqual({ status: 502, body: { ok: false, error: "Varnick isn't running on Mac mini" } });
+    expect(down.calls.map((call) => call.op)).toEqual(["tabs"]);
+  });
+
+  test("a lost answer is not asked again: a second restart would end what the first started", async () => {
+    const { asker, calls } = fakeRelay({ tabs: listed(), restartPane: { ok: false, error: "The relay didn't answer in time" } });
+    expect((await restartPane(asker, device, "linux box", ask)).status).toBe(502);
+    expect(calls.filter((call) => call.op === "restartPane")).toHaveLength(1);
   });
 });

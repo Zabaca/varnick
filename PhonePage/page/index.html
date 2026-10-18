@@ -121,6 +121,7 @@
       <p id="session-sub"></p>
     </div>
     <button id="redraw" type="button" aria-label="Redraw the screen" hidden>Redraw</button>
+    <button id="restart" type="button" aria-label="Restart the Claude session" hidden>Restart</button>
     <button id="end" type="button">End</button>
   </header>
 
@@ -194,12 +195,21 @@
   </div>
 </dialog>
 
+<dialog id="alert">
+  <form method="dialog">
+    <p id="alert-text"></p>
+    <div class="card-actions">
+      <button value="ok" class="primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="confirm">
   <form method="dialog">
     <p id="confirm-text"></p>
     <div class="card-actions">
       <button value="cancel">Cancel</button>
-      <button value="end" class="primary danger">End</button>
+      <button id="confirm-go" value="go" class="primary danger">End</button>
     </div>
   </form>
 </dialog>

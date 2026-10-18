@@ -35,8 +35,8 @@ struct MacPeerHost: PeerHost {
     }
 
     func forward(_ op: PeerOp, line: String) -> PeerForwarded {
-        // A start waits for the session to exist, so it gets longer than a lookup.
-        guard let answer = PeerSocket.request(line, timeout: op == .reopen ? 60 : op == .start || op == .resume ? 25 : 10) else {
+        // A start waits for the session to exist, so it gets longer than a lookup; so does a restart of a pane, which ends the session first.
+        guard let answer = PeerSocket.request(line, timeout: op == .reopen ? 60 : op == .start || op == .resume || op == .restartPane ? 25 : 10) else {
             return .reply(.failure("Varnick isn't running on \(name)"))
         }
         return .line(answer)

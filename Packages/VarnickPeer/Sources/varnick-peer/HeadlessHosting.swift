@@ -22,6 +22,7 @@ extension HeadlessPeerHost {
         case .start: return .reply(start(request, by: by))
         case .resume: return .reply(resumeConversation(request, by: by))
         case .end: return .reply(end(request, by: by))
+        case .restartPane: return .reply(restartPane(request, by: by))
         case .done: return .reply(done(request))
         case .arrange: return .reply(arrange(request, by: by))
         case .reopen: return .reply(reopen(request, by: by))
@@ -260,6 +261,54 @@ extension HeadlessPeerHost {
             reply.released = true
         }
         return reply
+    }
+
+    // MARK: restart
+
+    /// `restartPane` (protocol 32): where-it-breaks, The tab view on the phone, has the order. The Mac's equivalent is `LauncherModel.hostRestartPane`.
+    private func restartPane(_ request: PeerRequest, by: String) -> PeerReply {
+        guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
+        guard let tab = request.tab?.lowercased(), UUID(uuidString: tab) != nil, let pane = request.pane?.lowercased(), let uuid = UUID(uuidString: pane) else {
+            return .failure("The request needs a tab and a pane")
+        }
+        state.reconcile()
+        let records: [HeadlessSession]
+        do { records = try state.sessions() } catch { return stateFailure(error) }
+        guard let record = records.first(where: { $0.id == pane && $0.tabID == tab && $0.ended == nil }) else { return .failure("That pane isn't open on \(name)") }
+        guard !record.isTerminal else { return .failure("Only a Claude session restarts") }
+        if let denied = controlled(tab: tab, by: by) { return denied }
+        let session = Zmx.sessionName(uuid)
+        guard let labels = Zmx.labels(of: session), Zmx.sameID(Zmx.control(in: labels), by) else {
+            return .failure("That session isn't running and controlled by the machine that asked")
+        }
+        let conversation = StateFolder.conversations(of: records)[pane] ?? pane
+        let resumable = TranscriptReader.hasConversation(directory: record.folder ?? config.defaultFolder, conversation: conversation)
+        let before = record
+        func putBack() {
+            _ = try? state.update(pane) {
+                guard $0.ended == nil, $0.starting == true else { return }
+                ($0.starting, $0.bootID, $0.started, $0.conversation) = (before.starting, before.bootID, before.started, before.conversation)
+            }
+        }
+        // Claimed under the state lock: a start or a restart under way holds the record, and a second request would kill the session the first is starting.
+        var claimed = false
+        do {
+            _ = try state.update(pane) {
+                guard $0.starting != true else { return }
+                claimed = true
+                ($0.starting, $0.bootID, $0.started, $0.conversation) = (true, HeadlessSession.currentBootID, Date(), conversation)
+            }
+        } catch {
+            return stateFailure(error)
+        }
+        guard claimed else { return .failure("That session is starting on \(name): try again in a moment") }
+        // Without a transcript it starts fresh, as the Mac's restart does: with its prompt while it never left its first conversation, else under the conversation it follows.
+        let fresh = resumable || conversation == pane ? nil : conversation
+        if let failure = Zmx.endConfirmed(uuid) {
+            putBack()
+            return .failure("Couldn't restart: \(failure)")
+        }
+        return launch(record, control: by, origin: Zmx.origin(in: labels), resuming: resumable ? conversation : nil, freshUnder: fresh) { putBack() }
     }
 
     // MARK: reopen

@@ -8,9 +8,9 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmEnd, openSession, releaseSession } from "/session.js";
+import { confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
-  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersTake, paneLabel, paneNote, paneOfSession, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, paneOfSession, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -44,7 +44,11 @@ function header(t, sub) {
 function setEnd(hidden) {
   $("end").hidden = hidden;
   $("redraw").hidden = true;
+  $("restart").hidden = true;
 }
+
+/** What Restart acts on over the pane shown, or null when it isn't offered (session.js shows the button with the terminal). */
+const restartOffer = (t, pane) => (pane && offersRestart(t.data, pane) ? { tab: t.id, pane: pane.id } : null);
 
 /** Shows the switcher, a button per pane, when the tab has more than one or this phone can add one; then + while the phone is in control. */
 function renderSwitcher(t) {
@@ -110,7 +114,7 @@ function showPane(t, pane) {
     // The page's own start of this session takes it once; any other open asks the host's status first.
     const take = t.take === pane.session;
     if (take) t.take = null;
-    openSession({ name: pane.session, title: tabTitle(t.data), host: t.host, done: t.done, take, tab: { id: t.id } });
+    openSession({ name: pane.session, title: tabTitle(t.data), host: t.host, done: t.done, take, tab: { id: t.id }, restart: restartOffer(t, pane) });
     return;
   }
   t.session = false;
@@ -188,6 +192,7 @@ async function readFile(t, pane) {
 /** Asks the host for the tab and brings the page up to date: the switcher, and the pane shown if it can no longer be. */
 async function load(t) {
   const generation = ++t.generation;
+  const asked = Date.now();
   const result = await fetchTab(t.id);
   if (t.closed || generation !== t.generation) return;
   if (!result.ok) {
@@ -215,16 +220,21 @@ async function load(t) {
   // The pane stays unless it is gone, or it began or stopped running.
   // A page or an app is shown again when the host begins or stops proxying it; a new address of the same pane is the viewer's own browsing.
   const framingChanged = shown && Boolean(framedAddress(shown)) !== Boolean(framedAddress(now ?? shown));
+  // A Restart takes the pane down and brings it back, and session.js attaches again: a listing asked before it settled may show the pane down, and
+  // that must not tear the terminal down (nor take Restart away).
+  const restarting = holdsForRestart(asked);
   if (fresh && isOpenable(fresh)) {
     t.open = null;
     showPane(t, fresh);
-  } else if (first || !now || now.id !== t.pane || (shown && isOpenable(shown) !== isOpenable(now)) || framingChanged) {
+  } else if (first || !now || now.id !== t.pane || (!restarting && ((shown && isOpenable(shown) !== isOpenable(now)) || framingChanged))) {
     showPane(t, now);
   } else if (!t.session) {
     header(t, kindWord(now.kind));
     setEnd(!t.data.mine);
     if (!framedAddress(now)) paintControl(t);
   }
+  // The phone's control of the tab, or the pane, can have changed since the session opened: Restart follows it.
+  if (t.session && !restarting) offerRestart(restartOffer(t, now));
 }
 
 function failed(t, error) {

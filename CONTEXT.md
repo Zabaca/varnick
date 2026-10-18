@@ -89,7 +89,7 @@ A **Pane** that is a browser of Varnick's own, picked with `!task` or the split 
 _Avoid_: Task pane, Agent pane, automation pane
 
 **Restart**:
-Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card**, or a session on a **Peer**, can't restart. Not Restart Varnick (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Varnick restarting).
+Ending the Claude process in a pane that runs on this Mac and starting it again in the same pane, resuming the same **Session**, so it picks up the current hooks. The tab, splits, title and folder stay. It asks first when the **Turn** is working or background. A pane showing a **Card** can't restart from this Mac, nor can a session on a **Peer**; the machine in control restarts it instead, as the phone's Restart does (the peer request `restartPane`, which the host carries out in the same pane and keeps labelled for that machine). Not Restart Varnick (the app quitting and starting again, which ends every pane) and not the peer `restart` request (a **Peer**'s Varnick restarting).
 _Avoid_: Reload, relaunch
 
 **Custom app**:

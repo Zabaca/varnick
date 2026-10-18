@@ -31,3 +31,4 @@ The rule is across machines and the protocol encodes it (version 24), so it is h
 - **Terminals are reachable only with Keep sessions running on, on a Mac.**
 - **Web and app panes on the host's localhost load through the host's port proxy** ([ADR 0035](0035-remote-web-and-app-panes-go-through-a-port-proxy-in-each-hosts-phone-page-server.md)).
 - **A headless host's tab record is written by `start`, `arrange` and `end`;** a tab started before tabs had layouts is its records side by side until it changes.
+- **Amended 2026-10-17: the machine in control restarts a Claude pane in place (protocol 32).** `restartPane` (`tab`, `pane`) ends the pane's claude and starts it again with `--resume`, still labelled for the asker, on a Mac and on a headless host; the phone's Restart sends it, under the gates of Add pane. A new request, so a bump. The mechanism is in `docs/agents/where-it-breaks.md`, The tab view on the phone.
