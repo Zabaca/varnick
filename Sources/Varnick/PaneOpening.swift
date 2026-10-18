@@ -143,8 +143,8 @@ extension PanelAccess {
 
     // MARK: pane_close
 
-    /// In a tab another machine controls (`controller`) only a Claude or terminal pane closes, and not while a client is attached to its session
-    /// (the controller may have it open): a page, app or file shows nowhere this Mac can see, so the controller closes those.
+    /// In a tab another machine controls (`controller`) a Claude or terminal pane is not closed while a client is attached to its session (the
+    /// controller may have it open); a page, app or file closes whatever the controller shows, and its page handles the pane going.
     private func close(_ args: PanelArguments, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession, controller: String?) async throws -> Answered {
         let target = try self.target(args["id"], caller: caller.id)
         guard target != caller.id else { throw PanelRefusal.bad("That is this session's own pane: pane_close closes only panes it opened") }
@@ -161,19 +161,18 @@ extension PanelAccess {
             pane.end()
             return Answered(text: "Closing \(id(for: target, caller: caller.id)).")
         }
-        guard pane.runsInZmx else {
-            throw PanelRefusal.bad("\(PeerManager.shared.name(of: controller)) controls this tab and may have that pane open, which this Mac can't tell: it closes it there")
-        }
-        let status = await Task.detached { Zmx.status(of: target) }.value
-        if status.running {
-            guard let attached = status.clients else { throw PanelRefusal.bad("Varnick couldn't tell whether that pane is open elsewhere: try again in a moment") }
-            guard attached == 0 else {
-                throw PanelRefusal.bad("A client is attached to that pane, on this Mac or on \(PeerManager.shared.name(of: controller)), where the user may be looking at it: try again in a moment")
+        if pane.runsInZmx {
+            let status = await Task.detached { Zmx.status(of: target) }.value
+            if status.running {
+                guard let attached = status.clients else { throw PanelRefusal.bad("Varnick couldn't tell whether that pane is open elsewhere: try again in a moment") }
+                guard attached == 0 else {
+                    throw PanelRefusal.bad("A client is attached to that pane, on this Mac or on \(PeerManager.shared.name(of: controller)), where the user may be looking at it: try again in a moment")
+                }
             }
-        }
-        guard CallingPane.find(caller.id.uuidString, in: model).located?.tab === tab, tab.sessions.contains(where: { $0 === pane }),
-              pane.record.openedBy == caller.id, !tab.sessions.contains(where: \.takingOver) else {
-            throw PanelRefusal.bad("This tab changed while the pane was being closed: try again in a moment")
+            guard CallingPane.find(caller.id.uuidString, in: model).located?.tab === tab, tab.sessions.contains(where: { $0 === pane }),
+                  pane.record.openedBy == caller.id, !tab.sessions.contains(where: \.takingOver) else {
+                throw PanelRefusal.bad("This tab changed while the pane was being closed: try again in a moment")
+            }
         }
         pane.endSession()
         return Answered(text: "Closing \(id(for: target, caller: caller.id)). This tab is controlled by \(PeerManager.shared.name(of: controller)), where it goes within about 5 seconds.",

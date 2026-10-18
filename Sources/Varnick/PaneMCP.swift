@@ -57,7 +57,7 @@ enum PaneMCP {
     private static let closeTool = tool(close,
         summary: "Closes a pane this session opened with pane_open, as the user's close key would: a Claude pane's conversation goes to the tab's history and a "
             + "terminal ends. `id` is the pane's id from pane_open's reply. Refused for this session's own pane, for a pane it did not open, and for one the "
-            + "user has focused since: the first time the user focuses a pane a session opened, it is theirs. In a tab that another Mac or the phone controls it closes only a Claude or terminal pane, and not one that machine has open right now.",
+            + "user has focused since: the first time the user focuses a pane a session opened, it is theirs. In a tab that another Mac or the phone controls it closes the pane there too (the controller sees it go), but not a Claude or terminal pane that machine has open right now.",
         properties: ["id": ["type": "string", "description": "The pane's id (s…) from pane_open."]],
         required: ["id"])
 }
