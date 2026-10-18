@@ -3,14 +3,23 @@ title: Only the user at a Mac adds a pane to a tab; a Claude session and the pho
 description: A pane joins a tab only by the user's hand on a Mac (a split key, the split picker or the file tree), or by another machine in control of the tab. A Claude session in a Varnick pane can't open a terminal, a helper Claude session, Scratch, a page or a file beside itself, so it asks the user to. The Phone page starts sessions in new tabs and reopens closed ones, but can't add a pane to a tab, even one it controls.
 impact: Whatever a session could lay out beside itself falls to the user, down to the Scratch skill, whose steps end by asking the user to split the pane and pick Scratch. A helper Claude session runs as a subagent or a background shell, which the user can't watch, type into or close. Away from the Mac, a second session or a terminal for the same work goes into a tab of its own.
 severity: mid
-evidence: The user's words of 2026-10-17, relayed by the coordinator. Code read at 11762e0 (main). The Scratch skill shipped with the catalog app, its step 4.
-status: closed
+evidence: The user's words of 2026-10-17, relayed by the coordinator. Code read at 11762e0 (main). The Scratch skill shipped with the catalog app, its step 4. Reopened on the user's two asks of 2026-10-17 (relayed by the coordinator), with the code read at b3e7356 (main).
+status: open
 ---
 
 ## What the user asked (2026-10-17)
 
 1. "within a tab, i wish you had the ability to create additional panes yourself": a Claude session in a Varnick pane splits its own tab and opens a new pane in it.
 2. "i wish i had the ability to create them from the phone": the Phone page adds a pane to an existing tab.
+
+## Reopened (2026-10-17)
+
+The user asked for two more, after the first asks were built (relayed by the coordinator):
+
+3. A session restarted from the phone called `pane_open` and was refused: "This session is shown as a card because another Mac or a device is in control of it". The user asked "why can't it control if it's phone?" and chose to lift that: a session opens panes in its own tab on its host while the phone or another machine controls the tab.
+4. The phone's Add pane offers Claude and a terminal only. The user wants every kind: Claude, a terminal, a custom app such as Scratch, a page and a file.
+
+"Today" below is the state at 11762e0, before the first asks were built; what changed since is in the shipped options.
 
 ## Today
 

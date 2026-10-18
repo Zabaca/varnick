@@ -50,3 +50,4 @@ Everything else is option 01's: placement, focus, permissions capped by the call
 - **Verified in the code at 11762e0:** a Mac showing another machine's tab adds the panes the host's listing has and it lacks; the phone asks for a tab every 5 s while the page is visible; a headless host's split needs the asker in control and refuses pages, apps and files.
 - **Inferred:** the headless MCP server can reach the host's state folder, since it is the relay's own binary on the host.
 - **Not recommended now.** Worth it only once option 01 is in use and sessions on the headless host, or sessions the user follows from the phone, need helpers.
+- **Partly covered by option 04 (2026-10-17, accepted):** the Solution's first bullet, a tab of a Mac that another Mac or the phone controls, with the new pane labelled for the machine in control. What this option still adds is the headless host's sessions, and it stays proposed for that.
