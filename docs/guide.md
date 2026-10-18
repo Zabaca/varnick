@@ -193,6 +193,13 @@ tab of one pane: it adds a Claude session (with an agent of the shown pane's fol
 looking at, and opens it. On the host the new pane sits beside that pane. On a tab you left on the Mac there is no +: Take over first, which detaches the Mac.
 Pages, apps and files can't be added from the phone.
 
+**Restart** sits in the header of a Claude session beside Redraw and End, while the phone is in control of the tab (the same rule as +). It asks first, in the
+page, then ends that session's Claude and starts it again in the same pane, picking the conversation up where it was, as the Mac's Restart does. The new Claude
+reads the host's settings as they are now (Sessions can open panes, Skip permissions and the rest), so Restart is how a session gets a switch you turned on
+after it started. The header says Restarting…, then Reconnecting…, and the screen comes back when the new Claude is up; a failure says why under the title. It
+works on a Mac and on a headless host, and every machine must run the same build (protocol 32). A Claude pane that was sent nothing restarts fresh; a headless
+host refuses one that lost its transcript.
+
 The page can also notify the phone. At the foot of the home page, Notifications has a switch (Turn on asks the phone's permission, from
 that tap; on an iPhone it needs the page added to the Home Screen first). Each host is its own app and its own switch. With it on, the phone
 gets a notification when a session of that host needs a permission, a question, a plan or an MCP input, finishes, stops on an API error
