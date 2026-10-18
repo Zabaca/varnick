@@ -83,7 +83,7 @@ Claude and terminal panes get `VARNICK_PANE_ID` too, their own id, which stays w
 - Listen on `127.0.0.1`, as above. A server bound to every address (Node's default `listen(port)`) already answers on the tailnet address, and the proxy leaves its port alone.
 - It isn't proxied below port 1024. A page that sends `X-Frame-Options` or `frame-ancestors` won't show in the phone's frame; its Open alone link still works.
 - Cookies are per name, not per port: apps of one Mac share them from afar, as they do on 127.0.0.1.
-- Another Mac in control of the tab can split it with one of this Mac's apps from its split picker (the picker lists the apps this Mac can run from the pane's folder); the app runs here as if picked here.
+- Another Mac in control of the tab, or the phone (Add pane), can split it with one of this Mac's apps from its split picker (the picker lists the apps this Mac can run from the pane's folder); the app runs here as if picked here.
 
 **Lifetime.** The server runs in zmx whatever Keep sessions running says. Closing the pane (⌘W or ×) kills the server, also for a pane restored after a restart and not yet shown. If the server exits while the pane is open, the pane shows what it printed and says it exited; reload (⌘R) runs the app again on the same port if that is free, else on a new one. Quitting Varnick from its menu stops every app server when Keep sessions running is off and leaves them running when it is on. Varnick stopped by a signal (`make run`) leaves them running either way.
 

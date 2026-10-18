@@ -4,7 +4,7 @@ description: A pane joins a tab only by the user's hand on a Mac (a split key, t
 impact: Whatever a session could lay out beside itself falls to the user, down to the Scratch skill, whose steps end by asking the user to split the pane and pick Scratch. A helper Claude session runs as a subagent or a background shell, which the user can't watch, type into or close. Away from the Mac, a second session or a terminal for the same work goes into a tab of its own.
 severity: mid
 evidence: The user's words of 2026-10-17, relayed by the coordinator. Code read at 11762e0 (main). The Scratch skill shipped with the catalog app, its step 4. Reopened on the user's two asks of 2026-10-17 (relayed by the coordinator), with the code read at b3e7356 (main).
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-17)

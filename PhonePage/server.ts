@@ -17,7 +17,7 @@ import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, parseAgentsFolder, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, reopenTab, restartPane, shapeProjects, splitAgents, splitTab, startSession } from "./launch";
+import { agentsOf, closePane, parseAgentsFolder, parseCloseBody, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
@@ -122,6 +122,13 @@ export function socketHandlers(terminals: Terminals, watches: Watches): Bun.WebS
     close: (ws, code, reason) => of(ws).close?.(ws, code, reason),
     drain: (ws) => of(ws).drain?.(ws),
   };
+}
+
+/** The `tab` and `pane` of a GET route's query when both are ids, lowercase as the host writes them. */
+function tabAndPane(request: Request): { tab: string; pane: string } | null {
+  const query = new URL(request.url).searchParams;
+  const tab = query.get("tab"), pane = query.get("pane");
+  return tab !== null && uuidPattern.test(tab) && pane !== null && uuidPattern.test(pane) ? { tab: tab.toLowerCase(), pane: pane.toLowerCase() } : null;
 }
 
 async function main(): Promise<void> {
@@ -236,6 +243,7 @@ async function main(): Promise<void> {
     "/liverules.js": { file: "page/liverules.js", type: js },
     "/new.js": { file: "page/new.js", type: js },
     "/add.js": { file: "page/add.js", type: js },
+    "/addrules.js": { file: "page/addrules.js", type: js },
     "/newrules.js": { file: "page/newrules.js", type: js },
     "/app.css": { file: "page/app.css", type: "text/css; charset=utf-8" },
     "/vendor/xterm.mjs": { file: "vendor/xterm.mjs", type: js },
@@ -367,7 +375,7 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/restart" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
         && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
@@ -409,12 +417,19 @@ async function main(): Promise<void> {
         const launched = await startSession(relay, device, host.name, ask.value, () => crypto.randomUUID());
         return json(launched.body, launched.status);
       }
-      // Add pane (option 03 of panes-open-only-by-hand-at-a-mac): a Claude session or a terminal beside a pane of a tab this phone controls.
+      // Add pane (options 03 and 05 of panes-open-only-by-hand-at-a-mac): a Claude session, a terminal, an app, a page or a file beside a pane of a tab this phone controls.
       if (path === "/api/split") {
         const ask = parseSplitBody(body);
         if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
-        const launched = await splitTab(relay, device, host.name, ask.value, () => crypto.randomUUID());
+        const launched = await splitTab(relay, device, host.name, ask.value, () => crypto.randomUUID(), host.headless);
         return json(launched.body, launched.status);
+      }
+      // Close one pane (where-it-breaks, The tab view on the phone), under the timeout above: the host's `end`, which may wait on zmx.
+      if (path === "/api/close") {
+        const ask = parseCloseBody(body);
+        if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
+        const closed = await closePane(relay, device, host.name, ask.value);
+        return json(closed.body, closed.status);
       }
       // Restart (protocol 32; where-it-breaks, The tab view on the phone), under the timeout above.
       if (path === "/api/restart") {
@@ -472,24 +487,31 @@ async function main(): Promise<void> {
       return shaped ? json({ ok: true, host: host.name, tab: shaped }) : json({ ok: false, error: `That tab isn't open on ${host.name} any more` }, 404);
     }
     if (path === "/api/file" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const tab = query.get("tab"), pane = query.get("pane");
-      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
       // The host reads the file the pane has, inside the tab's folders, and caps its size: the path is never the page's.
-      const read = await relay.ask("file", device.id, { tab: tab.toLowerCase(), pane: pane.toLowerCase() });
+      const read = await relay.ask("file", device.id, ids);
       return read.ok && typeof read.reply.text === "string" ? json({ ok: true, text: read.reply.text }) : json({ ok: false, error: read.ok ? "The host sent no text" : read.error }, 502);
     }
     if (path === "/api/projects" && request.method === "GET") {
       const projects = shapeProjects(await relay.ask("projects", device.id));
       return "error" in projects ? json({ ok: false, error: projects.error }, 502) : json({ ok: true, host: host.name, projects: projects.rows });
     }
-    if (path === "/api/split-agents" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const tab = query.get("tab"), pane = query.get("pane");
-      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+    if (path === "/api/split-offer" && request.method === "GET") {
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
       // The folder is the pane's own as the host lists it, never the page's.
-      const agents = await splitAgents(relay, device, host.name, tab, pane);
-      return json(agents.body, agents.status);
+      const offer = await splitOffer(relay, device, host.name, ids.tab, ids.pane, host.headless);
+      return json(offer.body, offer.status);
+    }
+    if (path === "/api/split-files" && request.method === "GET") {
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
+      const dir = parseSplitDir(new URL(request.url).searchParams.get("dir"));
+      if (!dir.ok) return json({ ok: false, error: dir.error }, 400);
+      // The root is the pane's own folder as the host lists it; the folder asked for has to be inside it, and the host keeps the tab's folders besides.
+      const listing = await splitFiles(relay, device, host.name, ids.tab, ids.pane, dir.value, host.headless);
+      return json(listing.body, listing.status);
     }
     if (path === "/api/agents" && request.method === "GET") {
       const folder = parseAgentsFolder(new URL(request.url).searchParams.get("folder"));

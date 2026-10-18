@@ -176,10 +176,7 @@
 
 <dialog id="add" aria-labelledby="add-title">
   <p id="add-title" class="add-title">Add pane <span id="add-host" class="add-host"></span></p>
-  <div id="add-kinds" class="chips" role="group" aria-label="What to add">
-    <button type="button" class="chip" data-kind="claude" aria-pressed="true">Claude</button>
-    <button type="button" class="chip" data-kind="terminal" aria-pressed="false">Terminal</button>
-  </div>
+  <div id="add-kinds" class="chips" role="group" aria-label="What to add"></div>
   <div id="add-claude">
     <div id="add-agents-wrap" hidden>
       <span class="field-label" id="add-agent-label">Agent</span>
@@ -187,6 +184,19 @@
     </div>
     <label class="field-label" for="add-prompt">Prompt</label>
     <textarea id="add-prompt" placeholder="What should Claude do? Optional." autocapitalize="sentences" rows="5"></textarea>
+  </div>
+  <div id="add-app" hidden>
+    <span class="field-label" id="add-app-label">App</span>
+    <div id="add-apps" class="chips" role="group" aria-labelledby="add-app-label"></div>
+  </div>
+  <div id="add-web" hidden>
+    <label class="field-label" for="add-url">Address</label>
+    <input id="add-url" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="localhost:3000 or example.com">
+  </div>
+  <div id="add-file" hidden>
+    <span class="field-label">File <span id="add-file-dir" class="add-host"></span></span>
+    <div id="add-files" role="group" aria-label="Files"></div>
+    <p id="add-file-picked" class="add-picked" hidden></p>
   </div>
   <p id="add-status" class="new-status" role="status" hidden></p>
   <div class="card-actions">

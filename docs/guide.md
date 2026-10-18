@@ -189,9 +189,12 @@ is still blank or half drawn, **Redraw**, beside End in the session's header, th
 terminal you control attaches again; a screen you are watching opens again). It types nothing and changes nothing about who controls the session.
 
 A tab shows one pane at a time, with a switcher between its panes. While the phone is in control of the tab, the switcher ends in **+** (Add pane), also on a
-tab of one pane: it adds a Claude session (with an agent of the shown pane's folder and a prompt, both optional) or a terminal beside the pane you are
-looking at, and opens it. On the host the new pane sits beside that pane. On a tab you left on the Mac there is no +: Take over first, which detaches the Mac.
-Pages, apps and files can't be added from the phone.
+tab of one pane: it adds a Claude session (with an agent of the shown pane's folder and a prompt, both optional), a terminal, a custom app, a page or a file beside the
+pane you are looking at, and switches to it. **App** lists the custom apps of the shown pane's folder, Scratch among them; **Page** takes an address
+(`localhost:3000` or `example.com`); **File** browses the shown pane's folder one level at a time, and Up stops at that folder. On the host the new pane
+sits beside that pane (a file goes where the file tree puts it). A page at an outside address shows as a note with an Open button, since the phone doesn't frame
+it; a page at the host's own address and an app are framed. On a headless host Add pane offers Claude and Terminal only. On a tab you left on the Mac there is
+no +: Take over first, which detaches the Mac. Beside + a **×** closes the pane you are looking at (after you confirm), in a tab of more than one pane; to close the only pane, End the tab. The host decides whether the pane was the tab's last, as when you close it on the Mac.
 
 **Restart** sits in the header of a Claude session beside Redraw and End, while the phone is in control of the tab (the same rule as +). It asks first, in the
 page, then ends that session's Claude and starts it again in the same pane, picking the conversation up where it was, as the Mac's Restart does. The new Claude

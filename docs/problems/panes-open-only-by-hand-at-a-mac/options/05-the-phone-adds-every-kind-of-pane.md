@@ -1,8 +1,8 @@
 ---
 problem: panes-open-only-by-hand-at-a-mac
 title: The phone's Add pane offers a custom app, a page and a file as well as Claude and a terminal
-summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), extending option 03. On a Mac host, Add pane offers five kinds. App lists the custom apps of the shown pane's folder, Scratch among them. Page takes an address. File browses the shown pane's folder one level at a time. The page server sends the `start` a Mac sends for a split of another machine's tab, which protocol 32 already carries, and the phone shows the new pane as it shows any listed one. The relay lets a listed device ask `apps` and `files`, which it refuses today. No protocol bump: only the host that serves the page needs the build. A headless host keeps Claude and Terminal.
-status: accepted
+summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), extending option 03. On a Mac host, Add pane offers five kinds. App lists the custom apps of the shown pane's folder, Scratch among them. Page takes an address. File browses the shown pane's folder one level at a time. The page server sends the `start` a Mac sends for a split of another machine's tab, which protocol 32 already carries, and the phone shows the new pane as it shows any listed one. The relay lets a listed device ask `apps` and `files`, which it refuses today. No protocol bump: only the host that serves the page needs the build. A headless host keeps Claude and Terminal. An addition the user asked for on 2026-10-17: the phone closes one pane of any kind in a tab it controls, with a × in the switcher and the host's existing `end`, so no new request.
+status: shipped
 ---
 
 ## Solution
@@ -85,7 +85,15 @@ status: accepted
 - The Website pane (the Tasks switch's), which works only on the Mac it runs on, as the Mac's picker for another machine's tab says.
 - Choosing where the pane goes, or a split top and bottom.
 - Searching for a file rather than browsing to it.
-- Closing one pane from the phone.
+
+## Addition: the phone closes one pane
+
+Asked for by the user on 2026-10-17 (relayed by the coordinator) and built after the kinds above, in separate commits.
+
+- **What the host already does.** `end` closes one pane of a tab for the machine in control, with no new request and no protocol bump: a Claude or terminal pane by its session with the tab (`end` naming the session and the tab), any other pane by the pane with the tab (`hostEndPane`). The host decides whether the pane is the tab's last, as ADR 0034's ruling of 2026-10-12 says, and then handles it as the tab's `end`: the tab ends if its origin names the asker, else every pane is handed back. What was missing was the page server's route: `/api/end` takes a tab or a session alone.
+- **The route.** `POST /api/close` takes the tab and the pane, under the gates of Add pane (the tab is listed, the phone controls it, the pane is its), picks `end`'s fields by the pane's kind and tells the host's answer in the words End uses.
+- **The button.** A × beside + at the end of the switcher, while the phone controls a tab of more than one pane. It closes the pane shown, after the page's own question in the words of its kind, and the next pane is shown. The tab's only pane is closed by End, which does the same thing. If the host hands the tab back (the pane was its last after another machine closed the rest), the page leaves the tab as End does.
+- **Left as the host has it.** Closing the last Claude or terminal pane of a tab that still holds pages or files leaves those panes in the tab, as ⌘W on the Mac does; the phone then has nothing in it to control.
 
 ## Further Notes
 

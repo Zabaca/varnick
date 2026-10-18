@@ -110,7 +110,7 @@ public enum PeerOp: String, Codable, Sendable {
     case projects
     case agents
     /// The custom apps the receiving host can run from a folder (`PeerRequest.folder`), for the split picker of a tab of its own that another
-    /// Mac is in control of: each with the key the host's picker would give it. A host with no Varnick app lists none.
+    /// Mac or the phone is in control of: each with the key the host's picker would give it. A host with no Varnick app lists none.
     case apps
     /// A session's last screen (`zmx history --vt`, without the mode sets that make a terminal
     /// talk back), for the Mac that isn't in control. The relay answers it from zmx alone.
@@ -144,8 +144,8 @@ public enum PeerOp: String, Codable, Sendable {
     case arrange
     /// A file pane's text (`tab`, `pane`), read by the host and capped in size. The relay answers it from the saved tabs.
     case file
-    /// One level of a folder of a tab (`tab`, `folder`), for the file tree of a Mac that views the tab (protocol 26): the entries, folders first,
-    /// at most `PeerFolder.limit` of them. Only inside the tab's folders. The relay answers it from the saved tabs. For a listed Mac only.
+    /// One level of a folder of a tab (`tab`, `folder`), for the file tree of a Mac that views the tab, and the phone's file picker (protocol 26): the entries, folders first,
+    /// at most `PeerFolder.limit` of them. Only inside the tab's folders. The relay answers it from the saved tabs. For a listed Mac or device.
     case files
     /// Reopen a tab that closed on the host (`tab`) whole, in its layout: its Claude panes resume, its terminals start fresh, all labelled
     /// for the asker. Its running Varnick does it.

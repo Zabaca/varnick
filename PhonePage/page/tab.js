@@ -2,15 +2,15 @@
 // (session.js: the live screen, then the terminal after Take over), and only the shown pane's terminal is open. Any other pane is a note: a
 // file's text from the host, or where a page, an app or the Transcript runs; a page or an app the host proxies (ADR 0035) is framed instead,
 // with a link to open it alone. Take over takes the whole tab; End ends it or hands it back. While the phone is in control of the tab the switcher
-// ends in + (Add pane, add.js): a Claude session or a terminal beside the pane shown. The
+// ends in + (Add pane, add.js): a Claude session, a terminal, an app, a page or a file beside the pane shown. The
 // host's listing is asked again every few seconds while the page is visible, so a pane added or closed elsewhere shows. Everything the host
 // sent goes in with textContent, never as markup.
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
+import { confirmClose, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
-  choosePane, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersRestart, offersTake, paneLabel, paneNote, paneOfSession, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, closeQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -59,7 +59,7 @@ function renderSwitcher(t) {
     const button = element("button", "pane-tab");
     button.type = "button";
     button.append(element("span", "pane-kind", kindWord(pane.kind)), element("span", "pane-name", paneLabel(pane)));
-    if (!isOpenable(pane) && (pane.kind === "claude" || pane.kind === "terminal")) button.classList.add("idle");
+    if (!isOpenable(pane) && hasSession(pane.kind)) button.classList.add("idle");
     button.dataset.pane = pane.id;
     button.setAttribute("aria-pressed", String(pane.id === t.pane));
     button.addEventListener("click", () => { if (current === t) { dropAdded(t); showPane(t, pane); } });
@@ -67,16 +67,64 @@ function renderSwitcher(t) {
   }
   t.add = offersAdd(t.data);
   if (!t.add) return;
+  // Close and + stay at the end of the row together, whatever its scroll.
+  const actions = element("span", "pane-actions");
+  nav.append(actions);
+  if (offersClose(t.data)) {
+    const close = element("button", "pane-close", "×");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close the pane shown");
+    close.addEventListener("click", () => { if (current === t) closeShown(t); });
+    actions.append(close);
+  }
   const plus = element("button", "pane-add", "+");
   plus.type = "button";
   plus.setAttribute("aria-label", "Add pane");
   plus.addEventListener("click", () => {
     const beside = t.data.panes.find((pane) => pane.id === t.pane) ?? t.data.panes[0];
-    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: ({ session }) => added(t, session),
+    if (current === t && beside) openAdd({ tab: t.id, pane: beside.id, host: t.host, added: (result) => added(t, result),
       failed: (error) => { if (current === t) $("session-sub").textContent = `Couldn't add the pane: ${error}`; },
     });
   });
-  nav.append(plus);
+  actions.append(plus);
+}
+
+/**
+ * Closes the pane shown, after the page's own question (never `confirm()`): the host's `end` for one pane, whatever its kind. When the host handed the
+ * tab back instead (the pane was its last, and the tab isn't this phone's to end), the page leaves it as End does; a tab the host ended is found gone by
+ * the next listing. Otherwise the pane leaves the switcher at once and the next pane in it is shown.
+ */
+async function closeShown(t) {
+  const pane = t.data.panes.find((candidate) => candidate.id === t.pane);
+  if (!pane || t.closing) return;
+  if (!(await confirmClose(closeQuestion(t.data, pane, t.host))) || t.closed) return;
+  t.closing = true;
+  $("session-sub").textContent = "Closing…";
+  const result = await postJSON("/api/close", { tab: t.id, pane: pane.id }, "the host didn't answer");
+  t.closing = false;
+  if (t.closed) return;
+  if (!result.ok) {
+    $("session-sub").textContent = `Couldn't close it: ${result.error}`;
+    return;
+  }
+  if (result.released) {
+    const done = t.done;
+    closeTab();
+    return done(result.text);
+  }
+  // The host ended the whole tab if that was its last pane and the tab was this phone's: it is gone from the listing, so the page goes home at once.
+  const listed = await fetchTab(t.id);
+  if (t.closed) return;
+  if (!listed.ok && listed.gone) {
+    const done = t.done;
+    closeTab();
+    return done(result.text);
+  }
+  dropAdded(t);
+  t.data = { ...t.data, panes: t.data.panes.filter((candidate) => candidate.id !== pane.id) };
+  renderSwitcher(t);
+  showPane(t, choosePane(t.data, null));
+  load(t);
 }
 
 /** Gives up opening the pane this page added, and its one take with it. */
@@ -86,11 +134,11 @@ function dropAdded(t) {
 }
 
 /**
- * The host added a session beside the pane shown: the tab is asked for again, and the new pane opens with take, once, as after a start. It may
- * not be listed yet, so it waits for the next asks (`addedWaitMs`).
+ * The host added a pane beside the pane shown: the tab is asked for again, and the page switches to the new pane. A Claude or terminal pane opens with
+ * take, once, as after a start; a page, an app or a file has no session to take. It may not be listed yet, so it waits for the next asks
+ * (`addedWaitMs`).
  */
-function added(t, session) {
-  const pane = paneOfSession(session);
+function added(t, { session, pane }) {
   if (t.closed || !pane) return;
   t.take = session;
   t.open = pane;
@@ -99,7 +147,7 @@ function added(t, session) {
 }
 
 function markShown(t) {
-  for (const button of $("panes").children) button.setAttribute("aria-pressed", String(button.dataset.pane === t.pane));
+  for (const button of $("panes").querySelectorAll("button.pane-tab")) button.setAttribute("aria-pressed", String(button.dataset.pane === t.pane));
 }
 
 /** Shows `pane`: a pane that runs is the session view, any other a note. */
@@ -223,7 +271,7 @@ async function load(t) {
   // A Restart takes the pane down and brings it back, and session.js attaches again: a listing asked before it settled may show the pane down, and
   // that must not tear the terminal down (nor take Restart away).
   const restarting = holdsForRestart(asked);
-  if (fresh && isOpenable(fresh)) {
+  if (fresh && readyToShow(fresh)) {
     t.open = null;
     showPane(t, fresh);
   } else if (first || !now || now.id !== t.pane || (!restarting && ((shown && isOpenable(shown) !== isOpenable(now)) || framingChanged))) {
@@ -258,7 +306,7 @@ function failed(t, error) {
  */
 export function openTab({ tab, pane, host, done, take = null }) {
   closeTab();
-  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0 };
+  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0, closing: false };
   current = t;
   $("session").hidden = false;
   $("panes").hidden = true;

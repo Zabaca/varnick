@@ -78,12 +78,13 @@ public enum PeerRelay {
         // Everything but a hello reveals or changes what this host runs, or holds the user's prompts: only
         // for a Mac this one lists, read from the saved list without writing it. Anyone who can ssh in
         // could otherwise ask. A listed device may ask for the same, but not for the search sync's `rows`
-        // and `pages` (ADR 0011), nor to upgrade or restart a host.
+        // and `pages` (ADR 0011), nor to upgrade or restart a host. `apps` and `files` are a device's too, for the phone's Add pane
+        // (option 05 of `panes-open-only-by-hand-at-a-mac`); the Phone page server asks them only for a tab the phone controls.
         var device: String?
         var ownPageServer = false
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || op == .apps || op == .files || PeerProtocol.isAutomationRequest(op)
+            let macsOnly = op == .rows || op == .pages || op == .done || op == .arrange || PeerProtocol.isAutomationRequest(op)
                 || PeerProtocol.answersAnyVersion(op)
             if !peer, !macsOnly, host.listsDevice(head.by) {
                 device = head.by

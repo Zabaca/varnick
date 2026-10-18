@@ -8,8 +8,17 @@ export function parseTabHash(hash) {
 
 export const tabHash = (tab, pane) => (pane ? `#t=${tab}&p=${pane}` : `#t=${tab}`);
 
+/** Whether a kind of pane runs in a zmx session of its own (Claude and terminal), which a device can attach to and which `end` closes by its session. */
+export const hasSession = (kind) => kind === "claude" || kind === "terminal";
+
 /** A pane whose zmx session runs, which the page can open as a terminal or a live screen. */
 export const isOpenable = (pane) => pane.session !== null && pane.running === true;
+
+/**
+ * Whether a pane the page just added can be shown as soon as the host lists it: a page, an app and a file at once (a note, or a frame once the
+ * page server has looked at it), a Claude or terminal pane once its session runs.
+ */
+export const readyToShow = (pane) => (hasSession(pane.kind) ? isOpenable(pane) : true);
 
 /** Claude, then terminal, then the rest: the words the switcher uses for a kind. */
 const kindWords = { claude: "Claude", terminal: "Terminal", web: "Page", app: "App", file: "File", transcript: "Transcript" };
@@ -120,6 +129,29 @@ export const offersTake = (tab) => tab.panes.some(isOpenable) && !tab.mine;
 /** Whether Add pane is offered for the tab: this phone is in control of it, and it has a pane to put the new one beside (option 03 of panes-open-only-by-hand-at-a-mac). */
 export const offersAdd = (tab) => tab.mine === true && tab.panes.length > 0;
 
+/**
+ * Whether Close is offered in the switcher: this phone controls the tab and it has more than one pane. The tab's only pane is closed by End, which ends
+ * the tab the same way (the host decides whether a pane is the last, `closePane` in launch.ts).
+ */
+export const offersClose = (tab) => tab.mine === true && tab.panes.length > 1;
+
+/** Whether `pane` is the last Claude or terminal pane of the tab that runs: once it is closed nothing in the tab can be controlled from this phone. */
+const lastRunning = (tab, pane) => isOpenable(pane) && !tab.panes.some((other) => other.id !== pane.id && hasSession(other.kind) && isOpenable(other));
+
+/** What Close asks before it closes the pane shown: what stops, in the words of its kind, and when the tab can no longer be changed from here. */
+export function closeQuestion(tab, pane, host) {
+  const where = host || "its host";
+  const what = {
+    claude: `Close “${paneLabel(pane)}”? Claude stops and its conversation goes to the tab's history.`,
+    terminal: `Close this terminal? It ends on ${where}, and whatever runs in it stops.`,
+    app: `Close ${paneLabel(pane)}? Its server stops on ${where}.`,
+    file: `Close ${paneLabel(pane)}? The file itself isn't touched.`,
+    web: `Close the page at ${paneLabel(pane)}?`,
+  }[pane.kind] ?? "Close this pane?";
+  const last = hasSession(pane.kind) && lastRunning(tab, pane) ? " It is the tab's last Claude or terminal pane, so this phone can't change the tab afterwards." : "";
+  return `${what} The tab keeps its other panes.${last}`;
+}
+
 /** Whether the switcher is drawn: with more than one pane, and with one when Add pane is its button. */
 export const showsSwitcher = (tab) => tab.panes.length > 1 || offersAdd(tab);
 
@@ -131,9 +163,3 @@ export const offersRestart = (tab, pane) => tab.mine === true && pane?.kind === 
 
 /** What Restart asks before it ends the session's claude and starts it again. */
 export const restartQuestion = (title) => `Restart “${title}”? Claude stops what it is doing and starts again in this pane, picking up the conversation where it was.`;
-
-/** The pane a new session is: the session's name is `varnick-` and the pane's id. Null for any other name. */
-export function paneOfSession(session) {
-  const match = /^varnick-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(session);
-  return match ? match[1] : null;
-}

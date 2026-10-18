@@ -86,7 +86,9 @@ button.pane-tab { display: flex; flex-direction: column; align-items: flex-start
 button.pane-tab[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 button.pane-tab.idle { opacity: .6; }
 /* Add pane, at the end of the switcher: a plus, as wide as a touch target needs. */
-button.pane-add { min-width: 44px; padding: 4px 12px; font-size: 22px; line-height: 1; position: sticky; right: 0; margin-left: 6px; box-shadow: -8px 0 0 var(--bg); }
+.pane-actions { display: flex; gap: 6px; position: sticky; right: 0; margin-left: 6px; background: var(--bg); box-shadow: -8px 0 0 var(--bg); }
+button.pane-add, button.pane-close { min-width: 44px; padding: 4px 12px; font-size: 22px; line-height: 1; }
+button.pane-close { color: var(--warn); }
 .pane-kind { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .pane-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 
@@ -148,6 +150,11 @@ dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
 #add p.add-title { margin: 0; font-weight: 600; }
 .add-host { font-weight: 400; color: var(--muted); font-size: 13px; }
 #add-prompt { font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; resize: none; }
+#add-url { font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; }
+/* The file picker scrolls inside the dialog, so a long folder doesn't push Add off the screen. */
+#add-files { max-height: 40dvh; overflow-y: auto; overscroll-behavior: contain; }
+#add-files button.dir, #add-files button.up { font-weight: 600; }
+#add p.add-picked { margin: 0; overflow-wrap: anywhere; }
 #add p.new-status { margin: 0; }
 #add .card-actions { justify-content: flex-end; }
 

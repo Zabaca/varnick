@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, framedAddress, isLocalAddress, isOpenable, offersAdd, offersRestart, offersTake, paneLabel, paneOfSession, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, closeQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
+import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
 
 const tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77";
@@ -162,9 +163,87 @@ describe("Add pane", () => {
     expect(showsSwitcher({ mine: false, panes: [claude(a), terminal(b)] })).toBe(true);
   });
 
-  test("the new pane is the session's id", () => {
-    expect(paneOfSession(`varnick-${a}`)).toBe(a);
-    for (const bad of [null, "", a, `varnick-x`, `varnick-${a}x`, `Varnick-${a}`]) expect(paneOfSession(bad as string)).toBeNull();
+  test("a pane just added is shown once listed, except a Claude or terminal pane that isn't running yet", () => {
+    expect(readyToShow(claude(a))).toBe(true);
+    expect(readyToShow(terminal(a, { running: false }))).toBe(false);
+    expect(readyToShow(claude(a, { running: false }))).toBe(false);
+    for (const kind of ["web", "app", "file"]) expect(readyToShow(other(a, kind))).toBe(true);
+  });
+
+  test("the form offers Claude and a terminal always, and the rest only as the server offered them", () => {
+    expect(kindsOffered(null)).toEqual(["claude", "terminal"]);
+    expect(kindsOffered({ kinds: ["claude", "terminal"] })).toEqual(["claude", "terminal"]);
+    expect(kindsOffered({ kinds: ["file", "web", "app"] })).toEqual(["claude", "terminal", "app", "web", "file"]);
+    expect(kindsOffered({ kinds: ["claude", "terminal", "app", "web", "hologram"] })).toEqual(["claude", "terminal", "app", "web"]);
+    expect(kindsOffered({ kinds: "web" })).toEqual(["claude", "terminal"]);
+    expect(kindShown("file", ["claude", "terminal"])).toBe("claude");
+    expect(kindShown("web", ["claude", "terminal", "web"])).toBe("web");
+  });
+
+  test("Add waits for what the kind needs, and sends that kind's own field only", () => {
+    const form = { tab, pane: a, kind: "claude", agent: "reviewer", app: "scratch", url: " localhost:3000 ", file: "/x/y.ts" };
+    expect(addable({ ...form, kind: "claude" })).toBe(true);
+    expect(addable({ ...form, kind: "terminal" })).toBe(true);
+    expect(addable({ ...form, kind: "app", app: null })).toBe(false);
+    expect(addable({ ...form, kind: "app" })).toBe(true);
+    expect(addable({ ...form, kind: "web", url: "  " })).toBe(false);
+    expect(addable({ ...form, kind: "web" })).toBe(true);
+    expect(addable({ ...form, kind: "file", file: null })).toBe(false);
+    expect(addable({ ...form, kind: "file" })).toBe(true);
+    expect(addBody({ ...form, kind: "claude" }, "Look.")).toEqual({ tab, pane: a, kind: "claude", agent: "reviewer", prompt: "Look." });
+    expect(addBody({ ...form, kind: "terminal" }, "typed before")).toEqual({ tab, pane: a, kind: "terminal" });
+    expect(addBody({ ...form, kind: "app" }, "")).toEqual({ tab, pane: a, kind: "app", app: "scratch" });
+    expect(addBody({ ...form, kind: "web" }, "")).toEqual({ tab, pane: a, kind: "web", url: "localhost:3000" });
+    expect(addBody({ ...form, kind: "file" }, "")).toEqual({ tab, pane: a, kind: "file", file: "/x/y.ts" });
+  });
+
+  test("the file picker shows a folder below the pane's folder as a short relative path", () => {
+    expect(entryPath("/p/cc", "a.ts")).toBe("/p/cc/a.ts");
+    expect(entryPath("/", "a.ts")).toBe("/a.ts");
+    expect(relativeTo("/p/cc", "/p/cc")).toBe("./");
+    expect(relativeTo("/p/cc/", "/p/cc/src/deep")).toBe("./src/deep");
+    expect(relativeTo("/p/cc", "/elsewhere")).toBe("/elsewhere");
+  });
+});
+
+describe("Close", () => {
+  test("is offered in a tab this phone controls once it has more than one pane", () => {
+    expect(offersClose({ mine: true, panes: [claude(a), terminal(b)] })).toBe(true);
+    expect(offersClose({ mine: true, panes: [claude(a), other(b, "file")] })).toBe(true);
+    // The only pane is closed by End, which ends the tab the same way.
+    expect(offersClose({ mine: true, panes: [claude(a)] })).toBe(false);
+    expect(offersClose({ mine: false, panes: [claude(a), terminal(b)] })).toBe(false);
+  });
+
+  test("asks in the words of the pane's kind, and says the tab keeps its other panes", () => {
+    const two = (shown: Record<string, unknown>) => ({ mine: true, panes: [shown, claude(c), terminal(b)] });
+    const asks = [
+      closeQuestion(two(claude(a, { title: "Fix it" })), claude(a, { title: "Fix it" }), "Mac mini"),
+      closeQuestion(two(terminal(a)), terminal(a), "Mac mini"),
+      closeQuestion(two(other(a, "app", { app: "scratch" })), other(a, "app", { app: "scratch" }), "Mac mini"),
+      closeQuestion(two(other(a, "file", { file: "/p/cc/src/a.ts" })), other(a, "file", { file: "/p/cc/src/a.ts" }), "Mac mini"),
+      closeQuestion(two(other(a, "web", { url: "https://example.com/x" })), other(a, "web", { url: "https://example.com/x" }), "Mac mini"),
+      closeQuestion(two(other(a, "transcript")), other(a, "transcript"), "Mac mini"),
+    ];
+    expect(asks[0]).toContain("“Fix it”");
+    expect(asks[0]).toContain("conversation goes to the tab's history");
+    expect(asks[1]).toContain("ends on Mac mini");
+    expect(asks[2]).toContain("scratch");
+    expect(asks[3]).toContain("a.ts");
+    expect(asks[3]).toContain("isn't touched");
+    expect(asks[4]).toContain("example.com");
+    for (const ask of asks) expect(ask).toContain("other panes");
+    // Another Claude or terminal pane runs, so the tab can still be changed from the phone.
+    for (const ask of asks) expect(ask).not.toContain("can't change the tab");
+  });
+
+  test("warns when the pane is the tab's last Claude or terminal pane that runs", () => {
+    const last = { mine: true, panes: [claude(a), other(b, "file"), terminal(c, { running: false })] };
+    expect(closeQuestion(last, claude(a), "Mac mini")).toContain("this phone can't change the tab afterwards");
+    // A pane that doesn't run was not holding the tab, a file or a page never is.
+    expect(closeQuestion(last, terminal(c, { running: false }), "Mac mini")).not.toContain("can't change the tab");
+    expect(closeQuestion(last, other(b, "file"), "Mac mini")).not.toContain("can't change the tab");
+    expect(closeQuestion({ mine: true, panes: [claude(a), terminal(b)] }, claude(a), "Mac mini")).not.toContain("can't change the tab");
   });
 });
 
