@@ -115,7 +115,6 @@ Where this contradicts the text above (the switch read at every call, the Outlin
 
 ## Amendment: a tab another machine controls (2026-10-17)
 
-The line "This Mac's own tabs only" above no longer refuses a tab of this Mac that the phone or another Mac controls (option 04 of `panes-open-only-by-hand-at-a-mac`; the layout rule is [ADR 0034](0034-a-tab-lives-on-one-host-which-keeps-its-layout-panes-and-mark-and-other-devices-view-or-take-over-the-tab-whole.md)'s amendment). A headless host and a session in another machine's tab are as before.
+Two rules above no longer refuse a tab of this Mac that the phone or another Mac controls: "The pane must be a Claude pane on this Mac that no other Mac or device controls" (Answered by `PanelAccess`) and "This Mac's own tabs only" (the first amendment), as the second amendment restates them under "What a call is checked against" (option 04 of `panes-open-only-by-hand-at-a-mac`; the layout rule is [ADR 0034](0034-a-tab-lives-on-one-host-which-keeps-its-layout-panes-and-mark-and-other-devices-view-or-take-over-the-tab-whole.md)'s amendment). A headless host and a session in another machine's tab are as before.
 
-- **Which tools.** `pane_open` and `pane_close`, and at the user's word the reads `panel`, `board_read` and `pane_read` (`PanelAccess.answersControlled`). Whatever sends a key or shows a view (`show`, `keys`, the Outline's tools) and the screen tools keep the calling-pane rule, so a pane that shows a card still cannot act.
-- **`pane_close`** refuses a Claude or terminal pane with a client attached to its session: the controller has it open now.
+Which tools get past the rule, and how the call is checked, is in docs/agents/where-it-breaks.md, Panel access (`PanelAccess.answersControlled`): the pane tools, and at the user's word the reads that only describe. What sends a key or shows a view, and the screen tools, keep the rule.

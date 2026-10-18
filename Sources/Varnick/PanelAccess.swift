@@ -32,6 +32,8 @@ enum PanelRefusal: Error {
     case keysRefused(String)
     /// `keys` sent some of its characters and keys and then stopped, with the reason.
     case keysStopped(String, sent: PanelKeyCount, asked: PanelKeyCount)
+    /// A pane tool's refusal in a tab another machine controls: the same message, marked in the log.
+    indirect case inControlledTab(PanelRefusal)
 
     @MainActor var message: String {
         switch self {
@@ -50,12 +52,14 @@ enum PanelRefusal: Error {
         case .refused(let why): "Nothing was changed: \(why)"
         case .keysRefused(let why): "Nothing was sent: \(why)"
         case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
+        case .inControlledTab(let refusal): refusal.message
         }
     }
 
     /// Counts for the log: how far a `keys` call got, never what it pressed.
     var logCounts: String {
         if case .keysStopped(_, let sent, let asked) = self { return sent.of(asked) }
+        if case .inControlledTab(let refusal) = self { return refusal.logCounts }
         return ""
     }
 
@@ -76,6 +80,7 @@ enum PanelRefusal: Error {
         case .refused: "edit refused"
         case .keysRefused: "keys refused"
         case .keysStopped: "keys stopped"
+        case .inControlledTab(let refusal): refusal.logKind + " controlled"
         }
     }
 }

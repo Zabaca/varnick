@@ -10,28 +10,33 @@ extension PanelAccess {
     /// The longest first message a session may give a pane it opens: it travels as an argument of the claude command.
     static let longestPrompt = 20_000
 
-    /// In order, after the router's: the tab (hidden, or locked), then the tool. A tab whose lock is another machine's keyboard is worked in for that
-    /// machine when every running pane of it names one (option 04 of `panes-open-only-by-hand-at-a-mac`): the labels are read off the main actor,
-    /// so the pane, the tab and the lock are checked again after the wait, before anything is added or closed.
+    /// In order, after the router's: the tab (hidden, or locked), then the tool. With a pane running in the tab, its labels say who controls it
+    /// (option 04 of `panes-open-only-by-hand-at-a-mac`); that read waits off the main actor, so everything is checked again after it.
     func panes(_ request: PanelRequest, _ model: LauncherModel, caller: UUID) async throws -> Answered {
         var (tab, session) = try Self.callingTab(caller, model)
         var controller: String?
-        if let reason = model.layoutLockReason(of: tab) {
-            let running = tab.sessions.filter(\.runsInZmx).map(\.id)
-            switch await model.controller(of: tab) {
-            case .machine(let machine): controller = machine
-            case .mixed: throw PanelRefusal.bad("This tab's panes are changing hands: try again in a moment")
-            case .here, .nobody: throw PanelRefusal.bad("This tab can't change: \(reason)")
-            }
+        let running = tab.sessions.filter(\.runsInZmx).map(\.id)
+        if !running.isEmpty {
+            let found = await model.controller(of: tab)
             (tab, session) = try Self.callingTab(caller, model, was: tab)
-            guard model.layoutLockReason(of: tab) != nil, tab.sessions.filter(\.runsInZmx).map(\.id) == running else {
+            guard tab.sessions.filter(\.runsInZmx).map(\.id) == running else {
                 throw PanelRefusal.bad("This tab changed while the pane was being worked on: try again in a moment")
             }
+            switch found {
+            case .machine(let machine): controller = machine
+            case .mixed: throw PanelRefusal.bad("This tab's panes are changing hands: try again in a moment")
+            case .here, .nobody: break
+            }
         }
-        switch request.tool {
-        case PaneMCP.open: return try open(request.args, model, tab: tab, caller: session, controller: controller)
-        case PaneMCP.close: return try await close(request.args, model, tab: tab, caller: session, controller: controller)
-        default: throw PanelRefusal.unknownTool(request.tool)
+        if controller == nil, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
+        do {
+            switch request.tool {
+            case PaneMCP.open: return try open(request.args, model, tab: tab, caller: session, controller: controller)
+            case PaneMCP.close: return try await close(request.args, model, tab: tab, caller: session, controller: controller)
+            default: throw PanelRefusal.unknownTool(request.tool)
+            }
+        } catch let refusal as PanelRefusal where controller != nil {
+            throw PanelRefusal.inControlledTab(refusal)
         }
     }
 
@@ -114,9 +119,9 @@ extension PanelAccess {
         }
 
         let pane = model.addPane(record, app: app, beside: caller, in: tab, axis: place.axis, controller: controller)
-        let hidden = SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab."
-        let shownThere = controller.map { " This tab is controlled by \(PeerManager.shared.name(of: $0)), so the pane is in the tab for it and shows there within about 5 seconds." } ?? ""
-        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(hidden)\(shownThere)",
+        let where_ = controller.map { " This tab is controlled by \(PeerManager.shared.name(of: $0)), so the pane is in the tab for it and shows there within about 5 seconds." }
+            ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
+        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)",
                         action: kind.rawValue + elsewhere)
     }
 
@@ -138,9 +143,8 @@ extension PanelAccess {
 
     // MARK: pane_close
 
-    /// In a tab another machine controls (`controller`) the pane ends with no question on this Mac's card, as the controller's close of it does, and
-    /// a Claude or terminal pane with a client attached is refused: the controller has it open right now. Its client count comes from its session's
-    /// status, asked off the main actor, so what was checked is checked again after.
+    /// In a tab another machine controls (`controller`) only a Claude or terminal pane closes, and not while a client is attached to its session
+    /// (the controller may have it open): a page, app or file shows nowhere this Mac can see, so the controller closes those.
     private func close(_ args: PanelArguments, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession, controller: String?) async throws -> Answered {
         let target = try self.target(args["id"], caller: caller.id)
         guard target != caller.id else { throw PanelRefusal.bad("That is this session's own pane: pane_close closes only panes it opened") }
@@ -157,15 +161,19 @@ extension PanelAccess {
             pane.end()
             return Answered(text: "Closing \(id(for: target, caller: caller.id)).")
         }
-        if pane.runsInZmx {
-            let attached = await Task.detached { Zmx.status(of: target).clients ?? 0 }.value
+        guard pane.runsInZmx else {
+            throw PanelRefusal.bad("\(PeerManager.shared.name(of: controller)) controls this tab and may have that pane open, which this Mac can't tell: it closes it there")
+        }
+        let status = await Task.detached { Zmx.status(of: target) }.value
+        if status.running {
+            guard let attached = status.clients else { throw PanelRefusal.bad("Varnick couldn't tell whether that pane is open elsewhere: try again in a moment") }
             guard attached == 0 else {
-                throw PanelRefusal.bad("\(PeerManager.shared.name(of: controller)) has that pane open now, so it is not closed: the user is looking at it there")
+                throw PanelRefusal.bad("A client is attached to that pane, on this Mac or on \(PeerManager.shared.name(of: controller)), where the user may be looking at it: try again in a moment")
             }
-            guard CallingPane.find(caller.id.uuidString, in: model).located?.tab === tab, tab.sessions.contains(where: { $0 === pane }),
-                  pane.record.openedBy == caller.id, model.layoutLockReason(of: tab) != nil else {
-                throw PanelRefusal.bad("This tab changed while the pane was being closed: try again in a moment")
-            }
+        }
+        guard CallingPane.find(caller.id.uuidString, in: model).located?.tab === tab, tab.sessions.contains(where: { $0 === pane }),
+              pane.record.openedBy == caller.id, !tab.sessions.contains(where: \.takingOver) else {
+            throw PanelRefusal.bad("This tab changed while the pane was being closed: try again in a moment")
         }
         pane.endSession()
         return Answered(text: "Closing \(id(for: target, caller: caller.id)). This tab is controlled by \(PeerManager.shared.name(of: controller)), where it goes within about 5 seconds.",
@@ -174,10 +182,8 @@ extension PanelAccess {
 }
 
 extension LauncherModel {
-    /// A pane a session opens beside its own: half of the caller's place, as a split gives, with focus left where it was (`ClaudeTab.add`, not `split`).
-    /// It is started at once when the tab isn't on screen, as a peer's split is, and by its view when it is, with a turn's grace before this does.
-    /// In a tab another machine controls (`controller`) a Claude or terminal pane is labelled for it and started at once, as a split from that machine is
-    /// (`hostStart`): this Mac's own client lets go once it sees the label.
+    /// A pane a session opens beside its own: half of the caller's place, with focus left where it was (`ClaudeTab.add`, not `split`). It starts at
+    /// once when the tab isn't on screen, else by its view after a turn's grace. With a `controller` a Claude or terminal pane is labelled for it and starts at once.
     func addPane(_ record: SessionRecord, app: CustomApp?, beside caller: ClaudeSession, in tab: ClaudeTab, axis: SplitAxis,
                  controller: String?) -> ClaudeSession {
         let session = makeSession(record, resuming: false, query: "")
@@ -193,6 +199,29 @@ extension LauncherModel {
         } else {
             session.start()
         }
+        if let controller, session.runsInZmx { settleLabel(of: session, in: tab, from: controller) }
         return session
+    }
+
+    /// A Take over by another machine can land before the new pane's session exists and so miss it. Once it runs, the tab's other panes are read
+    /// again and the pane follows them, so the tab is not left with mixed labels (a tab taken back to this Mac gets a label naming it).
+    private func settleLabel(of pane: ClaudeSession, in tab: ClaudeTab, from controller: String) {
+        let name = Zmx.sessionName(pane.id)
+        Task { [weak self, weak pane, weak tab] in
+            for _ in 0..<80 {
+                if await Task.detached(operation: { Zmx.labels(of: name).map(Zmx.isVarnick) ?? false }).value { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let self, let pane, let tab, tab.contains(pane) else { return }
+            switch await self.controller(of: tab, excluding: pane) {
+            case .machine(let other) where !Zmx.sameID(other, controller):
+                _ = await Task.detached(operation: { Zmx.setControl(name, to: other) }).value
+            case .here:
+                guard let me = PeerIdentity.id, await Task.detached(operation: { Zmx.setControl(name, to: me) }).value else { return }
+                pane.startedFor = nil
+                pane.goLiveAfterRelease()
+            default: return
+            }
+        }
     }
 }

@@ -22,7 +22,7 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 - **The phone** gains a switcher button for the new pane at its next ask of the tab, within 5 s while the page is visible, and keeps showing the pane it showed. A Claude or terminal pane opens at a tap, labelled for the phone. A page or an app is framed through the host's port proxy once the page server has looked at it; a file shows its text.
 - **A Mac in control** adds the pane to its layout at its next listing, attaching a Claude or terminal pane because the label names it, with focus left where it was. A tab not shown there is brought up to date when it is shown.
 
-**`pane_close`.** It closes a pane the session opened and the user hasn't used on this Mac, as now, and ends it the way the controller's close of one pane does here: with no question on this Mac's card. A pane the controller has open right now, with a client attached to its session, is refused: the user is looking at it there. This is the recommended rule; see Further Notes.
+**`pane_close`.** It closes a pane the session opened and the user hasn't used on this Mac, as now, and ends it the way the controller's close of one pane does here: with no question on this Mac's card. A Claude or terminal pane with a client attached to its session is refused: the controller has it open right now. A page, app or file is refused too (the coordinator's call of 2026-10-17, relayed for the user): the host cannot tell whether the controller shows one, and the user decided a session never closes a pane the controller has open. The controller closes those, and the phone's × does.
 
 **Who else closes it.**
 - A Mac in control closes it with its close key, as any pane of the tab (ADR 0034's rule).
@@ -51,8 +51,8 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 ## Implementation Decisions
 
 - **The sibling** is the Mac's answer to a split from the machine in control: the label for that machine, the tab's origin, the start at once, the control test over the tab's running panes. The rest is option 01's opening and closing.
-- **The router** lets the pane tools past the calling-pane rule when the caller's only fault is being controlled from elsewhere, on this Mac's own tab. Screen access and Panel access's other tools keep the rule they share, unchanged (ADR 0031: shared, not copied).
-- **The control test** reads the labels of the tab's running panes off the main actor, as the host's split check does. That puts an await between the checks and the change, which option 01 had none of. After the read, the calling pane, the tab, the hidden tab and the labels' answer are checked again on the main actor before anything is added.
+- **The router** lets the pane tools, and the reads decided below, past the calling-pane rule when the caller's only fault is being controlled from elsewhere, on this Mac's own tab. Which tools is `PanelAccess.answersControlled` (where-it-breaks, Panel access); the rest keep the rule they share with Screen access (ADR 0031: shared, not copied).
+- **The control test** runs whenever a pane of the tab runs, not only while a card shows (right after a Take over the card is not up yet), and reads the labels of the tab's running panes off the main actor, as the host's split check does. That puts an await between the checks and the change, which option 01 had none of. After the read, the calling pane, the tab, the hidden tab and the labels' answer are checked again on the main actor before anything is added.
 - **The tab's lock** stays for the user's own changes on this Mac (split keys, dividers, renames). The tools skip it only after the control test names one machine.
 - **Closing** ends the pane as the controller's close does. A Claude or terminal pane's client count comes from its session's status at the call.
 - **No saved state** beyond option 01's: `openedBy` and the record's origin are saved as now.
@@ -78,7 +78,7 @@ The reply says the pane is in the tab for the machine in control, by name, and s
 
 - A headless host's sessions, and a session in a tab of another machine shown here (option 02).
 - Closing one pane from the phone.
-- Lifting the refusal for Panel access's other tools in a controlled tab (`panel`, `board_read` and `pane_read` are lifted, see the decision below; `show`, `keys` and the Outline stay refused).
+- Lifting the refusal in a controlled tab for the tools that press keys, change the view or act on the Outline (the reads are lifted, see the decision below).
 - Telling the controller at once rather than at its next listing: it would need a request the host sends, which it never does.
 
 ## Further Notes
@@ -93,11 +93,10 @@ The reply says the pane is in the tab for the machine in control, by name, and s
   - Closing a card on the host asks on the card first; the controller's close ends it with no question.
   - `skippedAtStart` is set by every real start, a restart from the phone included, so the permission cap holds for a session restarted there.
 - **Inferred, not tested:**
-  - A helper labelled for the phone sends its notices to the phone, as pushes go to the machine in control.
   - The divider that snaps back.
   - A session already running needs no restart, since the refusal is the app's and the tools' request is unchanged.
 - **Unverified race:** a Take over by another machine at the moment a pane is made can leave the new pane labelled for the old controller. The tab then has no control, and a second Take over mends it, since it relabels every running pane.
 - **Covers part of option 02:** that option's first bullet, a tab another machine controls on a Mac. Option 02 stays proposed for the headless host.
 - **Open decisions, each with the recommendation first:**
-  - **`pane_close` while the controller has the pane open.** Recommended: refused while a client is attached to its session. On the phone that is the pane shown. A Mac in control attaches every Claude and terminal pane of the tab once it takes it (ADR 0034), so there those are closed by the user's own close key, and pages, apps and files by the session. Else: option 01's rule alone, so a session may close the pane the user is looking at on the phone. **Decided 2026-10-17: the recommendation.**
-  - **`pane_read` and `board_read` in a controlled tab.** Recommended: leave them refused in this option, as the user asked about opening. Lifting them is a small follow-up, and would let a session read the helper it opened while the phone controls the tab. `panel`, `show`, `keys` and the Outline act on or describe the Mac's screen, which nobody at the phone sees, and stay refused either way. **Decided 2026-10-17, against the recommendation (the user wants sessions unlimited): the refusal is lifted for `pane_read`, `board_read` and `panel` in a tab of this Mac that another machine controls. `show`, `keys`, the Outline's tools and the screen tools keep it; nothing that sends keys to a pane changes.**
+  - **`pane_close` while the controller has the pane open.** Recommended: refused while a client is attached to its session. On the phone that is the pane shown. A Mac in control attaches every Claude and terminal pane of the tab once it takes it (ADR 0034), so there those are closed by the user's own close key, and pages, apps and files by the session. Else: option 01's rule alone, so a session may close the pane the user is looking at on the phone. **Decided 2026-10-17: the recommendation, for a Claude or terminal pane; a page, app or file is never closed in a controlled tab (the coordinator's call, relayed for the user), since the host cannot see whether the controller shows it.**
+  - **`pane_read` and `board_read` in a controlled tab.** Recommended: leave them refused in this option, as the user asked about opening. Lifting them is a small follow-up, and would let a session read the helper it opened while the phone controls the tab. `panel`, `show`, `keys` and the Outline act on or describe the Mac's screen, which nobody at the phone sees, and stay refused either way. **Decided 2026-10-17, against the recommendation: the refusal is lifted for `pane_read`, `board_read` and `panel` in a tab of this Mac that another machine controls. `show`, `keys`, the Outline's tools and the screen tools keep it; nothing that sends keys to a pane changes.**
