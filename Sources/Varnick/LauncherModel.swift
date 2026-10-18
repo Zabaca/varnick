@@ -2812,8 +2812,8 @@ final class LauncherModel: ObservableObject {
         restartablePane(inTab: id)?.restart()
     }
 
-    /// Whether Restart on this card does anything: its tab has one Claude pane, and that is not a card, not on a paired Mac and
-    /// not a restored pane not shown yet.
+    /// Whether Restart on this card does anything: its tab has one Claude pane, and that is not a card and not a restored pane not
+    /// shown yet.
     func canRestart(_ id: UUID) -> Bool {
         restartablePane(inTab: id)?.canRestart == true
     }

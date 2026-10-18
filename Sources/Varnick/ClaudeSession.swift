@@ -1441,13 +1441,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// When the process now running was started, for the quick-death rule (`LauncherModel.sessionExited`).
     var launchedAt: Date { restartedAt ?? startedAt }
 
-    /// Restart works on a Claude pane that runs on this Mac with its client attached. A pane showing a card (another Mac in control,
-    /// or the link lost), a session on a peer (its host would have to start it again, `resumeOnHost`), a restored pane not shown yet
-    /// (it resumes when opened, with the current hooks) and one started for a peer (`startedFor`: starting it again would label it
-    /// for that peer and hand the session over) can't.
+    /// Restart works on a Claude pane in control of its session with its client attached: one that runs on this Mac, or one of a peer's
+    /// tab, which its host restarts (`restartOnHost`). A pane showing a card (another machine in control, or the link lost), a restored
+    /// pane not shown yet (it resumes when opened, with the current hooks) and one started for a peer (`startedFor`: starting it again
+    /// would label it for that peer and hand the session over) can't.
     var canRestart: Bool {
-        isClaude && !isOnPeer && startedFor == nil && started && !finished && !clientEnded && !endedByUser && !restarting
-            && away == nil && view.process.shellPid > 0
+        isClaude && startedFor == nil && started && !finished && !clientEnded && !endedByUser && !restarting
+            && away == nil && view.process.shellPid > 0 && (!isOnPeer || hostTab() != nil)
     }
 
     /// Ends this pane's claude and starts it again in the same pane, resuming its conversation, so it reads the current hook settings.
@@ -1459,6 +1459,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         restarting = true
         restartFailure = nil
         asking = nil
+        if let host = record.host { return restartOnHost(host) }
         guard inZmx else { return stopClientThenLaunch() }
         let id = record.id
         Task { [weak self] in
@@ -1474,7 +1475,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         restarting = false
         guard !finished else { return }
         if endedByUser { return finish(nil) }
-        let message = "Couldn't restart: " + reason
+        // A host's refusal (`restartForPeer` there) may say it already.
+        let message = reason.hasPrefix("Couldn't restart") ? reason : "Couldn't restart: " + reason
         restartFailure = message
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(8))
@@ -1525,6 +1527,27 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             self.launchClaude(restarting: true)
             self.checkTurn()
             self.checkWork()
+        }
+    }
+
+    /// Restart of a pane of a peer's tab: its host restarts it as it does the phone's (`restartPane`, `LauncherModel.hostRestartPane` there),
+    /// killing the session under this pane's client, whose exit `restarting` keeps from closing the pane. The host answers once the new
+    /// claude runs labelled for this Mac, so the pane attaches again without take.
+    private func restartOnHost(_ host: String) {
+        guard let tab = hostTab() else { return restartFailed("this pane isn't in a tab of \(hostName ?? "the host")") }
+        let pane = record.id
+        Task { [weak self] in
+            let refusal = await PeerManager.shared.restart(pane: pane, in: tab, on: host)
+            guard let self, !self.finished else { return }
+            if let refusal { return self.restartFailed(refusal) }
+            let gone = await self.hangUpClient()
+            guard !self.finished else { return }
+            guard gone else { return self.restartFailed("the old client wouldn't exit") }
+            self.restarting = false
+            // Closed meanwhile: the exit that `finish` ignored is concluded now.
+            if self.endedByUser { return self.finish(nil) }
+            self.restartedAt = Date()
+            self.attachToHost(on: host, take: false)
         }
     }
 

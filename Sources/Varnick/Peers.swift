@@ -918,6 +918,16 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// Restarts a Claude pane of a tab this Mac controls on its host (`restartPane`, protocol 32): the host ends its claude and starts it again
+    /// in the same pane, labelled for this Mac, and answers once it runs. Asked once: a second restart would end the claude the first started.
+    /// Nil once it runs, else why not.
+    func restart(pane: UUID, in tab: UUID, on host: String) async -> String? {
+        switch await send(tabRequest(.restartPane, tab: tab, pane: pane), to: host, timeout: 40) {
+        case .failure(let refusal): return refusal.message
+        case .success: return nil
+        }
+    }
+
     /// Takes a tab on its host for this Mac (`take`): every Claude and terminal pane of it is relabelled, then every client detached. Nil once
     /// taken, else why not. The caller attaches each pane, which finds the label naming this Mac.
     func take(tab id: UUID, on host: String) async -> String? {
