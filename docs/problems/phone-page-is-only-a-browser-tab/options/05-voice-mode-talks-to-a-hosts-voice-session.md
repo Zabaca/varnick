@@ -16,8 +16,8 @@ This builds on listening-never-answers option 09: a host's **voice session** has
    - a button to end the mode.
 
    It asks for the mic once, holds a screen wake lock and sets Media Session controls. It stays in the mode until ended, the page is hidden for too long, or the phone is locked.
-3. **A request** is one utterance. The phone decides where it ends, by the silence after speech, a named constant.
-   - It becomes text (where is question 1) and goes to the host with the phone's moment, time zone and units.
+3. **A request** ends only when the user says "over" (the user's decision of 2026-10-17: see Results; this step first had the phone end it after a silence). The phone cuts what it hears into segments at each pause (a named constant), sends each, and keeps listening.
+   - The host turns each segment into text (where is question 1), adds it to the request it is collecting for the phone, and sends the voice session the request, with the phone's moment, time zone and units, when a segment ends with "over".
    - The host's voice session takes it as 09 says. A Mac's is the session Hey Varnick reaches there, so a question asked aloud at the desk can be followed up from the phone.
 4. **The reply** comes back as the answer's full text and its spoken form, from 09's cleanup. The phone shows the text and plays the spoken form (where its audio is made is question 1). While a reply plays, the mic's audio is not sent, so Varnick doesn't hear itself.
 5. **Needs your OK.**
@@ -127,13 +127,24 @@ This builds on listening-never-answers option 09: a host's **voice session** has
   - *A 220 Hz tone at 0.02 (Web Audio), hidden for 132 s:* no freeze, a level every second, the mic heard the user throughout (loud frames in every 30 s bucket, rms up to 0.24), and the websocket stayed open (35 pings).
   - *Not known:* whether that run was the home screen or a locked screen (the locked run was left to the user), and anything past about 2 minutes. A locked phone is therefore not supported.
 - **Hand test,** with the Mac running the build, Voice session on, Keep sessions running and Claude Code logged in with skip-permissions accepted, then on the Pixel:
-  1. Voice mode, Start: "Listening". Say "what time is it": your words appear as text, the state line says "Working…", then the answer as text and in the Mac's voice.
+  1. Voice mode, Start: "Listening". Say "what time is it, over": your words appear as text, the state line says "Working…", then the answer as text and in the Mac's voice.
   2. A follow-up ("and in Tokyo?") is answered in context and the Mac's log says the session was reused; a question asked at the Mac by Hey Varnick can be followed up from the phone within 10 minutes.
   3. A world question shows "Searching the web…" as the state line, and nothing in the exchange.
   4. A request that makes Claude ask a question shows "Claude needs your OK" and Open (which ends Voice mode) opens the session with control taken.
   5. Home screen for 2 minutes with the mode on, then speak: the conversation survives. A locked screen: say how it behaves.
-  6. A pause in the middle of a request, a cough, a clap: tune `silenceMs`, `minSpeechMs` and `lowestThreshold` in `voicerules.js` if requests cut off or false-start. A television or fan stepping up does not start a 30 s request.
+  6. A cough, a clap: tune `silenceMs`, `minSpeechMs` and `lowestThreshold` in `voicerules.js` if segments false-start. A television or fan stepping up does not start a 30 s segment.
   7. Another app taking the microphone, or the system muting it, ends the mode within about 5 s and says why.
   8. Voice session off, or Keep sessions running off: Start then the first request says why at once, before anything is sent. A headless host's page has no button.
 
-- **2026-10-17, at the user's ask:** a Mac's voice session now takes a request only at "over" (ADR 0044's amendment of that date). This page still ends a request after `silenceMs` of quiet; making it follow the rule is open.
+- **2026-10-17, at the user's ask:** a Mac's voice session now takes a request only at "over" (ADR 0044's amendment of that date), and the phone's Voice mode follows it (protocol 31; ADR 0043's amendment of that date). The user's decision: a spoken request ends only when the user says "over", never on silence; the cap is 60 s and 1,500 characters, as at the Mac.
+  - The page keeps cutting segments on `silenceMs` of quiet and sends each (in the order said, with the Voice mode run's id). The Mac transcribes each, adds it to the request collected for that phone (`VoiceCollector`, `VoiceMode.overStep`) and asks the voice session only when a segment ends with "over". Meanwhile it returns `collected`, the request so far, which the page shows as the user's line, still being built (dashed).
+  - The request left for a minute without "over" is dropped on the Mac (60 s after the last segment) and on the page (63 s), which says so; so is what a Voice mode run leaves when the next Start begins. The mic stays live between segments and is held from `heard` until the reply has played. The 220 Hz tone, the wake lock and the dead-mic check are unchanged.
+  - **Hand test, after the Mac and the phone page run protocol 31:**
+    1. Start, say "what time is it", pause for three seconds: a dashed line "what time is it" and the state line says to say "over"; nothing is asked and the Mac's voice session stays silent. Then say "in Tokyo, over": the line becomes "what time is it in Tokyo", "Working…", the answer.
+    2. Say a request, then "over" alone after a pause: it is asked. "Over" alone with nothing before it: nothing happens.
+    3. Say "move it over there" and pause: not asked ("over" in the middle). Say "that's a hangover" and pause: not asked.
+    4. Say something, stay quiet for over a minute: the line goes with a note that no "over" came. Then say "over": nothing is asked.
+    5. Say something, tap End, tap Start, say "over": nothing is asked (the old run's words are gone).
+    6. A request longer than a minute with pauses and no "over": it is asked when a segment arrives past 60 s.
+    7. While the answer is being spoken, say the next request: it is not heard until the reply is over; one said right after "over", before "Working…" shows, is collected as the start of the next.
+    8. Home screen for 2 minutes mid-request (collecting): say "over" on return; say what survives.
