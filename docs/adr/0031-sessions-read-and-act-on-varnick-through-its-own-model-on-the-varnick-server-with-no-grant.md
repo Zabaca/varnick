@@ -95,3 +95,12 @@ Panel access began as read and show: nothing a session called added or closed a 
 - **Permissions.** A new Claude pane never skips permission checks when the calling session does not (the rule is in the guide, Panel access). What the tools do not promise, among them that `kind: app` runs a custom app's code outside Claude Code's checks, is in where-it-breaks, Panel access.
 - **This Mac's own tabs only.** A tab another Mac or a device controls, a headless host, and the voice session's hidden tab are refused.
 - **Privacy.** The tools read nothing that Panel access does not already; the log holds the tool, the kind, the outcome and the time.
+
+## Amendment: the switches are gone (2026-10-17)
+
+At the user's word ("this doesn't need to be a toggle"), **Panel access** and **Sessions can open panes** are no longer settings. Every Claude session started or restarted in a Varnick pane gets the `--panel` set and the `--panes` set, with these exceptions that stand: a run of an automation or a Task step lists `notify` alone, and the voice session gets Panel access's tools but not `pane_open` and `pane_close` (still an open question in option 01 of `panes-open-only-by-hand-at-a-mac`). Where this contradicts the text above (the switch read at every call, the Outline and pane decisions "with the switch on", the `--panes` condition, "one more switch") the amendment wins.
+
+- **Screen access is the one switch left.** It needs a macOS permission and reads the screen, and the user did not name it. `notify` never had one.
+- **What each call is checked against is unchanged,** minus the switch: Varnick starting, the pane (a Claude pane on this Mac that nobody else controls), the tab's lock and the hidden tab, then the tool. The refusals inside the tools stand: the 2-second key rule, closing only the panes a session opened, the Problems board and Outline switches in Settings › Experimental.
+- **A session gains the sets at its start,** so a session already running keeps the tools it had until it restarts. The stored defaults keys `panelAccess` and `sessionsOpenPanes` are removed at launch, as `voiceSessionOn` was.
+- **Privacy.** A session you start can now read every terminal screen and the board, and change your tabs, with no setting to refuse it; docs/privacy-and-security.md says so once.

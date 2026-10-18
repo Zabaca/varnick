@@ -1,8 +1,8 @@
 import Foundation
 import VarnickPeer
 
-// Screen access for sessions, the relay half (ADR 0023): `Varnick --mcp --pane <id>` is the MCP server a Claude pane starts with when
-// Settings › Claude › Screen access or Panel access (`PanelMCP`, ADR 0031) is on. It turns each tool call into one line on the peer
+// Screen access for sessions, the relay half (ADR 0023): `Varnick --mcp --pane <id>` is the MCP server every Claude pane starts, with the screen
+// tools when Settings › Claude › Screen access is on and Panel access's (`PanelMCP`, ADR 0031) always. It turns each tool call into one line on the peer
 // socket and prints the reply. It never reads or acts: the running Varnick does, in `ScreenAccess` and `PanelAccess`. The request and
 // reply types are both halves'.
 
@@ -234,7 +234,7 @@ enum ScreenMCP {
         let rawValue: Int
         static let screen = Sets(rawValue: 1)
         static let panel = Sets(rawValue: 2)
-        /// `notify` (option 04 of `phone-page-is-only-a-browser-tab`): in every Claude pane, whatever the two switches say.
+        /// `notify` (option 04 of `phone-page-is-only-a-browser-tab`): in every Claude pane, whatever Screen access says.
         static let notify = Sets(rawValue: 4)
         /// The automation tools (option 01 of `prompts-cant-run-on-a-schedule`, slice 3): in every Claude pane started while Automations is on, a run's
         /// excepted, and behind no switch of their own.
@@ -245,8 +245,8 @@ enum ScreenMCP {
         static let taskResult = Sets(rawValue: 32)
         /// `search` (option 09 of `listening-never-answers`): History, Bookmarks and Claude sessions, listed for the voice session alone.
         static let voiceSearch = Sets(rawValue: 64)
-        /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`): in every Claude pane started while Panel access and Sessions can
-        /// open panes are on, a run's and the voice session's excepted. Their calls travel as Panel access's requests.
+        /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`): in every Claude pane, a run's and the voice session's
+        /// excepted, behind no switch. Their calls travel as Panel access's requests.
         static let panes = Sets(rawValue: 128)
 
         static let screenArgument = "--screen"
@@ -274,8 +274,9 @@ enum ScreenMCP {
     }
 
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
-    /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools its switch is
-    /// on for, and `--notify` always: every Claude pane lists `notify`, even with both off.
+    /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets.
+    /// `--notify` is always there, and the callers name `--panel` and `--panes` for every pane but a run's (and the voice session's `--panes`); Screen
+    /// access is the one set a switch still decides.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
                               voiceSearch: Bool = false, panes: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,

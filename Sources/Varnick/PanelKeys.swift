@@ -293,7 +293,7 @@ extension PanelAccess {
 
     /// The gate and the post, in one synchronous turn. Nil once the key is sent, else why it was not.
     private func send(_ key: PanelKey, _ model: LauncherModel, caller: UUID, first: Bool) -> String? {
-        guard mayAct(caller: caller) else { return "Panel access is off, or this pane is no longer one a session may act from" }
+        guard mayAct(caller: caller) else { return "This pane is no longer one a session may act from" }
         // Not key means the keyboard is the user's elsewhere; Varnick not active means a pinned panel behind another app. Neither is brought up.
         guard let window = panelWindow, window.isVisible, window.isKeyWindow, NSApp.isActive else {
             return "The panel is not up with the keyboard (hidden, or another app is in front): keys never brings it up, so ask the user to open it"

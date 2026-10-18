@@ -331,7 +331,7 @@ final class Outline: ObservableObject {
                 }
             }
         }
-        guard allowed(), load == .ready else { return SessionOutcome(refusal: "Panel access was turned off, or the outline closed, while this waited") }
+        guard allowed(), load == .ready else { return SessionOutcome(refusal: "The outline closed, or this pane went, while this waited") }
         if let why = fresh(tree) { return SessionOutcome(refusal: .other(why)) }
         // Under a filter every bullet shows open, as the key's collapse knows.
         if case .collapse = edit, !filterWords.isEmpty {

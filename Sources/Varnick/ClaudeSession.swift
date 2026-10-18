@@ -628,8 +628,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let agent = record.agent.flatMap { name in
             Agent.available(in: record.directory).contains { $0.name == name } ? name : nil
         }
-        // Screen access (ADR 0023), Panel access (ADR 0031) and the Problems board's work-link hooks are read at each start, not stored: a
-        // pane gains or loses them at its next start or restart. A run of an automation never gets the first two, nor the automation tools
+        // Screen access (ADR 0023) and the Problems board's work-link hooks are read at each start, not stored: a pane gains or loses them at its
+        // next start or restart. Panel access and the pane tools (ADR 0031) have no switch: every pane lists them, the voice session's without the pane tools. A run of an automation never gets any of them, nor the automation tools
         // (which come with the Automations switch alone), whatever they say: its MCP config lists `notify` alone (option 01 of
         // `prompts-cant-run-on-a-schedule`). A step of a Task's Run is a run too: its config lists `notify` and, while its folder holds the step's
         // result schema, `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a); never the task tools.
@@ -642,12 +642,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
                                                  prompt: prompt, problems: Settings.shared.problemsBoard,
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
-                                                                                    panel: !isRun && Settings.shared.panelAccess,
+                                                                                    panel: !isRun,
                                                                                     automations: !isRun && Settings.shared.automationsOn,
                                                                                     tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult,
                                                                                     voiceSearch: isVoice,
-                                                                                    panes: !isRun && !isVoice && Settings.shared.panelAccess
-                                                                                        && Settings.shared.sessionsOpenPanes),
+                                                                                    panes: !isRun && !isVoice),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
                                                  voice: isVoice)
 

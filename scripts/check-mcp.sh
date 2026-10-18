@@ -2,7 +2,8 @@
 # make check-mcp: checks what `Varnick --mcp` lists and refuses for each set of tools its arguments name, with standard input from a file
 # and no running Varnick: the server only lists, and a call to a tool its sets don't list is refused before anything is sent. One `error:`
 # line for each problem, exit 1 if there was any. `make check-mcp BIN=<binary>` checks another build. A call that would reach the app
-# needs the app and is checked by hand after a restart (docs/agents/where-it-breaks.md, Panel access).
+# needs the app and is checked by hand after a restart (docs/agents/where-it-breaks.md, Panel access). The sets are the server's command line; which of
+# them the app names for a pane (the panel and pane sets for every pane but a run's, the screen set only with Screen access) is ClaudeSession's, by hand.
 set -u
 bin=${1:-.build/release/Varnick}
 [ -x "$bin" ] || { echo "error: check-mcp: no binary at $bin (make build first)" >&2; exit 1; }
@@ -312,8 +313,8 @@ if searching:
     if schema.get("required") != ["query"] or set(properties) != {"query", "project", "from", "to"} or any(properties.get(name, {}).get("type") != "string" for name in properties):
         fail("search is %s: string query (required), project, from and to" % schema)
 
-# The pane tools (option 01 of panes-open-only-by-hand-at-a-mac): their own set, named by the app only while Panel access and Sessions can open panes are
-# on, and never for a run's session or the voice session's. Named alone it lists the two; with the others it comes last; with none named the server still
+# The pane tools (option 01 of panes-open-only-by-hand-at-a-mac): their own set, named by the app for every Claude pane but a run's and the voice session's
+# (no switch: ClaudeSession names it, which this script can't see). Named alone it lists the two; with the others it comes last; with none named the server still
 # lists the screen tools alone. Their calls travel as Panel access's requests. NEVER call one of these tools here: with Varnick running, the call reaches
 # it and opens a real pane. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
 pane_tools = ["pane_open", "pane_close"]

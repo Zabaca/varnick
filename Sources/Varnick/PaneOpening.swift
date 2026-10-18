@@ -10,9 +10,8 @@ extension PanelAccess {
     /// The longest first message a session may give a pane it opens: it travels as an argument of the claude command.
     static let longestPrompt = 20_000
 
-    /// In order, after the router's: the switch of its own, the tab (hidden, or another machine's), then the tool.
+    /// In order, after the router's: the tab (hidden, or another machine's), then the tool.
     func panes(_ request: PanelRequest, _ model: LauncherModel, caller: UUID) throws -> Answered {
-        guard Settings.shared.sessionsOpenPanes else { throw PanelRefusal.panesOff }
         guard case .found(_, let tab, let session) = CallingPane.find(caller.uuidString, in: model) else { throw PanelRefusal.noPane }
         // The voice session's tab is hidden: a pane opened there would be out of sight.
         if session.record.isVoice || session.record.isRun || tab.isHiddenRun {

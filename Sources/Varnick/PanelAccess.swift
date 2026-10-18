@@ -10,7 +10,6 @@ import VarnickPeer
 enum PanelRefusal: Error {
     case unreadable
     case versionDiffers
-    case off
     case starting
     case noPane
     case controlled
@@ -23,8 +22,6 @@ enum PanelRefusal: Error {
     case problemsOff
     /// The Outline switch (Settings › Experimental) is off.
     case outlineOff
-    /// Sessions can open panes (Settings › Claude) is off.
-    case panesOff
     /// The arguments are not ones the tool takes.
     case bad(String)
     /// The Outline can't be read from its file (unreadable, newer, or still loading); the message is the Outline's own reason.
@@ -40,7 +37,6 @@ enum PanelRefusal: Error {
         switch self {
         case .unreadable: "Varnick couldn't read the request"
         case .versionDiffers: ScreenRefusal.restartThisSession
-        case .off: "Panel access is off in Varnick's Settings › Claude"
         case .starting: "Varnick is still starting"
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
         case .controlled: "This session is shown as a card because another Mac or a device is in control of it, so it is not one of this Mac's panes to answer for"
@@ -49,7 +45,6 @@ enum PanelRefusal: Error {
         case .gone: "gone: read again"
         case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
         case .outlineOff: "The Outline is off: the user can turn it on in Settings › Experimental"
-        case .panesOff: "Sessions can open panes is off in Varnick's Settings › Claude"
         case .bad(let why): why
         case .outlineUnavailable(let why): why
         case .refused(let why): "Nothing was changed: \(why)"
@@ -68,7 +63,6 @@ enum PanelRefusal: Error {
         switch self {
         case .unreadable: "unreadable"
         case .versionDiffers: "version"
-        case .off: "off"
         case .starting: "starting"
         case .noPane: "no pane"
         case .controlled: "controlled"
@@ -77,7 +71,6 @@ enum PanelRefusal: Error {
         case .gone: "gone"
         case .problemsOff: "problems off"
         case .outlineOff: "outline off"
-        case .panesOff: "panes off"
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
         case .refused: "edit refused"
@@ -112,12 +105,6 @@ struct PanelIDs<Target: Hashable> {
         guard word.hasPrefix(String(prefix)), let number = Int(word.dropFirst()) else { return nil }
         return targets[number]
     }
-
-    /// The mappings go and the numbers keep counting, so an id given before is never given to another target.
-    mutating func forget() {
-        numbers = [:]
-        targets = [:]
-    }
 }
 
 /// Answers the panel tools for the panes' sessions, on the main actor, and holds the id tables.
@@ -149,19 +136,12 @@ final class PanelAccess {
     /// Whether the user pressed a key in the panel within `typingQuiet`.
     var userTypedRecently: Bool { lastKey.map { $0.duration(to: .now) < Self.typingQuiet } ?? false }
 
-    /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone or the switch is off.
+    /// Each calling pane's ids: held in memory only, kept for the pane's life, and dropped once it has gone.
     private var tables: [UUID: PanelIDs<UUID>] = [:]
     /// The same for the Outline's rows (`o` ids), per calling pane.
     private var outlineTables: [UUID: PanelIDs<OutlinePath>] = [:]
     /// What each calling pane has read of the Outline's rows, so an edit to a field it hasn't read, or that changed since, is refused.
     private var outlineKnown: [UUID: OutlineKnowledge] = [:]
-
-    /// Turning the switch off: every id stops meaning anything at once.
-    func switchedOff() {
-        for caller in tables.keys { tables[caller]?.forget() }
-        for caller in outlineTables.keys { outlineTables[caller]?.forget() }
-        outlineKnown = [:]
-    }
 
     // MARK: Ids
 
@@ -256,9 +236,8 @@ final class PanelAccess {
         var counts: String?
     }
 
-    /// In order: the switch, Varnick starting, the pane, then the tool.
+    /// In order: Varnick starting, the pane, then the tool.
     private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {
-        guard Settings.shared.panelAccess else { throw PanelRefusal.off }
         guard let model = PeerManager.shared.model else { throw PanelRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
         prune(in: model)
@@ -274,8 +253,7 @@ final class PanelAccess {
         let view = type.init(model: model)
         guard acts else {
             let text = try await view.read(request.args, caller: caller)
-            // A read may have waited (the Outline's file): the switch and the pane can have changed meanwhile.
-            guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+            // A read may have waited (the Outline's file): the pane can have changed meanwhile.
             _ = try callingPane(request.pane, in: model)
             return Answered(text: text)
         }
@@ -283,16 +261,15 @@ final class PanelAccess {
             throw PanelRefusal.bad("action is one of: " + type.actionSpecs.map(\.name).joined(separator: ", "))
         }
         let text = try await view.perform(action, request.args, caller: caller)
-        // The action may have waited: the switch and the pane can have changed meanwhile.
-        guard Settings.shared.panelAccess else { throw PanelRefusal.off }
+        // The action may have waited: the pane can have changed meanwhile.
         _ = try callingPane(request.pane, in: model)
         return Answered(text: text, action: action)
     }
 
-    /// Whether a call from this pane may still act: the switch is on, and the pane is still a Claude pane on this Mac that no other Mac or device
+    /// Whether a call from this pane may still act: the pane is still a Claude pane on this Mac that no other Mac or device
     /// controls. A view's `perform` asks right before it changes anything, since the router checks only before and after.
     func mayAct(caller: UUID) -> Bool {
-        guard Settings.shared.panelAccess, let model = PeerManager.shared.model else { return false }
+        guard let model = PeerManager.shared.model else { return false }
         if case .found = CallingPane.find(caller.uuidString, in: model) { return true }
         return false
     }

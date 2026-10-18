@@ -283,9 +283,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Turning Screen access off ends the sessions' tools at once, with no restart: each call reads the switch.
             Settings.shared.$screenAccess.dropFirst().removeDuplicates()
                 .sink { on in if !on { ScreenAccess.shared.switchedOff() } },
-            // The same for Panel access: its ids go with the switch.
-            Settings.shared.$panelAccess.dropFirst().removeDuplicates()
-                .sink { on in if !on { PanelAccess.shared.switchedOff() } },
             Listener.shared.$state
                 .sink { [weak self] state in self?.showListening(state) },
             // The phone page's server follows its setting; `apply` reads the setting itself, once didSet has run.
@@ -738,7 +735,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--peer"), i + 1 < CommandLine.a
     exit(PeerRelay.run(CommandLine.arguments[i + 1], host: MacPeerHost()))
 }
 
-// `Varnick --mcp --pane <id> [--screen] [--panel] [--automations] [--notify]` is the MCP server every Claude pane starts (Screen access, Panel access and Automations add their sets when on)
+// `Varnick --mcp --pane <id> [--screen] [--panel] [--automations] [--notify]` is the MCP server every Claude pane starts (Screen access and Automations add their sets when on; Panel access's and the pane tools' are always named)
 // (`ScreenMCP`): JSON-RPC on standard input and output, each tool call one line on the peer socket. The arguments name the sets of tools
 // it lists (the screen tools when none is named). It never reads or acts. Like `--peer`, it runs before anything of the app starts, and
 // it exits when its input ends.
