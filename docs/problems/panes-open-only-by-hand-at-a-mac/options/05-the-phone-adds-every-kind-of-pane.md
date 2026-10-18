@@ -1,7 +1,7 @@
 ---
 problem: panes-open-only-by-hand-at-a-mac
 title: The phone's Add pane offers a custom app, a page and a file as well as Claude and a terminal
-summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), extending option 03. On a Mac host, Add pane offers five kinds. App lists the custom apps of the shown pane's folder, Scratch among them. Page takes an address. File browses the shown pane's folder one level at a time. The page server sends the `start` a Mac sends for a split of another machine's tab, which protocol 32 already carries, and the phone shows the new pane as it shows any listed one. The relay lets a listed device ask `apps` and `files`, which it refuses today. No protocol bump: only the host that serves the page needs the build. A headless host keeps Claude and Terminal.
+summary: Accepted by the user on 2026-10-17 (relayed by the coordinator), extending option 03. On a Mac host, Add pane offers five kinds. App lists the custom apps of the shown pane's folder, Scratch among them. Page takes an address. File browses the shown pane's folder one level at a time. The page server sends the `start` a Mac sends for a split of another machine's tab, which protocol 32 already carries, and the phone shows the new pane as it shows any listed one. The relay lets a listed device ask `apps` and `files`, which it refuses today. No protocol bump: only the host that serves the page needs the build. A headless host keeps Claude and Terminal. An addition the user asked for on 2026-10-17: the phone closes one pane of any kind in a tab it controls, with a × in the switcher and the host's existing `end`, so no new request.
 status: accepted
 ---
 

@@ -4,6 +4,7 @@
 import type { Device } from "./checks";
 import type { HostLink } from "./hosts";
 import { isObject, objects, uuidPattern } from "./json";
+import { hasSession } from "./page/tabrules.js";
 
 export type RelayResult = { ok: true; reply: Record<string, unknown> } | { ok: false; error: string };
 
@@ -119,8 +120,6 @@ export function controlledText(controller: string, attached: boolean): string {
   return (attached ? "Controlled on " : "Last controlled on ") + controller;
 }
 
-/** A pane that runs in a zmx session of its own, which a device can attach to. */
-const zmxKinds = new Set(["claude", "terminal"]);
 const sessionNameOf = (id: string): string => `varnick-${id.toLowerCase()}`;
 
 /**
@@ -131,7 +130,7 @@ const sessionNameOf = (id: string): string => `varnick-${id.toLowerCase()}`;
 export function shapePane(pane: Record<string, unknown>, device: Device): HomePane | null {
   if (typeof pane.id !== "string" || !uuidPattern.test(pane.id)) return null;
   const kind = text(pane.kind);
-  const zmx = zmxKinds.has(kind);
+  const zmx = hasSession(kind);
   const running = zmx && pane.running === true;
   const mine = running && same(pane.control, device.id);
   const controller = mine ? "this phone" : optional(pane.controlName) ?? "another device";
@@ -167,7 +166,7 @@ export function shapeTab(tab: Record<string, unknown>, device: Device): HomeTab 
   const panes = objects(tab.panes).flatMap((pane) => shapePane(pane, device) ?? []);
   if (panes.length === 0) return null;
   const live = panes.filter((pane) => pane.running);
-  if (live.length === 0 && panes.every((pane) => zmxKinds.has(pane.kind))) return null;
+  if (live.length === 0 && panes.every((pane) => hasSession(pane.kind))) return null;
   const mine = live.length > 0 && same(tab.control, device.id);
   const controller = mine ? "this phone" : optional(tab.controlName) ?? "another device";
   const clients = typeof tab.clients === "number" ? tab.clients : 0;

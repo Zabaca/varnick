@@ -5,7 +5,7 @@
 // server (`POST /api/split`), which checks the tab, the pane and what was picked and sends the host the split; on success the tab view switches to the
 // new pane (tab.js). The page keeps no value for next time. Everything the host sent goes in with textContent, never as markup.
 
-import { addable, addBody, entryPath, kindShown, kindsOffered, kindWords, relativeTo } from "/addrules.js";
+import { addable, addBody, entryPath, kindShown, kindsOffered, kindWord, relativeTo } from "/addrules.js";
 import { element, getJSON, postJSON } from "/dom.js";
 
 const $ = (id) => document.getElementById(id);
@@ -82,7 +82,7 @@ function render(s) {
   const offered = kindsOffered(s.offer);
   const kind = kindShown(s.kind, offered);
   s.kind = kind;
-  chips($("add-kinds"), offered.map((value) => ({ value, label: kindWords[value] })), kind, s.busy);
+  chips($("add-kinds"), offered.map((value) => ({ value, label: kindWord(value) })), kind, s.busy);
   $("add-claude").hidden = kind !== "claude";
   $("add-app").hidden = kind !== "app";
   $("add-web").hidden = kind !== "web";

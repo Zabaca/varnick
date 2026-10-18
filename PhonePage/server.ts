@@ -124,6 +124,13 @@ export function socketHandlers(terminals: Terminals, watches: Watches): Bun.WebS
   };
 }
 
+/** The `tab` and `pane` of a GET route's query when both are ids, lowercase as the host writes them. */
+function tabAndPane(request: Request): { tab: string; pane: string } | null {
+  const query = new URL(request.url).searchParams;
+  const tab = query.get("tab"), pane = query.get("pane");
+  return tab !== null && uuidPattern.test(tab) && pane !== null && uuidPattern.test(pane) ? { tab: tab.toLowerCase(), pane: pane.toLowerCase() } : null;
+}
+
 async function main(): Promise<void> {
   const read = readConfig(process.env);
   if ("error" in read) fail(read.error);
@@ -480,11 +487,10 @@ async function main(): Promise<void> {
       return shaped ? json({ ok: true, host: host.name, tab: shaped }) : json({ ok: false, error: `That tab isn't open on ${host.name} any more` }, 404);
     }
     if (path === "/api/file" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const tab = query.get("tab"), pane = query.get("pane");
-      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
       // The host reads the file the pane has, inside the tab's folders, and caps its size: the path is never the page's.
-      const read = await relay.ask("file", device.id, { tab: tab.toLowerCase(), pane: pane.toLowerCase() });
+      const read = await relay.ask("file", device.id, ids);
       return read.ok && typeof read.reply.text === "string" ? json({ ok: true, text: read.reply.text }) : json({ ok: false, error: read.ok ? "The host sent no text" : read.error }, 502);
     }
     if (path === "/api/projects" && request.method === "GET") {
@@ -492,21 +498,19 @@ async function main(): Promise<void> {
       return "error" in projects ? json({ ok: false, error: projects.error }, 502) : json({ ok: true, host: host.name, projects: projects.rows });
     }
     if (path === "/api/split-offer" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const tab = query.get("tab"), pane = query.get("pane");
-      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
       // The folder is the pane's own as the host lists it, never the page's.
-      const offer = await splitOffer(relay, device, host.name, tab, pane, host.headless);
+      const offer = await splitOffer(relay, device, host.name, ids.tab, ids.pane, host.headless);
       return json(offer.body, offer.status);
     }
     if (path === "/api/split-files" && request.method === "GET") {
-      const query = new URL(request.url).searchParams;
-      const tab = query.get("tab"), pane = query.get("pane");
-      if (tab === null || !uuidPattern.test(tab) || pane === null || !uuidPattern.test(pane)) return plain(400, "Not a Varnick tab or pane id");
-      const dir = parseSplitDir(query.get("dir"));
+      const ids = tabAndPane(request);
+      if (ids === null) return plain(400, "Not a Varnick tab or pane id");
+      const dir = parseSplitDir(new URL(request.url).searchParams.get("dir"));
       if (!dir.ok) return json({ ok: false, error: dir.error }, 400);
       // The root is the pane's own folder as the host lists it; the folder asked for has to be inside it, and the host keeps the tab's folders besides.
-      const listing = await splitFiles(relay, device, host.name, tab, pane, dir.value, host.headless);
+      const listing = await splitFiles(relay, device, host.name, ids.tab, ids.pane, dir.value, host.headless);
       return json(listing.body, listing.status);
     }
     if (path === "/api/agents" && request.method === "GET") {

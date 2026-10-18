@@ -492,7 +492,7 @@ describe("adding a pane", () => {
 
   test("sends start as the device with the tab, the pane and the axis, no folder and no skipPermissions", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({ tab }) });
-    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
+    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID, false);
     expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab, pane: fixedID } });
     const start = calls.find((call) => call.op === "start")!;
     expect(start.by).toBe(device.id);
@@ -507,23 +507,23 @@ describe("adding a pane", () => {
 
   test("a terminal sends no agent and asks for none", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), start: ok({ tab }) });
-    await splitTab(asker, device, "linux box", { tab, pane: second, kind: "terminal", agent: null, prompt: "" }, () => fixedID);
+    await splitTab(asker, device, "linux box", { tab, pane: second, kind: "terminal", agent: null, prompt: "" }, () => fixedID, false);
     expect(calls.map((call) => call.op)).toEqual(["tabs", "start"]);
     expect(calls[1].fields).toEqual({ start: { id: fixedID, prompt: "", kind: "terminal" }, tab, pane: second, axis: "sideBySide" });
   });
 
   test("a pane with no folder has no agents, and an agent for it is refused", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({ tab }) });
-    expect(await splitOffer(asker, device, "linux box", tab, page)).toEqual({ status: 200, body: { ok: true, folder: null, agents: [], apps: [], kinds: ["claude", "terminal", "app", "web"] } });
-    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page }, () => fixedID)).status).toBe(400);
+    expect(await splitOffer(asker, device, "linux box", tab, page, false)).toEqual({ status: 200, body: { ok: true, folder: null, agents: [], apps: [], kinds: ["claude", "terminal", "app", "web"] } });
+    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page }, () => fixedID, false)).status).toBe(400);
     expect(calls.some((call) => call.op === "agents" || call.op === "start")).toBe(false);
     // Without an agent a page can still be split beside.
-    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page, agent: null }, () => fixedID)).status).toBe(200);
+    expect((await splitTab(asker, device, "linux box", { ...ask, pane: page, agent: null }, () => fixedID, false)).status).toBe(200);
   });
 
   test("a tab that isn't listed starts nothing", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(device.id, other), start: ok({}) });
-    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
+    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID, false);
     expect(launched.status).toBe(404);
     expect(calls.some((call) => call.op === "start")).toBe(false);
   });
@@ -531,7 +531,7 @@ describe("adding a pane", () => {
   test("a tab the phone doesn't control starts nothing", async () => {
     for (const control of [other, null]) {
       const { asker, calls } = fakeRelay({ tabs: listed(control), start: ok({}) });
-      const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
+      const launched = await splitTab(asker, device, "linux box", ask, () => fixedID, false);
       expect(launched.status).toBe(409);
       expect(calls.some((call) => call.op === "start")).toBe(false);
     }
@@ -539,28 +539,28 @@ describe("adding a pane", () => {
 
   test("a pane that isn't of the tab starts nothing", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), start: ok({}) });
-    const launched = await splitTab(asker, device, "linux box", { ...ask, pane: other }, () => fixedID);
+    const launched = await splitTab(asker, device, "linux box", { ...ask, pane: other }, () => fixedID, false);
     expect(launched.status).toBe(400);
     expect(calls.some((call) => call.op === "start")).toBe(false);
   });
 
   test("an agent that isn't the pane's folder's starts nothing", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, start: ok({}) });
-    const launched = await splitTab(asker, device, "linux box", { ...ask, agent: "nobody" }, () => fixedID);
+    const launched = await splitTab(asker, device, "linux box", { ...ask, agent: "nobody" }, () => fixedID, false);
     expect(launched.status).toBe(400);
     expect(calls.some((call) => call.op === "start")).toBe(false);
   });
 
   test("a host whose tabs can't be read starts nothing", async () => {
     const { asker, calls } = fakeRelay({ tabs: { ok: false, error: "Varnick isn't running on Mac mini" } });
-    const launched = await splitTab(asker, device, "Mac mini", ask, () => fixedID);
+    const launched = await splitTab(asker, device, "Mac mini", ask, () => fixedID, false);
     expect(launched).toEqual({ status: 502, body: { ok: false, error: "Varnick isn't running on Mac mini" } });
     expect(calls.map((call) => call.op)).toEqual(["tabs"]);
   });
 
   test("the host's refusal reaches the page in the host's words", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents, start: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" }, status: ok({ sessions: {} }) });
-    const launched = await splitTab(asker, device, "Mac mini", ask, () => fixedID);
+    const launched = await splitTab(asker, device, "Mac mini", ask, () => fixedID, false);
     expect(launched).toEqual({ status: 502, body: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" } });
   });
 
@@ -569,22 +569,22 @@ describe("adding a pane", () => {
       tabs: listed(), agents, start: { ok: false, error: "The relay didn't answer in time" },
       status: ok({ sessions: { [`varnick-${fixedID}`]: { running: true } } }),
     });
-    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID);
+    const launched = await splitTab(asker, device, "linux box", ask, () => fixedID, false);
     expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab, pane: fixedID } });
     expect(calls.find((call) => call.op === "status")!.fields).toEqual({ sessions: [`varnick-${fixedID}`] });
   });
 
   test("a lost answer for a session that isn't there is a failure", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents, start: { ok: false, error: "The relay didn't answer in time" }, status: ok({ sessions: { [`varnick-${fixedID}`]: { running: false } } }) });
-    expect((await splitTab(asker, device, "linux box", ask, () => fixedID)).status).toBe(502);
+    expect((await splitTab(asker, device, "linux box", ask, () => fixedID, false)).status).toBe(502);
   });
 
   test("the chips come from the pane's folder, for a tab the phone controls only", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents });
-    const offered = await splitOffer(asker, device, "linux box", tab.toUpperCase(), first);
+    const offered = await splitOffer(asker, device, "linux box", tab.toUpperCase(), first, false);
     expect(offered).toMatchObject({ status: 200, body: { ok: true, folder: worktree, agents: [{ name: "reviewer", description: "", project: false }] } });
     const notMine = fakeRelay({ tabs: listed(other), agents });
-    expect((await splitOffer(notMine.asker, device, "linux box", tab, first)).status).toBe(409);
+    expect((await splitOffer(notMine.asker, device, "linux box", tab, first, false)).status).toBe(409);
     expect(notMine.calls.some((call) => call.op === "agents")).toBe(false);
   });
 });
@@ -690,6 +690,17 @@ describe("adding an app, a page and a file (option 05)", () => {
     expect(calls.find((call) => call.op === "start")!.fields).toEqual({ start: { id: fixedID, prompt: "", kind: "file", file: `${root}/src/a.ts`, folder: root }, tab, pane: first, axis: "sideBySide" });
   });
 
+  test("a file the tab has open already is shown by the pane that has it, and a new one by its own id", async () => {
+    const path = `${root}/src/a.ts`;
+    const open = "ffffffff-0000-4000-8000-0000000000f1";
+    const already = split({ kind: "file", file: path }, { tabs: listed(device.id, [{ id: open, kind: "file", title: "a.ts", file: path }]) });
+    expect(await already.run).toEqual({ status: 200, body: { ok: true, session: null, tab, pane: open } });
+    const added = split({ kind: "file", file: path }, { tabs: [listed(), listed(device.id, [{ id: fixedID, kind: "file", title: "a.ts", file: path }])] });
+    expect(await added.run).toMatchObject({ status: 200, body: { pane: fixedID } });
+    // A listing that has neither leaves the page the id it chose.
+    expect(await split({ kind: "file", file: path }, {}).run).toMatchObject({ status: 200, body: { pane: fixedID } });
+  });
+
   test("a file outside the pane's folder starts nothing", async () => {
     for (const file of ["/etc/passwd", `${root}x/a.ts`, "/Users/alex/Projects/play/other/a.ts"]) {
       const { run, calls } = split({ kind: "file", file }, {});
@@ -715,11 +726,11 @@ describe("adding an app, a page and a file (option 05)", () => {
   test("the gates of Add pane hold for these kinds", async () => {
     for (const control of [other, null]) {
       const relay = fakeRelay({ tabs: listed(control), apps, start: ok({}) });
-      expect((await splitTab(relay.asker, device, "Mac mini", { tab, pane: first, kind: "web", url: "example.com" }, () => fixedID)).status).toBe(409);
+      expect((await splitTab(relay.asker, device, "Mac mini", { tab, pane: first, kind: "web", url: "example.com" }, () => fixedID, false)).status).toBe(409);
       expect(relay.calls.some((call) => call.op === "start")).toBe(false);
     }
     const strange = fakeRelay({ tabs: listed(), start: ok({}) });
-    expect((await splitTab(strange.asker, device, "Mac mini", { tab, pane: other, kind: "web", url: "example.com" }, () => fixedID)).status).toBe(400);
+    expect((await splitTab(strange.asker, device, "Mac mini", { tab, pane: other, kind: "web", url: "example.com" }, () => fixedID, false)).status).toBe(400);
   });
 
   test("a lost answer is found by the new pane in the tab's listing, not by a session", async () => {
@@ -744,7 +755,7 @@ describe("what Add pane offers and the file picker (option 05)", () => {
 
   test("a Mac host offers all five kinds with the folder's agents and apps", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), agents, apps });
-    expect(await splitOffer(asker, device, "Mac mini", tab, first)).toEqual({
+    expect(await splitOffer(asker, device, "Mac mini", tab, first, false)).toEqual({
       status: 200,
       body: { ok: true, folder: root, agents: [{ name: "reviewer", description: "", project: false }], apps: [{ folder: "scratch", name: "Scratch" }], kinds: ["claude", "terminal", "app", "web", "file"] },
     });
@@ -760,37 +771,37 @@ describe("what Add pane offers and the file picker (option 05)", () => {
 
   test("a pane with no folder offers a page and an app's absence, but no file", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents, apps });
-    expect((await splitOffer(asker, device, "Mac mini", tab, page)).body).toMatchObject({ folder: null, apps: [], kinds: ["claude", "terminal", "app", "web"] });
+    expect((await splitOffer(asker, device, "Mac mini", tab, page, false)).body).toMatchObject({ folder: null, apps: [], kinds: ["claude", "terminal", "app", "web"] });
   });
 
   test("apps the host won't list are an error beside the rest, not a failed form", async () => {
     const { asker } = fakeRelay({ tabs: listed(), agents, apps: { ok: false, error: "That Mac isn't listed" } });
-    expect((await splitOffer(asker, device, "Mac mini", tab, first)).body).toMatchObject({ ok: true, apps: [], appsError: "That Mac isn't listed" });
+    expect((await splitOffer(asker, device, "Mac mini", tab, first, false)).body).toMatchObject({ ok: true, apps: [], appsError: "That Mac isn't listed" });
   });
 
   const entries = ok({ entries: [{ name: "src", isDirectory: true }, { name: "a.ts", isDirectory: false }, { name: "x/y", isDirectory: false }, { name: "..", isDirectory: true }], more: true });
 
   test("lists the pane's folder first, and a folder below it with Up", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), files: entries });
-    expect(await splitFiles(asker, device, "Mac mini", tab.toUpperCase(), first, null)).toEqual({
+    expect(await splitFiles(asker, device, "Mac mini", tab.toUpperCase(), first, null, false)).toEqual({
       status: 200, body: { ok: true, dir: root, root, parent: null, entries: [{ name: "src", folder: true }, { name: "a.ts", folder: false }], more: true },
     });
     expect(calls.find((call) => call.op === "files")!.fields).toEqual({ tab, folder: root });
-    const below = await splitFiles(asker, device, "Mac mini", tab, first, `${root}/src/deep`);
+    const below = await splitFiles(asker, device, "Mac mini", tab, first, `${root}/src/deep`, false);
     expect(below.body).toMatchObject({ dir: `${root}/src/deep`, parent: `${root}/src` });
   });
 
   test("a folder outside the pane's folder is refused here, and nothing is asked", async () => {
     const { asker, calls } = fakeRelay({ tabs: listed(), files: entries });
-    for (const dir of ["/Users/alex", `${root}x`, "/etc"]) expect((await splitFiles(asker, device, "Mac mini", tab, first, dir)).status).toBe(400);
+    for (const dir of ["/Users/alex", `${root}x`, "/etc"]) expect((await splitFiles(asker, device, "Mac mini", tab, first, dir, false)).status).toBe(400);
     expect(calls.some((call) => call.op === "files")).toBe(false);
   });
 
   test("a tab the phone doesn't control, a pane with no folder, and a headless host list nothing", async () => {
     const notMine = fakeRelay({ tabs: listed(other), files: entries });
-    expect((await splitFiles(notMine.asker, device, "Mac mini", tab, first, null)).status).toBe(409);
+    expect((await splitFiles(notMine.asker, device, "Mac mini", tab, first, null, false)).status).toBe(409);
     const bare = fakeRelay({ tabs: listed(), files: entries });
-    expect((await splitFiles(bare.asker, device, "Mac mini", tab, page, null)).status).toBe(400);
+    expect((await splitFiles(bare.asker, device, "Mac mini", tab, page, null, false)).status).toBe(400);
     const headless = fakeRelay({ tabs: listed(), files: entries });
     expect((await splitFiles(headless.asker, device, "linux box", tab, first, null, true)).status).toBe(400);
     for (const { calls } of [notMine, bare, headless]) expect(calls.some((call) => call.op === "files")).toBe(false);
@@ -798,7 +809,7 @@ describe("what Add pane offers and the file picker (option 05)", () => {
 
   test("the host's refusal of a folder reaches the page in the host's words", async () => {
     const { asker } = fakeRelay({ tabs: listed(), files: { ok: false, error: "That folder is outside the tab's folders" } });
-    expect(await splitFiles(asker, device, "Mac mini", tab, first, null)).toEqual({ status: 502, body: { ok: false, error: "That folder is outside the tab's folders" } });
+    expect(await splitFiles(asker, device, "Mac mini", tab, first, null, false)).toEqual({ status: 502, body: { ok: false, error: "That folder is outside the tab's folders" } });
   });
 });
 

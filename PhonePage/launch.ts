@@ -6,6 +6,7 @@ import type { Device } from "./checks";
 import { optional, same, shapeTab, type HomePane, type HomeTab, type RelayResult } from "./home";
 import { isObject, objects, uuidPattern, type Json } from "./json";
 import { projectName } from "./page/newrules.js";
+import { hasSession } from "./page/tabrules.js";
 import { launchTimeoutMs, reopenTimeoutMs } from "./relay";
 import { endText } from "./terminal";
 
@@ -156,16 +157,16 @@ export function parseSplitBody(body: unknown): Parsed<SplitAsk> {
   }
 }
 
-export interface RestartAsk {
+export interface PlaceAsk {
   tab: string;
   pane: string;
 }
 
 /** `POST /api/restart`'s body: a tab and a pane of it, and nothing else is read. */
-export const parseRestartBody = (body: unknown): Parsed<RestartAsk> => readPlace(body);
+export const parseRestartBody = (body: unknown): Parsed<PlaceAsk> => readPlace(body);
 
 /** `POST /api/close`'s body: a tab and a pane of it, and nothing else is read. */
-export const parseCloseBody = (body: unknown): Parsed<RestartAsk> => readPlace(body);
+export const parseCloseBody = (body: unknown): Parsed<PlaceAsk> => readPlace(body);
 
 /** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
 export function parseResumeBody(body: unknown): Parsed<string> {
@@ -344,7 +345,7 @@ const noPaneKinds = (host: string): string => `${host} has no browser, custom ap
  * `GET /api/split-offer`: what Add pane offers for a pane of a tab this phone controls: the agents of its folder, the apps the host can run from it,
  * and the kinds to show. A headless host offers Claude and a terminal only; a page is offered for any pane, an app and a file need the pane's folder.
  */
-export async function splitOffer(asker: Asker, device: Device, host: string, tab: string, pane: string, headless = false): Promise<{ status: number; body: Json }> {
+export async function splitOffer(asker: Asker, device: Device, host: string, tab: string, pane: string, headless: boolean): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
   if ("body" in found) return found;
   const folder = folderOf(found.pane);
@@ -362,7 +363,7 @@ export async function splitOffer(asker: Asker, device: Device, host: string, tab
  * `GET /api/split-files`: one level of a folder of a tab this phone controls, for the file picker. The root is the shown pane's folder as the host
  * lists it, never the page's, and a folder outside it is refused here (the host keeps the tab's folders besides). `parent` is where Up goes: null at the root.
  */
-export async function splitFiles(asker: Asker, device: Device, host: string, tab: string, pane: string, dir: string | null, headless = false): Promise<{ status: number; body: Json }> {
+export async function splitFiles(asker: Asker, device: Device, host: string, tab: string, pane: string, dir: string | null, headless: boolean): Promise<{ status: number; body: Json }> {
   if (headless) return failed(400, noPaneKinds(host));
   const found = await splittable(asker, device, host, tab.toLowerCase(), pane.toLowerCase());
   if ("body" in found) return found;
@@ -375,10 +376,15 @@ export async function splitFiles(asker: Asker, device: Device, host: string, tab
   return { status: 200, body: { ok: true, dir: wanted, root, parent: parentWithin(wanted, root), entries: listed.rows, more: listed.more } };
 }
 
-/** Whether the host lists a pane with this id in the tab: how a page, an app or a file, which have no session to ask about, shows it was made. */
-async function listsPane(asker: Asker, device: Device, tab: string, id: string): Promise<boolean> {
-  const raw = findTab(await asker.ask("tabs", device.id), tab);
-  return raw !== null && objects(raw.panes).some((pane) => same(pane.id, id));
+/**
+ * The id of the pane the host lists in the tab for what was just added: the pane with this id, else for a file the pane that already shows that path (the
+ * host adds no second pane for a file the tab has open and still answers success). Null when the listing has neither. How a page, an app or a file, which
+ * have no session to ask about, shows it was made.
+ */
+async function listedPane(asker: Asker, device: Device, tab: string, id: string, file: string | null): Promise<string | null> {
+  const panes = objects(findTab(await asker.ask("tabs", device.id), tab)?.panes);
+  const found = panes.find((pane) => same(pane.id, id)) ?? (file === null ? undefined : panes.find((pane) => pane.kind === "file" && pane.file === file));
+  return found && typeof found.id === "string" ? found.id.toLowerCase() : null;
 }
 
 /**
@@ -386,8 +392,8 @@ async function listsPane(asker: Asker, device: Device, tab: string, id: string):
  * pane's) and no `skipPermissions`. A page, an app and a file are refused on a headless host before it is asked, an app is checked against the apps
  * of the pane's folder and a file against that folder.
  */
-export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string, headless = false): Promise<Launched> {
-  if (headless && ask.kind !== "claude" && ask.kind !== "terminal") return failed(400, noPaneKinds(host));
+export async function splitTab(asker: Asker, device: Device, host: string, ask: SplitAsk, newID: () => string, headless: boolean): Promise<Launched> {
+  if (headless && !hasSession(ask.kind)) return failed(400, noPaneKinds(host));
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
   const folder = folderOf(found.pane);
@@ -421,19 +427,20 @@ export async function splitTab(asker: Asker, device: Device, host: string, ask: 
       start.folder = folder;
       break;
   }
-  const hasSession = ask.kind === "claude" || ask.kind === "terminal";
+  const sessioned = hasSession(ask.kind);
   const session = sessionNameFor(id);
+  const file = ask.kind === "file" ? ask.file : null;
   const started = await asker.ask("start", device.id, { start, tab: ask.tab, pane: ask.pane, axis: "sideBySide" }, launchTimeoutMs);
   // A start whose answer was lost may have made the pane, and a second tap would add another: a Claude or terminal pane is found by its running
   // session, any other by the host's listing of the tab.
-  if (started.ok || (hasSession ? await isRunning(asker, device, session) : await listsPane(asker, device, ask.tab, id))) {
-    return { status: 200, body: { ok: true, session: hasSession ? session : null, tab: ask.tab, pane: id } };
-  }
-  return failed(502, started.error);
+  if (!started.ok && !(sessioned ? await isRunning(asker, device, session) : (await listedPane(asker, device, ask.tab, id, file)) !== null)) return failed(502, started.error);
+  // A file the tab has open already is not added again, so the page is sent to the pane that has it.
+  const shown = file === null ? id : (await listedPane(asker, device, ask.tab, id, file)) ?? id;
+  return { status: 200, body: { ok: true, session: sessioned ? session : null, tab: ask.tab, pane: shown } };
 }
 
 /** `POST /api/restart` (protocol 32; where-it-breaks, The tab view on the phone): the gates of Add pane, and a Claude session that runs. Asked once. */
-export async function restartPane(asker: Asker, device: Device, host: string, ask: RestartAsk): Promise<{ status: number; body: Json }> {
+export async function restartPane(asker: Asker, device: Device, host: string, ask: PlaceAsk): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
   if (found.pane.kind !== "claude") return failed(400, "Only a Claude session restarts");
@@ -448,11 +455,10 @@ export async function restartPane(asker: Asker, device: Device, host: string, as
  * has for the Mac's own close of a pane, so there is no new request. The host, not this server, decides whether the pane is the tab's last, and then
  * handles it as the tab's `end`: it ends if its origin names this phone, else it is handed back (`text` says which).
  */
-export async function closePane(asker: Asker, device: Device, host: string, ask: RestartAsk): Promise<{ status: number; body: Json }> {
+export async function closePane(asker: Asker, device: Device, host: string, ask: PlaceAsk): Promise<{ status: number; body: Json }> {
   const found = await splittable(asker, device, host, ask.tab, ask.pane);
   if ("body" in found) return found;
-  const hasSession = found.pane.kind === "claude" || found.pane.kind === "terminal";
-  const closed = await asker.ask("end", device.id, hasSession ? { tab: ask.tab, session: sessionNameFor(ask.pane) } : { tab: ask.tab, pane: ask.pane });
+  const closed = await asker.ask("end", device.id, found.pane.session !== null ? { tab: ask.tab, session: found.pane.session } : { tab: ask.tab, pane: ask.pane });
   return closed.ok ? { status: 200, body: { ok: true, released: closed.reply.released === true, text: endText(closed.reply, host) } } : failed(502, closed.error);
 }
 

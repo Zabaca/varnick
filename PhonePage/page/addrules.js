@@ -1,8 +1,11 @@
 // Add pane's pure rules, with no DOM: which kinds the form shows, when Add can be pressed and what it sends. `bun test` checks them
 // (PhonePage/tab.test.ts). The server decides what the host offers (`splitOffer` in launch.ts); the form only draws it.
 
-/** The kinds Add pane knows, in the order of its row. */
-export const kindWords = { claude: "Claude", terminal: "Terminal", app: "App", web: "Page", file: "File" };
+import { hasSession, kindWord } from "./tabrules.js";
+
+/** The kinds Add pane knows, in the order of its row; the words are the tab view's (`kindWord`). */
+export const addKinds = ["claude", "terminal", "app", "web", "file"];
+export { kindWord };
 
 /**
  * The kinds the form shows: those the server offered for this tab and pane, in the form's order. Claude and a terminal are always there, and
@@ -10,7 +13,7 @@ export const kindWords = { claude: "Claude", terminal: "Terminal", app: "App", w
  */
 export function kindsOffered(offer) {
   const sent = Array.isArray(offer?.kinds) ? offer.kinds : [];
-  return Object.keys(kindWords).filter((kind) => kind === "claude" || kind === "terminal" || sent.includes(kind));
+  return addKinds.filter((kind) => hasSession(kind) || sent.includes(kind));
 }
 
 /** The kind to show: the one chosen if it is offered, else Claude. */

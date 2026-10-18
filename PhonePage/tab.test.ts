@@ -216,13 +216,14 @@ describe("Close", () => {
   });
 
   test("asks in the words of the pane's kind, and says the tab keeps its other panes", () => {
+    const two = (shown: Record<string, unknown>) => ({ mine: true, panes: [shown, claude(c), terminal(b)] });
     const asks = [
-      closeQuestion(claude(a, { title: "Fix it" }), "Mac mini"),
-      closeQuestion(terminal(a), "Mac mini"),
-      closeQuestion(other(a, "app", { app: "scratch" }), "Mac mini"),
-      closeQuestion(other(a, "file", { file: "/p/cc/src/a.ts" }), "Mac mini"),
-      closeQuestion(other(a, "web", { url: "https://example.com/x" }), "Mac mini"),
-      closeQuestion(other(a, "transcript"), "Mac mini"),
+      closeQuestion(two(claude(a, { title: "Fix it" })), claude(a, { title: "Fix it" }), "Mac mini"),
+      closeQuestion(two(terminal(a)), terminal(a), "Mac mini"),
+      closeQuestion(two(other(a, "app", { app: "scratch" })), other(a, "app", { app: "scratch" }), "Mac mini"),
+      closeQuestion(two(other(a, "file", { file: "/p/cc/src/a.ts" })), other(a, "file", { file: "/p/cc/src/a.ts" }), "Mac mini"),
+      closeQuestion(two(other(a, "web", { url: "https://example.com/x" })), other(a, "web", { url: "https://example.com/x" }), "Mac mini"),
+      closeQuestion(two(other(a, "transcript")), other(a, "transcript"), "Mac mini"),
     ];
     expect(asks[0]).toContain("“Fix it”");
     expect(asks[0]).toContain("conversation goes to the tab's history");
@@ -232,6 +233,17 @@ describe("Close", () => {
     expect(asks[3]).toContain("isn't touched");
     expect(asks[4]).toContain("example.com");
     for (const ask of asks) expect(ask).toContain("other panes");
+    // Another Claude or terminal pane runs, so the tab can still be changed from the phone.
+    for (const ask of asks) expect(ask).not.toContain("can't change the tab");
+  });
+
+  test("warns when the pane is the tab's last Claude or terminal pane that runs", () => {
+    const last = { mine: true, panes: [claude(a), other(b, "file"), terminal(c, { running: false })] };
+    expect(closeQuestion(last, claude(a), "Mac mini")).toContain("this phone can't change the tab afterwards");
+    // A pane that doesn't run was not holding the tab, a file or a page never is.
+    expect(closeQuestion(last, terminal(c, { running: false }), "Mac mini")).not.toContain("can't change the tab");
+    expect(closeQuestion(last, other(b, "file"), "Mac mini")).not.toContain("can't change the tab");
+    expect(closeQuestion({ mine: true, panes: [claude(a), terminal(b)] }, claude(a), "Mac mini")).not.toContain("can't change the tab");
   });
 });
 

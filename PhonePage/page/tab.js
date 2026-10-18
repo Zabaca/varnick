@@ -10,7 +10,7 @@ import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
 import { confirmClose, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
 import {
-  choosePane, closeQuestion, framedAddress, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, closeQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -59,7 +59,7 @@ function renderSwitcher(t) {
     const button = element("button", "pane-tab");
     button.type = "button";
     button.append(element("span", "pane-kind", kindWord(pane.kind)), element("span", "pane-name", paneLabel(pane)));
-    if (!isOpenable(pane) && (pane.kind === "claude" || pane.kind === "terminal")) button.classList.add("idle");
+    if (!isOpenable(pane) && hasSession(pane.kind)) button.classList.add("idle");
     button.dataset.pane = pane.id;
     button.setAttribute("aria-pressed", String(pane.id === t.pane));
     button.addEventListener("click", () => { if (current === t) { dropAdded(t); showPane(t, pane); } });
@@ -97,7 +97,7 @@ function renderSwitcher(t) {
 async function closeShown(t) {
   const pane = t.data.panes.find((candidate) => candidate.id === t.pane);
   if (!pane || t.closing) return;
-  if (!(await confirmClose(closeQuestion(pane, t.host))) || t.closed) return;
+  if (!(await confirmClose(closeQuestion(t.data, pane, t.host))) || t.closed) return;
   t.closing = true;
   $("session-sub").textContent = "Closing…";
   const result = await postJSON("/api/close", { tab: t.id, pane: pane.id }, "the host didn't answer");
@@ -108,6 +108,14 @@ async function closeShown(t) {
     return;
   }
   if (result.released) {
+    const done = t.done;
+    closeTab();
+    return done(result.text);
+  }
+  // The host ended the whole tab if that was its last pane and the tab was this phone's: it is gone from the listing, so the page goes home at once.
+  const listed = await fetchTab(t.id);
+  if (t.closed) return;
+  if (!listed.ok && listed.gone) {
     const done = t.done;
     closeTab();
     return done(result.text);
@@ -139,7 +147,7 @@ function added(t, { session, pane }) {
 }
 
 function markShown(t) {
-  for (const button of $("panes").children) button.setAttribute("aria-pressed", String(button.dataset.pane === t.pane));
+  for (const button of $("panes").querySelectorAll("button.pane-tab")) button.setAttribute("aria-pressed", String(button.dataset.pane === t.pane));
 }
 
 /** Shows `pane`: a pane that runs is the session view, any other a note. */

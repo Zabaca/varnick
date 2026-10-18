@@ -59,7 +59,7 @@ status: shipped
 ## Out of Scope
 
 - Pages, custom apps and files from the phone.
-- Closing one pane of a tab from the phone: End closes the tab or hands it back, though both hosts take an `end` of one pane.
+- Closing one pane of a tab from the phone: End closes the tab or hands it back, though both hosts take an `end` of one pane. (Option 05's addition builds it.)
 - Showing panes side by side on the phone.
 
 ## Further Notes
