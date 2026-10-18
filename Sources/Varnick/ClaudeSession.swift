@@ -453,6 +453,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true) + [paneIDVariable]
         startInTerminal(shell, ["-l"], environment: env)
+        // As a Claude pane started for a peer does (`launchClaude`): this client lets go once the label names the peer.
+        if startedFor != nil { checkControlAfterAttach() }
     }
 
     /// Runs the command in the pane's zmx session when that is on, else directly. zmx runs it
