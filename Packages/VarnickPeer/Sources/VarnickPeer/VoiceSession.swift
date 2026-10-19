@@ -189,14 +189,27 @@ public enum SpokenReply {
     public static func spoken(fromReply reply: String, sentences limit: Int) -> String? {
         let flat = reply.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "").replacingOccurrences(of: "`", with: "")
         let plain = flat.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let text = sentences(in: plain, limit: limit).joined(separator: " ")
+        return text.isEmpty ? nil : text
+    }
+
+    #if canImport(Darwin)
+    private static func sentences(in plain: String, limit: Int) -> [String] {
         var sentences: [String] = []
         plain.enumerateSubstrings(in: plain.startIndex..., options: .bySentences) { sentence, _, _, stop in
             if let sentence = sentence?.trimmingCharacters(in: .whitespaces), !sentence.isEmpty { sentences.append(sentence) }
             if sentences.count >= limit { stop = true }
         }
-        let text = sentences.joined(separator: " ")
-        return text.isEmpty ? nil : text
+        return sentences
     }
+    #else
+    /// swift-corelibs-foundation has no `.bySentences`: a sentence ends at `.`, `!` or `?` followed by a space.
+    private static func sentences(in plain: String, limit: Int) -> [String] {
+        let marked = plain.replacingOccurrences(of: #"([.!?]+) "#, with: "$1\n", options: .regularExpression)
+        let sentences = marked.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return Array(sentences.prefix(limit))
+    }
+    #endif
 }
 
 public enum VoiceReply {
