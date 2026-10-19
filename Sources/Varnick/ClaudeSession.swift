@@ -148,7 +148,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     @Published var asking: SessionQuestionKind?
     /// Whether any Claude session in the pane's tab is mid-turn (`ClaudeTab.asksBeforeDone`), which is what Done in this pane asks about.
     var tabAsksBeforeDone: () -> Bool = { false }
-    /// Why a split of this pane was refused, shown over the pane for a few seconds.
+    /// Why a split of this pane, or a paste of an image on its host, was refused, shown over the pane for a few seconds.
     @Published private(set) var splitRefusal: String?
 
     func showRefusal(_ message: String) {
@@ -1937,13 +1937,39 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     /// ⌘V. SwiftTerm only pastes text, so for a clipboard image send Ctrl+V (0x16):
     /// Claude Code's image-paste key, which makes it read the clipboard itself.
+    /// On a peer that clipboard is the host's, so the image goes there instead (`pasteOnHost`).
     func paste() {
         let board = NSPasteboard.general
         if board.string(forType: .string) == nil,
            board.canReadObject(forClasses: [NSImage.self], options: nil) {
-            view.send(data: [0x16])
+            if let host = record.host { pasteOnHost(board, host: host) } else { view.send(data: [0x16]) }
         } else {
             view.paste(self)
+        }
+    }
+
+    /// The clipboard image written to a file on the host (`~/.varnick/paste`, a week's kept) and its path pasted, which Claude Code
+    /// attaches as an image, as cmux does for a terminal running ssh.
+    private func pasteOnHost(_ board: NSPasteboard, host: String) {
+        guard let png = board.data(forType: .png) ?? NSImage(pasteboard: board)?.tiffRepresentation
+            .flatMap({ NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }) else {
+            return showRefusal("Couldn't paste: the image on the clipboard couldn't be read")
+        }
+        let command = #"umask 077; d="$HOME/.varnick/paste"; mkdir -p "$d" && find "$d" -name '*.png' -mtime +7 -exec rm -f {} + ; "#
+            + #"f="$d/\#(UUID().uuidString).png"; cat >"$f" && printf '%s' "$f""#
+        Task { [weak self] in
+            let result = await SSHRunner.send(png, address: host, command: command)
+            guard let self, !self.finished else { return }
+            let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard result.status == 0, path.hasPrefix("/") else {
+                let why = result.timedOut ? "the host didn't answer" : result.error.trimmingCharacters(in: .whitespacesAndNewlines)
+                return self.showRefusal("Couldn't paste the image on \(self.hostName ?? host): " + (why.isEmpty ? "the copy failed" : why))
+            }
+            if self.view.getTerminal().bracketedPasteMode {
+                self.view.send(txt: "\u{1b}[200~" + path + "\u{1b}[201~")
+            } else {
+                self.view.send(txt: path)
+            }
         }
     }
 

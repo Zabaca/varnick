@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import VarnickPeer
 
 /// What a finished subprocess left behind.
@@ -473,6 +474,19 @@ enum SSHRunner {
             _ = await Subprocess.run(executable, options(for: address) + ["-O", "exit", "--", address],
                                      environment: environment, timeout: 3)
         }
+        return result
+    }
+
+    /// Runs `command` on `address` with `input` as its standard input (a file sent to the host), on the shared connection, and returns what it
+    /// printed in `output`. The command follows `run`'s rule: fixed text only.
+    @concurrent static func send(_ input: Data, address: String, command: String, timeout: TimeInterval = 30) async -> ProcessResult {
+        guard PeerAddress.isValid(address) else { return ProcessResult(error: "Not an address ssh can use", launchFailed: true) }
+        try? FileManager.default.createDirectory(at: controlDirectory, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        let printed = OSAllocatedUnfairLock(initialState: Data())
+        var result = await Subprocess.stream(executable, options(for: address) + ["--", address, command], environment: environment,
+                                             input: input, deadline: timeout) { data in printed.withLock { $0.append(data) } }
+        result.output = String(decoding: printed.withLock { $0 }, as: UTF8.self)
         return result
     }
 
