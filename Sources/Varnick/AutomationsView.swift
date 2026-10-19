@@ -55,7 +55,7 @@ struct AutomationsSettingsView: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Each automation is a prompt that this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, while Varnick runs. It opens nothing: a run's tab stays out of sight until you open it from the board's Runs tab or a notice, and it tells you as any session does. A slot that passed while the Mac slept or Varnick was quit runs once at the next wake or launch if it is under 12 hours old. Each run draws on your Claude subscription, and at most one run of an automation goes at a time. A Claude session you start while Automations is on can also list, make, edit and switch these through Varnick's tools; a mark under an automation says what it did until you open its editor, switch it or press Seen. Only you can delete one, run one now or set Skip.")
+            Text("Each automation is a prompt this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, out of sight until you open it from the board's Runs tab or a notice; a slot missed by under 12 hours runs at the next wake or launch. Each run draws on your Claude plan, and one run of an automation goes at a time. Sessions can list, make, edit and switch these, and a mark shows what they did until you open, switch or press Seen; only you can delete one, run one now or set Skip.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
             if let problem = store.problem {
