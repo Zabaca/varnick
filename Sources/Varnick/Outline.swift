@@ -787,7 +787,7 @@ final class Outline: ObservableObject {
 
     private func scroll(to path: OutlinePath) {
         scrollSerial += 1
-        scrollRequest = ScrollRequest(row: path.id, serial: scrollSerial)
+        scrollRequest = ScrollRequest(row: path == zoomPath ? path.titleID : path.id, serial: scrollSerial)
     }
 
     private func attemptPlace(tries: Int) {

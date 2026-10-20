@@ -25,6 +25,9 @@ struct OutlinePath: Hashable {
     var placements: [String]
 
     var id: String { placements.joined(separator: "/") }
+    /// The view id of the bullet zoomed into, shown as the title. Not `id`: zooming out puts the same bullet's row where the title was, and a
+    /// lazy stack keeps the title's view for a row with its id.
+    var titleID: String { "title:" + id }
     var parent: OutlinePath { OutlinePath(placements: Array(placements.dropLast())) }
     func appending(_ placement: String) -> OutlinePath { OutlinePath(placements: placements + [placement]) }
 }

@@ -190,7 +190,7 @@ private struct OutlineRows: View {
                     if let title = outline.crumbs.last {
                         BulletTexts(outline: outline, path: title.path, text: title.text, kind: .title, note: title.note,
                                     noteOpen: outline.notePath == title.path, completed: title.completed, dimmed: title.completed)
-                            .id(title.id)
+                            .id(title.path.titleID)
                             .padding(.vertical, 6)
                     }
                     let looks = SelectedLook.looks(of: outline.rows, selection: outline.selection)
