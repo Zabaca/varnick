@@ -2,7 +2,8 @@
 problem: phone-cant-mark-a-tab-done
 title: The phone's Done is a Mac's Done on another machine's tab, the mark and then End
 summary: In a tab the phone controls, Done sits in the tab view's header bar beside End and always asks first. The host marks the tab done, and then the tab is ended as End ends it. A tab the phone made ends and goes to Completed. Any other tab is handed back to its host, keeps running there and shows in Completed as still open. The relay and a Mac's Varnick start letting a listed device send `done`, which they refuse today. The request itself is unchanged, so there is no protocol bump and only the host serving the page needs the new build. The phone's Home says Done on a marked tab that still runs. The Macs learn of it as they learn of any mark.
-status: proposed
+status: rejected
+reason: On 2026-10-20 the user chose Done that closes the tab on its host whoever started it, from any device (option 03), relayed by the coordinator, in his words “just provide done globally … i control all these devices, im the one that opens, creates, marks done. there is no someone else today.” This option keeps handing back a tab the asker didn't start.
 ---
 
 ## Solution

@@ -2,7 +2,8 @@
 problem: phone-cant-mark-a-tab-done
 title: The phone's Done closes the tab on its host, as Done there would
 summary: Recommended. In a tab the phone controls, Done sits in the tab view's header bar beside End and always asks first. Then the host closes the whole tab as its own Done does, whoever started it. Every pane ends, terminals and pages included, and the tab goes to Completed and Recent there, so every paired Mac's board shows it Completed. It is one request, `end` for the tab carrying the mark, and the host takes it only from the machine in control. That gives `end` a new meaning, so it needs protocol 33. Without the mark, `end` and the phone's End are unchanged, and so is a Mac's Done. The Macs learn of it through the listing and Recent they already ask for.
-status: proposed
+status: rejected
+reason: On 2026-10-20 the user took this option's shape but made Done global (option 03), relayed by the coordinator, in his words “just provide done globally. before i thought there would be contention over owner but its all me, one user.” Option 03 drops this option's control gate and phone-only Done, and moves Done, Redraw and Restart into a menu instead of the bar.
 ---
 
 ## Solution
