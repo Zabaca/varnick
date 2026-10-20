@@ -4,6 +4,18 @@
 /** How many folders' agents, and agents-last-used entries, the page keeps. */
 export const keptFolders = 30;
 
+/**
+ * The page's name for "no project": the host's own Home folder. Never a host path (those start with a slash), so it can't be taken for one,
+ * and it is what is kept for Home as a project's path is for a project. The server is told `null`, not this (`startFolder`).
+ */
+export const homeFolder = "home:";
+
+/** What the server is sent as a start's folder: a project's path, or null for Home. */
+export const startFolder = (folder) => (folder === homeFolder ? null : folder);
+
+/** A path a kept map may be keyed by: a host path, or Home. Anything else (`__proto__`) is dropped. */
+const isKeptFolder = (folder) => folder.startsWith("/") || folder === homeFolder;
+
 /** The name of a project: the last part of its path. */
 export const projectName = (path) => path.split("/").filter(Boolean).pop() ?? path;
 
@@ -19,8 +31,8 @@ export function parseLast(text) {
     const agents = {};
     if (typeof value.agents === "object" && value.agents !== null && !Array.isArray(value.agents)) {
       for (const [folder, agent] of Object.entries(value.agents)) {
-        // Keys are host paths: nothing else (`__proto__`) is kept.
-        if (folder.startsWith("/") && (typeof agent === "string" || agent === null)) agents[folder] = agent;
+        // Keys are host paths, or Home: nothing else (`__proto__`) is kept.
+        if (isKeptFolder(folder) && (typeof agent === "string" || agent === null)) agents[folder] = agent;
       }
     }
     return { folder: typeof value.folder === "string" ? value.folder : null, agents };
@@ -29,7 +41,7 @@ export function parseLast(text) {
   }
 }
 
-/** The project started last, if the host still lists it. Nothing is picked otherwise. */
+/** The project started last, if the host still lists it (the caller lists Home among the paths). Nothing is picked otherwise. */
 export function pickProject(paths, last) {
   return last.folder !== null && paths.includes(last.folder) ? last.folder : null;
 }
@@ -70,12 +82,12 @@ export function parseProjects(text) {
   }
 }
 
-/** What a kept map of folders to agents is read back as: an object keyed by host paths, or nothing. */
+/** What a kept map of folders to agents is read back as: an object keyed by host paths and Home, or nothing. */
 export function parseKept(text) {
   try {
     const value = JSON.parse(text);
     if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).filter(([folder]) => folder.startsWith("/")));
+    return Object.fromEntries(Object.entries(value).filter(([folder]) => isKeptFolder(folder)));
   } catch {
     return {};
   }
@@ -91,8 +103,8 @@ export function filterProjects(projects, query) {
   });
 }
 
-/** What the session view calls a new session before the host has said: the prompt's first line, else the project's name. */
+/** What the session view calls a new session before the host has said: the prompt's first line, else the project's name (Home's, "Home"). */
 export function startTitle(prompt, folder) {
   const line = prompt.split(/\r?\n/).map((text) => text.trim()).find((text) => text !== "");
-  return line ? line.slice(0, 80) : projectName(folder);
+  return line ? line.slice(0, 80) : folder === homeFolder ? "Home" : projectName(folder);
 }

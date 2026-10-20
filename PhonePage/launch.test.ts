@@ -8,7 +8,7 @@ import {
 } from "./launch";
 import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
 import {
-  filterProjects, keptFolders, parseKept, parseLast, parseProjects, pickAgent, pickProject, projectName, rememberAgents, rememberStart, startTitle,
+  filterProjects, homeFolder, keptFolders, parseKept, parseLast, parseProjects, pickAgent, pickProject, projectName, rememberAgents, rememberStart, startFolder, startTitle,
 } from "./page/newrules.js";
 import { PROTOCOL as V } from "./fixtures/protocol";
 
@@ -47,9 +47,16 @@ describe("what a start may ask", () => {
   });
 
   test("a folder is an absolute one-line path", () => {
-    for (const bad of [undefined, null, 5, "", "relative/path", "~/project", "/with\nnewline", "/with\0nul", "/" + "a".repeat(1100), ["/x"]]) {
+    for (const bad of [undefined, 5, "", "relative/path", "~/project", "/with\nnewline", "/with\0nul", "/" + "a".repeat(1100), ["/x"]]) {
       expect(parseStartBody({ folder: bad })).toMatchObject({ ok: false });
     }
+  });
+
+  test("a null folder asks for the host's Home, and a missing one is still a refusal", () => {
+    expect(parseStartBody({ folder: null, agent: "reviewer", prompt: "hi" })).toEqual({ ok: true, value: { folder: null, agent: "reviewer", prompt: "hi" } });
+    expect(parseStartBody({ folder: null })).toEqual({ ok: true, value: { folder: null, agent: null, prompt: "" } });
+    expect(parseStartBody({ agent: null, prompt: "" })).toMatchObject({ ok: false });
+    expect(parseStartBody({ folder: null, prompt: "-x" })).toMatchObject({ ok: false });
   });
 
   test("an agent's name is short, one line and never an option", () => {
@@ -196,6 +203,32 @@ describe("starting", () => {
     expect(calls[1].fields).toEqual({ start: { id: fixedID, folder, prompt: "" } });
   });
 
+  test("Home asks no project list and sends no folder, so the host starts in its own Home", async () => {
+    const { asker, calls } = fakeRelay({ projects, start: ok({}) });
+    const launched = await startSession(asker, device, "linux box", { folder: null, agent: null, prompt: "hi" }, () => fixedID);
+    expect(launched).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab: null } });
+    expect(calls.map((call) => call.op)).toEqual(["start"]);
+    expect(calls[0].by).toBe(device.id);
+    expect(calls[0].fields).toEqual({ start: { id: fixedID, prompt: "hi" } });
+  });
+
+  test("an agent for Home is judged against the agents the host lists for Home", async () => {
+    const homeAgents = ok({ folder: "/home/alex/.varnick/Home", agents: [{ name: "reviewer", description: "", project: false }] });
+    const found = fakeRelay({ agents: homeAgents, start: ok({}) });
+    expect(await startSession(found.asker, device, "linux box", { folder: null, agent: "reviewer", prompt: "" }, () => fixedID)).toMatchObject({ status: 200 });
+    expect(found.calls.find((call) => call.op === "agents")!.fields).toEqual({});
+    expect(found.calls.find((call) => call.op === "start")!.fields).toEqual({ start: { id: fixedID, prompt: "", agent: "reviewer" } });
+    const missing = fakeRelay({ agents: homeAgents, start: ok({}) });
+    const refused = await startSession(missing.asker, device, "linux box", { folder: null, agent: "nobody", prompt: "" }, () => fixedID);
+    expect(refused.status).toBe(400);
+    expect(missing.calls.some((call) => call.op === "start")).toBe(false);
+  });
+
+  test("a start in Home whose answer was lost is still found by its session", async () => {
+    const { asker } = fakeRelay({ start: { ok: false, error: "The relay didn't answer in time" }, status: ok({ sessions: { [`varnick-${fixedID}`]: { running: true } } }) });
+    expect(await startSession(asker, device, "linux box", { folder: null, agent: null, prompt: "" }, () => fixedID)).toEqual({ status: 200, body: { ok: true, session: `varnick-${fixedID}`, tab: null } });
+  });
+
   test("a folder that isn't one of the host's projects never starts anything", async () => {
     const { asker, calls } = fakeRelay({ projects, start: ok({}) });
     const launched = await startSession(asker, device, "linux box", { folder: "/etc", agent: null, prompt: "" }, () => fixedID);
@@ -324,6 +357,20 @@ describe("New session's preselection", () => {
     expect(parseLast(JSON.stringify(last))).toEqual(last);
     for (const text of ["", "null", "[]", "{", "5", '{"folder":5,"agents":7}']) expect(parseLast(text)).toEqual({ folder: null, agents: {} });
     expect(parseLast('{"folder":"/p/one","agents":{"__proto__":"x","/p/one":"a","/p/two":3}}')).toEqual({ folder: "/p/one", agents: { "/p/one": "a" } });
+  });
+
+  test("Home is a choice of its own: kept, picked and its agents remembered like a project's", () => {
+    expect(homeFolder.startsWith("/")).toBe(false);
+    expect(startFolder(homeFolder)).toBeNull();
+    expect(startFolder("/p/one")).toBe("/p/one");
+    const last = rememberStart(parseLast(""), homeFolder, "reviewer");
+    expect(pickProject([homeFolder, ...paths], last)).toBe(homeFolder);
+    expect(pickAgent(["reviewer"], last, homeFolder)).toBe("reviewer");
+    expect(parseLast(JSON.stringify(last))).toEqual(last);
+    const cache = rememberAgents({}, homeFolder, [{ name: "a" }]);
+    expect(parseKept(JSON.stringify(cache))).toEqual(cache);
+    expect(startTitle("", homeFolder)).toBe("Home");
+    expect(startTitle("fix it\nmore", homeFolder)).toBe("fix it");
   });
 
   test("what is kept is capped, the oldest first to go", () => {

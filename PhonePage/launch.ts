@@ -46,19 +46,21 @@ export function isAgentName(value: unknown): value is string {
 }
 
 export interface StartAsk {
-  folder: string;
+  /** A project's path, or null for the host's Home: the host starts in its own Home folder when the `start` names none. */
+  folder: string | null;
   agent: string | null;
   prompt: string;
 }
 
 /**
- * `POST /api/start`'s body: `folder`, `agent` and `prompt`, and nothing else is read. The prompt may be empty, as on a Mac.
+ * `POST /api/start`'s body: `folder`, `agent` and `prompt`, and nothing else is read. The folder is a host path, or `null` for Home (no
+ * project); one that is missing is a refusal, so a malformed request never starts in Home by accident. The prompt may be empty, as on a Mac.
  * A prompt that starts with a dash is refused until every host puts `--` before the prompt (`ClaudeCommand.arguments`): an
  * older host's claude would read it as an option. Remove that check once they all do.
  */
 export function parseStartBody(body: unknown): Parsed<StartAsk> {
   if (!isObject(body)) return refuse("The request wasn't a JSON object");
-  if (!isFolder(body.folder)) return refuse("Pick a project");
+  if (body.folder !== null && !isFolder(body.folder)) return refuse("Pick a project, or Home");
   const claude = readClaude(body);
   return claude.ok ? { ok: true, value: { folder: body.folder, ...claude.value } } : claude;
 }
@@ -298,23 +300,31 @@ async function isRunning(asker: Asker, device: Device, session: string): Promise
   return isObject(entry) && entry.running === true;
 }
 
-/** `start` goes with a new id that only this function makes, the folder, the agent and the prompt, and no `skipPermissions`. */
+/**
+ * `start` goes with a new id that only this function makes, the folder, the agent and the prompt, and no `skipPermissions`. A start in Home
+ * (`folder` null) names no folder and asks for no project list: the host starts in its own Home, and an agent is judged against the agents
+ * it lists for Home (`agents` with no folder), as `/api/agents` does.
+ */
 export async function startSession(asker: Asker, device: Device, host: string, ask: StartAsk, newID: () => string): Promise<Launched> {
+  const { folder } = ask;
   const [projects, agents] = await Promise.all([
-    asker.ask("projects", device.id),
-    ask.agent === null ? Promise.resolve(null) : asker.ask("agents", device.id, { folder: ask.folder }),
+    folder === null ? Promise.resolve(null) : asker.ask("projects", device.id),
+    ask.agent === null ? Promise.resolve(null) : asker.ask("agents", device.id, folder === null ? {} : { folder }),
   ]);
-  const listed = shapeProjects(projects);
-  if ("error" in listed) return failed(502, listed.error);
-  if (!listed.rows.some((project) => project.path === ask.folder)) return failed(400, notAProject(host));
+  if (projects !== null) {
+    const listed = shapeProjects(projects);
+    if ("error" in listed) return failed(502, listed.error);
+    if (!listed.rows.some((project) => project.path === folder)) return failed(400, notAProject(host));
+  }
   if (ask.agent !== null && agents !== null) {
     const known = shapeAgents(agents);
     if ("error" in known) return failed(502, known.error);
-    if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of that project on ${host}`);
+    if (!known.rows.some((agent) => agent.name === ask.agent)) return failed(400, `${ask.agent} isn't an agent of ${folder === null ? "Home" : "that project"} on ${host}`);
   }
   const id = newID();
   const session = sessionNameFor(id);
-  const start: Json = { id, folder: ask.folder, prompt: ask.prompt };
+  const start: Json = { id, prompt: ask.prompt };
+  if (folder !== null) start.folder = folder;
   if (ask.agent !== null) start.agent = ask.agent;
   const started = await asker.ask("start", device.id, { start }, launchTimeoutMs);
   if (started.ok) return { status: 200, body: { ok: true, session, tab: optional(started.reply.tab)?.toLowerCase() ?? null } };
