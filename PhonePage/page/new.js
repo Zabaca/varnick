@@ -1,10 +1,10 @@
-// New session: the host's projects (most recent first, with a filter), the chosen project's agents as chips, a large prompt
-// box and Start. What was started last is preselected, so the usual case is one tap and a prompt. Start asks the server
-// (`POST /api/start`), which checks everything and picks the session's id; on success the page opens the terminal with
+// New session: Home (no project: the host's own Home folder) above the host's projects (most recent first, with a filter), the
+// chosen folder's agents as chips, a large prompt box and Start. What was started last is preselected, so the usual case is one
+// tap and a prompt. Start asks the server (`POST /api/start`), which checks everything and picks the session's id; on success the page opens the terminal with
 // take (app.js, `started`). Everything the host sent goes in with textContent, never as markup.
 
 import { element, getJSON, postJSON, shortFolder } from "/dom.js";
-import { filterProjects, parseKept, parseLast, parseProjects, pickAgent, pickProject, projectName, rememberAgents, rememberStart, startTitle } from "/newrules.js";
+import { filterProjects, homeFolder, parseKept, parseLast, parseProjects, pickAgent, pickProject, projectName, rememberAgents, rememberStart, startFolder, startTitle } from "/newrules.js";
 
 const $ = (id) => document.getElementById(id);
 const keys = { last: "new.last", projects: "new.projects", agents: "new.agents" };
@@ -30,9 +30,25 @@ function updateStart(s) {
 // ---------------------------------------------------------------------------------------------------------------
 // Projects
 
+/** One row of the list: a project, or Home. `value` is what `s.folder` becomes when it is tapped. */
+function projectRow(s, value, name, detail, title) {
+  const button = element("button", "project");
+  button.type = "button";
+  button.setAttribute("role", "radio");
+  button.setAttribute("aria-checked", String(value === s.folder));
+  button.dataset.path = value;
+  button.append(element("span", "project-name", name));
+  const path = element("span", "project-path", detail);
+  path.title = title;
+  button.append(path);
+  return button;
+}
+
 function renderProjects(s) {
   const box = $("projects");
   box.replaceChildren();
+  // Home needs no list from the host, so it shows (and starts) while the projects load, fail or are none.
+  box.append(projectRow(s, homeFolder, "Home", "No project", "Varnick's Home folder on this host"));
   const shown = filterProjects(s.projects, s.query);
   if (s.projects.length === 0) {
     const note = s.projectsError ?? (s.projectsLoaded ? "This host has no projects. Add a project folder on it." : "Loading projects…");
@@ -41,16 +57,7 @@ function renderProjects(s) {
   }
   if (shown.length === 0) box.append(element("p", "empty", "No project matches."));
   for (const project of shown) {
-    const button = element("button", "project");
-    button.type = "button";
-    button.setAttribute("role", "radio");
-    button.setAttribute("aria-checked", String(project.path === s.folder));
-    button.dataset.path = project.path;
-    button.append(element("span", "project-name", projectName(project.path)));
-    const path = element("span", "project-path", shortFolder(project.path));
-    path.title = project.path;
-    button.append(path);
-    box.append(button);
+    box.append(projectRow(s, project.path, projectName(project.path), shortFolder(project.path), project.path));
   }
   if (s.projectsError) box.append(element("p", "error", s.projectsError));
 }
@@ -59,10 +66,10 @@ function applyProjects(s, projects, fromCache) {
   s.projects = projects;
   s.projectsLoaded = !fromCache;
   s.projectsError = null;
-  // A project the user hasn't picked is the one started last, if the host still has it; one picked or kept stays while listed.
-  if (s.folder !== null && !projects.some((project) => project.path === s.folder)) s.folder = null;
+  // A project the user hasn't picked is the one started last, if the host still has it; one picked or kept stays while listed. Home always is.
+  if (s.folder !== null && s.folder !== homeFolder && !projects.some((project) => project.path === s.folder)) s.folder = null;
   if (s.folder === null && !s.projectTouched) {
-    const pick = pickProject(projects.map((project) => project.path), s.last);
+    const pick = pickProject([homeFolder, ...projects.map((project) => project.path)], s.last);
     if (pick !== null) chooseProject(s, pick, false);
   }
   renderProjects(s);
@@ -133,7 +140,8 @@ async function loadAgents(s, folder) {
   const kept = parseKept(read(keys.agents));
   if (Array.isArray(kept[folder])) applyAgents(s, folder, kept[folder].filter((agent) => agent && typeof agent.name === "string"));
   else renderAgents(s);
-  const answer = await getJSON(`/api/agents?folder=${encodeURIComponent(folder)}`);
+  // Home's agents are the host's for no folder at all.
+  const answer = await getJSON(folder === homeFolder ? "/api/agents" : `/api/agents?folder=${encodeURIComponent(folder)}`);
   if (s.closed || s.agentsFor !== folder) return;
   if (!answer.ok) {
     // Chips from an earlier answer stay; with none the error says why there are none.
@@ -157,7 +165,7 @@ async function start(s) {
   const agent = s.agent;
   const prompt = $("prompt").value;
   // The host may have started it all the same: Back shows the open sessions.
-  const result = await postJSON("/api/start", { folder, agent, prompt }, "The host didn't answer. If it started, the session is in Open tabs.");
+  const result = await postJSON("/api/start", { folder: startFolder(folder), agent, prompt }, "The host didn't answer. If it started, the session is in Open tabs.");
   if (s.closed) return;
   s.busy = false;
   updateStart(s);
@@ -187,6 +195,8 @@ export function openNew({ host, started, done }) {
   $("project-filter").value = "";
   $("prompt").value = "";
   setStatus(null);
+  // Home needs no answer from the host, so when it was started last it is picked at once, even if the projects never load.
+  if (s.last.folder === homeFolder) chooseProject(s, homeFolder, false);
   renderProjects(s);
   renderAgents(s);
   updateStart(s);
