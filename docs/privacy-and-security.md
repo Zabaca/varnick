@@ -306,7 +306,7 @@ Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031
 
 The same holds in a tab that the phone or another Mac is driving: a session there can read every terminal screen, the board, and what this
 Mac's panel shows, including, when the Outline shows, its zoom path, its filter and the start of the bullet the caret is in, search and read sessions, and open panes in the tab for that machine. It
-cannot press keys, change what the panel shows or open a found result in the panel or the browser from there, only beside its own pane for that machine.
+cannot press keys, change what the panel shows or open a found result beside its own pane for that machine, and a plain `find_open` there still opens on this Mac's screen (a tab brought up or reopened, or a page in the default browser) where that user is not looking.
 
 What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of

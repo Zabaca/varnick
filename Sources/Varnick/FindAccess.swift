@@ -149,15 +149,16 @@ extension PanelAccess {
             }
             place = found
         }
-        if place == nil { try await refuseInControlledTab(model, caller: caller) }
+        var controlledBy: String?
+        if place == nil { controlledBy = try await controllerName(model, caller: caller) }
         switch (args.text("conversation"), args.text("address")) {
-        case (let conversation?, nil): return try await openSession(conversation, place: place, model, caller: caller)
-        case (nil, let address?): return try await openPage(address, place: place, model, caller: caller)
+        case (let conversation?, nil): return try await openSession(conversation, place: place, controlledBy: controlledBy, model, caller: caller)
+        case (nil, let address?): return try await openPage(address, place: place, controlledBy: controlledBy, model, caller: caller)
         default: throw PanelRefusal.bad("Give one of conversation or address")
         }
     }
 
-    private func openSession(_ conversation: String, place: OpenedPanePlace?, _ model: LauncherModel, caller: UUID) async throws -> Answered {
+    private func openSession(_ conversation: String, place: OpenedPanePlace?, controlledBy: String?, _ model: LauncherModel, caller: UUID) async throws -> Answered {
         let store = model.store
         guard let row = store.sessionRow(conversation: conversation) else {
             throw PanelRefusal.bad("No such session in the index. Conversation ids come from find")
@@ -170,7 +171,8 @@ extension PanelAccess {
         guard let place else {
             // What Return does, so the refusals are `show`'s: it changes what the panel shows.
             guard panelWindow?.isVisible == true else {
-                throw PanelRefusal.bad("The panel is hidden, and opening a session changes what it shows: ask the user to open the panel first")
+                throw PanelRefusal.bad("The panel is hidden, and opening a session changes what it shows"
+                                       + (controlledBy == nil ? ": ask the user to open the panel first" : " (nobody can open it from a tab another device controls): use place: beside to put it in this tab"))
             }
             try refuseWhileBusy(model)
             let target = model.groupedByTab([row]).first { $0.isSession } ?? row
@@ -188,7 +190,7 @@ extension PanelAccess {
             case .resumedOnPeer: said = "Resumed on \(name), in a new tab here."
             case .nothing: throw PanelRefusal.refused("it has no tab to open")
             }
-            return Answered(text: said + pane, action: "session")
+            return Answered(text: said + pane + Self.controlledNote(controlledBy), action: "session" + (controlledBy == nil ? "" : " controlled"))
         }
 
         if let host = row.host {
@@ -217,7 +219,7 @@ extension PanelAccess {
                         action: "session " + place.rawValue + (controller == nil ? "" : " controlled"))
     }
 
-    private func openPage(_ address: String, place: OpenedPanePlace?, _ model: LauncherModel, caller: UUID) async throws -> Answered {
+    private func openPage(_ address: String, place: OpenedPanePlace?, controlledBy: String?, _ model: LauncherModel, caller: UUID) async throws -> Answered {
         guard let url = ClaudeSession.httpURL(from: address) else { throw PanelRefusal.bad("address must be an http or https address") }
         guard model.store.pageRow(address: address) ?? model.store.pageRow(address: url.absoluteString) != nil else {
             throw PanelRefusal.bad("That address is not a page or bookmark in the user's history or bookmarks. Addresses come from find")
@@ -225,14 +227,15 @@ extension PanelAccess {
         guard let place else {
             if userTypedRecently { throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds") }
             if let last = lastFoundPage, last.address == url.absoluteString, last.at.duration(to: .now) < Self.pageReopenQuiet {
-                return Answered(text: "That address was opened a moment ago. Nothing was opened again.", action: "page")
+                return Answered(text: "That address was opened a moment ago. Nothing was opened again.", action: "page" + (controlledBy == nil ? "" : " controlled"))
             }
             lastFoundPage = (url.absoluteString, .now)
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
             NSWorkspace.shared.open(url, configuration: configuration) { _, _ in }
             return Answered(text: "Opened in the user's default browser, behind the app in front. The panel was not hidden and the browser was not brought forward: "
-                            + "the page is there when the user switches to it.", action: "page")
+                            + "the page is there when the user switches to it." + Self.controlledNote(controlledBy),
+                            action: "page" + (controlledBy == nil ? "" : " controlled"))
         }
         let (tab, session, controller) = try await placingTab(model, caller: caller)
         do {
@@ -266,12 +269,22 @@ extension PanelAccess {
         return (tab, session, controller)
     }
 
-    /// `find_open` with no `place` shows and opens on this Mac, which a tab another machine controls does not take from here: the line says what does.
-    private func refuseInControlledTab(_ model: LauncherModel, caller: UUID) async throws {
-        guard case .controlled(let tab, _) = CallingPane.find(caller.uuidString, in: model) else { return }
-        var who = "another Mac or a device"
-        if case .machine(let machine) = await model.controller(of: tab) { who = PeerManager.shared.name(of: machine) }
-        throw PanelRefusal.bad("This tab is controlled by \(who): find_open can only open a result beside this session here (place: beside or below). find and session_read still work.")
+    /// The machine in control of the calling pane's tab, named, when another one is; nil in a tab this Mac holds. A plain `find_open` opens on this
+    /// Mac's screen whoever controls the tab, and the reply says so. The caller is checked again after the wait, before anything opens.
+    private func controllerName(_ model: LauncherModel, caller: UUID) async throws -> String? {
+        guard let (tab, _) = CallingPane.find(caller.uuidString, in: model).located else { throw PanelRefusal.noPane }
+        let isCard: Bool = if case .controlled = CallingPane.find(caller.uuidString, in: model) { true } else { false }
+        var name: String? = isCard ? "another Mac or a device" : nil
+        if tab.sessions.contains(where: \.runsInZmx), case .machine(let machine) = await model.controller(of: tab) {
+            name = PeerManager.shared.name(of: machine)
+        }
+        guard CallingPane.find(caller.uuidString, in: model).located != nil else { throw PanelRefusal.noPane }
+        return name
+    }
+
+    /// What a plain `find_open` adds when its tab is controlled by another machine: the result is on this Mac, not in front of that user.
+    private static func controlledNote(_ who: String?) -> String {
+        who.map { " This tab is controlled by \($0), so it is not in front of the user there. Use place: beside to put it in this tab." } ?? ""
     }
 }
 
