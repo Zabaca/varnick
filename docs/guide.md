@@ -386,6 +386,15 @@ phone controls, too: the pane is added for that machine and shows there within a
 or terminal pane that machine has open at that moment. The reads work there as anywhere; what presses keys or
 changes the view does not (docs/agents/where-it-breaks.md, Panel access, has the list). Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
+Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
+your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,
+this Mac's open sessions first), each result marked Claude session, page or bookmark, and a session with its project, Mac, when it was used, its tab and whether that is Open, Closed or Done,
+the part that matched and its conversation id. `project`, `mac`, `agent`, `from` and `to` narrow the sessions as `#project`, `^mac` and `@agent` do. `session_read` gives one session's prompts and what Claude
+wrote, never tool calls or their output, about 40,000 characters a call with the call that continues it; a paired Mac's session gives its prompts and Claude's last reply after each. `find_open`
+does what Return does on a result: a session's tab comes up, a closed tab reopens or the conversation resumes in a new tab (which starts Claude on your plan), and a page opens in your default browser
+behind the app in front. With `place`, the result opens beside the session's own pane instead. **What they return goes to Anthropic with the session, your history's addresses and titles included.** Pages are
+never sent to TypeSafe or judged for relevance, so a page your `?` search would lift can sit lower here.
+
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
 board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows
 that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`, `resources`).

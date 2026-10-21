@@ -14,6 +14,22 @@ struct TabRef: Hashable {
     var key: String { (host ?? "") + "|" + id.uuidString }
 }
 
+/// What opening a found session did (`LauncherModel.openMatch`).
+enum FoundOpening {
+    /// Its tab, open here, came up.
+    case broughtUp
+    /// A paired Mac's open tab opened on cards.
+    case openedOnCards
+    /// A closed tab came back whole from Completed, Recent or the ended cards.
+    case reopened
+    /// The conversation was resumed alone in a new tab here.
+    case resumed
+    /// The conversation was resumed on the paired Mac that holds it.
+    case resumedOnPeer
+    /// A tab row with no tab to open.
+    case nothing
+}
+
 extension ClaudeTab {
     func matches(_ ref: TabRef) -> Bool { id == ref.id && host == ref.host }
 }

@@ -41,7 +41,7 @@ enum PanelMCP {
     /// The tools of the set, as `tools/list` gives them: `panel`, then each registered view's, built from the views' own static specs so a
     /// view joins by adopting the protocol (`PanelViews`) with no change here.
     static var tools: [[String: Any]] {
-        [panel, show, keys] + PanelViews.all.flatMap { view in
+        [panel, show, keys] + FindMCP.tools + PanelViews.all.flatMap { view in
             var list = [tool("\(view.name)_read", view.readSpec)]
             if !view.actionSpecs.isEmpty { list.append(actTool(view.name, view.actionSpecs)) }
             return list

@@ -15,7 +15,7 @@ struct RelevanceSearch {
     /// The conversations a pane on this Mac is on, whose sessions rank first among the matches.
     let openHere: () -> Set<String>
 
-    static let resultLimit = 40
+    nonisolated static let resultLimit = 40
     static let candidateLimit = 60   // per list, before fusion
     static let rrfK = 60.0
     /// How many pages the filter judges, from the top of the fused ranking.
@@ -81,25 +81,14 @@ struct RelevanceSearch {
         guard !words.isEmpty else {
             return store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
         }
-        let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
-        // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
-        // they match none the most recently used come first.
-        let selecting = !filter.folderNames.isEmpty || filter.window != nil
-        var semantic: [(id: Int64, score: Float)] = []
+        var vector: [Float]?
         do {
-            if let (vector, _) = try await embedQuery(words) {
-                semantic = store.semanticSessions(vector, limit: Self.candidateLimit, filter: filter)
-            }
+            vector = try await embedQuery(words)?.vector
         } catch {
             // A failure costs the meaning pass only: the keyword matches stay.
             try Task.checkCancellation()
         }
-        var found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
-                         semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
-                         promoted: store.rowIDs(ofSessions: openHere()))
-        if found.isEmpty, selecting {
-            found = store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
-        }
+        var found = rankedSessions(words: words, filter: filter, vector: vector, limit: limit)
         if let boost {
             var window = filter
             window.window = boost
@@ -107,6 +96,25 @@ struct RelevanceSearch {
             found = found.filter { inside.contains($0.id) } + found.filter { !inside.contains($0.id) }
         }
         return Array(found.prefix(limit))
+    }
+
+    /// The sessions `filter` keeps ranked for `words` (not empty) as the panel ranks a project's sessions: keyword matches and the words' meaning
+    /// (`vector`, when an embedder answered) fused, this Mac's open conversations first, and the similarity floor unless a project or a window chose
+    /// the sessions. The spoken request and a session's `find` share it. `limit` only matters for the fallback: when the words match none of the
+    /// sessions a project or a window chose, its most recently used come first. The candidates come back (`candidateLimit`) for the caller to cut.
+    func rankedSessions(words: String, filter: SessionFilter, vector: [Float]?, limit: Int) -> [SearchResult] {
+        let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
+        // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
+        // they match none the most recently used come first.
+        let selecting = !filter.folderNames.isEmpty || filter.window != nil || filter.folder != nil
+        let semantic = vector.map { store.semanticSessions($0, limit: Self.candidateLimit, filter: filter) } ?? []
+        var found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
+                         semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
+                         promoted: store.rowIDs(ofSessions: openHere()))
+        if found.isEmpty, selecting {
+            found = store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
+        }
+        return found
     }
 
     /// Why `words` get no judge.

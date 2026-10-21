@@ -31,6 +31,8 @@ Out of the box, two things:
   description. They go to the sites you visited.
 - **Model downloads from Hugging Face,** when you ask, at fixed revisions.
 
+A third goes with the Claude sessions you start, which have no switch to refuse it: they can read Varnick's panel and search your sessions and
+browsing history through it, and what they read goes to Anthropic ([Anthropic, through Panel access](#anthropic-through-panel-access)).
 Everything else leaves only when you turn it on.
 
 ### Paired Macs
@@ -298,12 +300,13 @@ Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031
 - **read the screen of any terminal pane, secrets included,** other sessions' and shells' too, which goes to Anthropic with the session;
 - **read the session board and, with the Outline on, your Outline,** and change the Outline without asking;
 - **change what the panel shows and press keys in it,** while it is open and you are not typing in it;
+- **search your Claude sessions, browsing history and bookmarks, read other sessions' prompts and Claude's text, and open what they find,** which goes to Anthropic with the session (below);
 - **open panes beside its own:** a terminal, a Claude session that draws on your Claude subscription, a custom app whose code runs outside
   Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below).
 
 The same holds in a tab that the phone or another Mac is driving: a session there can read every terminal screen, the board, and what this
-Mac's panel shows, including, when the Outline shows, its zoom path, its filter and the start of the bullet the caret is in, and open panes in the tab for that machine. It
-cannot press keys or change what the panel shows from there.
+Mac's panel shows, including, when the Outline shows, its zoom path, its filter and the start of the bullet the caret is in, search and read sessions, and open panes in the tab for that machine. It
+cannot press keys, change what the panel shows or open a found result in the panel from there.
 
 What they read goes to Anthropic with the session and stays
 in its transcript on this Mac: whether the panel is visible, key and pinned; what it shows, with the names and kinds of
@@ -347,6 +350,21 @@ to the panel's own key handling, as your keys go. Nothing is sent to another app
 the panel is open with the keyboard, never opens it, and stops at once when you type in it. It never presses the keys that end,
 mark done or restart a session, Varnick's shortcuts that work anywhere, quit, paste, or Return where it would start a Claude
 session, turn on Listening or open a page. Varnick's log holds the tool and counts, never the keys.
+
+A session can also search your Claude sessions, browsing history and bookmarks (`find`), read another session (`session_read`) and open what it finds
+(`find_open`), with no switch. `find` ranks as the panel's search does, on this Mac, from this Mac's index and your paired Macs' copies. It answers
+up to 20 sessions (each with its name, folder, Mac, agent, first and last use, tab and standing, the pane here that is on it, an excerpt of a prompt or
+of the exchange that matched, and its conversation id) and up to 40 pages and bookmarks (each with its address, title, site, last visit, the Mac that
+alone visited it, an excerpt, and its description, the History title when it differs and the search terms that led to it, cut to 300 characters).
+`session_read` gives a session's prompts and everything Claude wrote in text, never a tool call, a tool's output or thinking, so a command's output or a
+file a session read is not in it; a paired Mac's session gives the prompts it sent and Claude's last reply after each, cut to 1,000 characters.
+**All of it goes to Anthropic with the session and stays in its transcript on this Mac, your browsing history's addresses and titles included.** Chrome
+profile names and bookmark folders are not sent. Nothing goes to TypeSafe: a page is ranked by words and meaning and never judged for relevance,
+so the relevance filter's model is not loaded for it. A session's own raw transcript was always readable by its file tools; these tools add the
+ranking, your paired Macs' sessions, your history and the tabs. `find_open` can start a Claude session on your plan, bring a tab to the front while the
+panel is up (as Return would), and open a page in your default browser, which loads it with your cookies for that site, behind the app in front,
+or in a Browser pane beside the session. It opens only a page that is in your history or bookmarks. Varnick's log holds the tool, the outcome's kind,
+counts and the time, never a query, a name, an address or a conversation id.
 
 Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page
 or a file beside their own pane, in their own tab on this Mac, and close the panes they opened until you first use one. They read
