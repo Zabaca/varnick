@@ -27,13 +27,17 @@ export async function getJSON(url) {
   }
 }
 
-/** POST a JSON body: the JSON the server answered with, or `{ok: false, error}`. `lost` is what a request that got no answer says. */
-export async function postJSON(url, body, lost) {
+/**
+ * POST a JSON body: the JSON the server answered with, or `{ok: false, error}`. `lost` is what a request that got no answer says. `keepalive` lets the request finish
+ * after the page is gone (a save as the page goes out of view); a browser allows it for bodies under 64 KB.
+ */
+export async function postJSON(url, body, lost, { keepalive = false } = {}) {
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify(body),
+      ...(keepalive && { keepalive: true }),
     });
     const result = await response.json().catch(() => ({}));
     return response.ok && result.ok === true ? result : { ...result, ok: false, error: refused(response, result) };

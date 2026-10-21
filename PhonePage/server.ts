@@ -260,6 +260,8 @@ async function main(): Promise<void> {
     "/voice.js": { file: "page/voice.js", type: js },
     "/voicerules.js": { file: "page/voicerules.js", type: js },
     "/voice-worklet.js": { file: "page/voice-worklet.js", type: js },
+    "/outline.js": { file: "page/outline.js", type: js },
+    "/outlinerules.js": { file: "page/outlinerules.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
