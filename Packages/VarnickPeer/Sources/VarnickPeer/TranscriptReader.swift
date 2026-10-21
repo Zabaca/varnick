@@ -439,7 +439,11 @@ extension TranscriptReader {
 /// A task the `Stop` input lists as running (`PaneFolder.runningTasks`).
 struct RunningTask: Equatable {
     enum Kind: String {
-        case shell, subagent, teammate
+        case shell, subagent, teammate, workflow
+
+        /// A shell or workflow never runs again under its id (a resumed workflow gets a new one), so a notification of
+        /// its end counts whenever it came; a subagent or teammate runs again when sent a message.
+        var endsForGood: Bool { self == .shell || self == .workflow }
     }
 
     var id: String
@@ -457,79 +461,54 @@ struct StopInput {
 extension TranscriptReader {
     private static let endedStatuses: Set<String> = ["completed", "failed", "killed", "stopped"]
 
-    /// Workflows are the last `turn_duration` in the 64 KB tail's `pendingWorkflowCount` (none if it is older than `since`
-    /// or before the tail), less those notified ended after it. Shells, agents and teammates are the Stop input's tasks,
-    /// less those notified ended in the tail; a teammate counts only while it is busy (`busyTeammates`), which reads the
-    /// pane's `earlier` conversations too.
+    /// The Stop input's tasks, less those notified ended in the 64 KB tail; a teammate counts only while it is busy
+    /// (`busyTeammates`), which reads the pane's `earlier` conversations too.
     /// The same tail read gives the API error (`apiFailure`), which counts only with no background work.
     static func endOfWaitingTurn(path: String, since: Date, input: StopInput, earlier: [String]) -> (work: BackgroundWork, failure: TurnFailure?) {
         guard let (tail, startsMidLine) = readTail(path) else { return (BackgroundWork(), nil) }
-        var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)
+        var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, input: input)
         if !teammates.isEmpty { work.teammates = busyTeammates(path: path, earlier: earlier, among: teammates) }
         return (work, work.isEmpty ? apiFailure(tail: tail, startsMidLine: startsMidLine, since: since) : nil)
     }
 
     /// The count without teammates, which need the rest of the transcript, and the teammates not notified ended. A shell's
-    /// end counts whenever it came; a subagent's only after the input was saved, since a message runs it again.
-    static func pendingBackground(tail: Data, startsMidLine: Bool, since: Date, input: StopInput)
+    /// or workflow's end counts whenever it came (`RunningTask.Kind.endsForGood`); a subagent's only after the input was saved.
+    static func pendingBackground(tail: Data, startsMidLine: Bool, input: StopInput)
         -> (work: BackgroundWork, teammates: [RunningTask]) {
+        if input.tasks.isEmpty { return (BackgroundWork(), []) }
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
         if startsMidLine, !lines.isEmpty { lines.removeFirst() }
         let dates = dateParser()
         let saved = input.savedAt - PaneFolder.staleWindow
-        var endedWorkflows = 0
-        // The last turn end's count, once the scan back from the end reaches it. With tasks to check, the scan goes on
-        // to collect the ids of every task a notification says ended (a shell, an agent, or a Monitor's stream); without, it stops.
-        var workflows: Int?
+        // The ids of every task a notification says ended (a shell, an agent, a workflow, or a Monitor's stream).
         var ended = Set<String>(), endedSinceSaved = Set<String>(), stoppedByUser = [String]()
-        // A task that stops with no live children of its own notifies each time, so a single one counts once. A bulk
-        // notification never dedupes: counting too many only hides a card in Stopped, too few shows a false Running.
-        var notified = Set<String>()
         for line in lines.reversed() {
-            let isEnd = line.withUnsafeBytes { has($0, "\"subtype\":\"turn_duration\"") }
-            guard isEnd || line.withUnsafeBytes({ has($0, "\"kind\":\"task-notification\"") || has($0, "\"commandMode\":\"task-notification\"") }),
-                  let entry = line.withUnsafeBytes({ object($0) }), entry["isSidechain"] as? Bool != true else { continue }
-            if isEnd {
-                guard workflows == nil, entry["type"] as? String == "system", entry["subtype"] as? String == "turn_duration" else { continue }
-                if let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)), at >= since - PaneFolder.staleWindow {
-                    workflows = max(0, (entry["pendingWorkflowCount"] as? Int ?? 0) - endedWorkflows)
-                } else {
-                    workflows = 0
-                }
-                if input.tasks.isEmpty { break }
-                continue
-            }
-            guard let (text, midTurn) = notificationText(entry) else { continue }
+            guard line.withUnsafeBytes({ has($0, "\"kind\":\"task-notification\"") || has($0, "\"commandMode\":\"task-notification\"") }),
+                  let entry = line.withUnsafeBytes({ object($0) }), entry["isSidechain"] as? Bool != true,
+                  let text = notificationText(entry) else { continue }
             let afterSaved = (entry["timestamp"] as? String).flatMap(dates.date(from:)).map { $0 >= saved } ?? true
             // A stop by the user is plain text with the agents' descriptions, not their ids.
             if afterSaved { stoppedByUser += stoppedDescriptions(in: text) }
-            let status = between(text, "<status>", "</status>")
-            if let status, !endedStatuses.contains(status) { continue }
-            let id = between(text, "<task-id>", "</task-id>")
-            if status != nil, let id {
-                ended.insert(id)
-                if afterSaved { endedSinceSaved.insert(id) }
-            }
-            guard !midTurn, workflows == nil, let summary = between(text, "<summary>", "</summary>"),
-                  let work = endedBy(summary: summary), work.workflows > 0 else { continue }
-            if work.workflows == 1, let id, !notified.insert(id).inserted { continue }
-            endedWorkflows += work.workflows
+            guard let status = between(text, "<status>", "</status>"), endedStatuses.contains(status),
+                  let id = between(text, "<task-id>", "</task-id>") else { continue }
+            ended.insert(id)
+            if afterSaved { endedSinceSaved.insert(id) }
         }
         // A stop names a description, so it removes the tasks with that description only if no more are running than it
         // names: otherwise it can't be told which was stopped, and showing Running is the cheaper mistake.
         var stopped = Set<String>()
         for (description, count) in Dictionary(stoppedByUser.map { ($0, 1) }, uniquingKeysWith: +) {
-            let named = input.tasks.filter { $0.kind != .shell && $0.description == description }
+            let named = input.tasks.filter { !$0.kind.endsForGood && $0.description == description }
             if named.count <= count { stopped.formUnion(named.map(\.id)) }
         }
         let live = input.tasks.filter { task in
-            task.kind == .shell ? !ended.contains(task.id) : !endedSinceSaved.contains(task.id) && !stopped.contains(task.id)
+            task.kind.endsForGood ? !ended.contains(task.id) : !endedSinceSaved.contains(task.id) && !stopped.contains(task.id)
         }
         func count(_ kind: RunningTask.Kind) -> Int { live.filter { $0.kind == kind }.count }
-        return (BackgroundWork(agents: count(.subagent), workflows: workflows ?? 0, shells: count(.shell)), live.filter { $0.kind == .teammate })
+        return (BackgroundWork(agents: count(.subagent), workflows: count(.workflow), shells: count(.shell)), live.filter { $0.kind == .teammate })
     }
 
-    /// The descriptions a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped
+/// The descriptions a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped
     /// by the user.`, or `N background agents were stopped by the user: "…", "…".` Each is the task's own description,
     /// which Claude Code cut at 50 characters and "..." if it made it from the prompt, so it matches whole.
     private static func stoppedDescriptions(in text: String) -> [String] {
@@ -541,34 +520,20 @@ extension TranscriptReader {
     }
 
     /// A task notification's text: a user entry, which starts a turn, or an `attachment` (`queued_command`), which is how
-    /// an end in mid-turn arrives (`midTurn`); only the first counts workflows, both end tasks.
-    private static func notificationText(_ entry: [String: Any]) -> (text: String, midTurn: Bool)? {
+    /// an end in mid-turn arrives.
+    private static func notificationText(_ entry: [String: Any]) -> String? {
         switch entry["type"] as? String {
         case "user":
             guard (entry["origin"] as? [String: Any])?["kind"] as? String == "task-notification",
                   let content = (entry["message"] as? [String: Any])?["content"] else { return nil }
-            return (text(of: content), false)
+            return text(of: content)
         case "attachment":
             guard let attachment = entry["attachment"] as? [String: Any], attachment["type"] as? String == "queued_command",
-                  attachment["commandMode"] as? String == "task-notification", let prompt = attachment["prompt"] as? String
-            else { return nil }
-            return (prompt, true)
+                  attachment["commandMode"] as? String == "task-notification" else { return nil }
+            return attachment["prompt"] as? String
         default:
             return nil
         }
-    }
-
-    /// What a notification's summary says ended: "Agent "…" finished", "Background agent …", "Dynamic workflow …",
-    /// "Background workflow …", or "N background agents were stopped by the user". Claude Code's English text.
-    private static func endedBy(summary: String) -> BackgroundWork? {
-        let words = summary.split(separator: " ")
-        if words.count > 3, let count = Int(words[0]), words[1] == "background" {
-            if words[2].hasPrefix("agent") { return BackgroundWork(agents: count) }
-            if words[2].hasPrefix("workflow") { return BackgroundWork(workflows: count) }
-        }
-        if summary.hasPrefix("Agent \"") || summary.hasPrefix("Background agent") { return BackgroundWork(agents: 1) }
-        if summary.hasPrefix("Dynamic workflow") || summary.hasPrefix("Background workflow") { return BackgroundWork(workflows: 1) }
-        return nil
     }
 }
 
