@@ -78,7 +78,7 @@ enum FindMCP {
             + "to it. With `place` (beside or below) the result opens next to this session's own pane instead, placed as `pane_open` places a pane, with focus and the panel "
             + "as they were and working with the panel hidden: a session is resumed in a new Claude pane there (never skipping permission checks when this session does not; "
             + "refused for a conversation already open in a pane here, which `show` brings up, and for a paired Mac's, which needs the form without `place`), a page in a "
-            + "Browser pane. Open only what the user asked for or the work plainly needs. It never ends, marks or types into a session.",
+            + "Browser pane. In a tab another Mac or a device controls only `place` works (the pane is added for that machine and shows there within about 5 seconds); without it the call is refused. Open only what the user asked for or the work plainly needs. It never ends, marks or types into a session.",
         properties: [
             "conversation": ["type": "string", "description": "A session's conversation id, from `find`."],
             "address": ["type": "string", "description": "A page's or bookmark's address, from `find`."],

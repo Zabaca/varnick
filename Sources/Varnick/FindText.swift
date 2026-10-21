@@ -42,7 +42,7 @@ enum FindText {
         var first = "Nothing matched."
         if !sessions.isEmpty || !pages.isEmpty {
             let counts = [sessions.isEmpty ? nil : "\(sessions.count) session\(sessions.count == 1 ? "" : "s")"
-                          + (fellBack ? " (none matched the words: the most recently used in that project or time)" : ""),
+                          + (fellBack ? " (nothing matched: these are the most recently used in that project or time)" : ""),
                           pages.isEmpty ? nil : "\(pages.count) page\(pages.count == 1 ? "" : "s")"].compactMap { $0 }
             first = counts.joined(separator: " and ") + (fellBack && pages.isEmpty ? "." : ", best first.")
         }

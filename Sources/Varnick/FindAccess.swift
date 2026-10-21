@@ -149,6 +149,7 @@ extension PanelAccess {
             }
             place = found
         }
+        if place == nil { try await refuseInControlledTab(model, caller: caller) }
         switch (args.text("conversation"), args.text("address")) {
         case (let conversation?, nil): return try await openSession(conversation, place: place, model, caller: caller)
         case (nil, let address?): return try await openPage(address, place: place, model, caller: caller)
@@ -193,7 +194,7 @@ extension PanelAccess {
         if let host = row.host {
             throw PanelRefusal.bad("That session is on \(PeerManager.shared.name(of: host)), where it resumes: open it without place")
         }
-        let (tab, session) = try await placingTab(model, caller: caller)
+        let (tab, session, controller) = try await placingTab(model, caller: caller)
         // Checked after the last wait, with nothing awaited before the pane is added, so a conversation is never resumed twice here.
         if let pane = paneHere() {
             throw PanelRefusal.bad("open in \(id(for: pane.id, caller: caller)): use show")
@@ -201,16 +202,19 @@ extension PanelAccess {
         guard FileManager.default.fileExists(atPath: row.url) else { throw PanelRefusal.bad("That session's folder is gone, so it can't be resumed") }
         var record = SessionRecord(id: UUID(), prompt: "", title: row.title, directory: row.url, startedAt: Date(), lastUsed: Date())
         record.openedBy = session.id
+        // In a tab another machine controls every pane takes the tab's origin, so the controller's End still ends a tab made for it.
+        if controller != nil { record.origin = tab.sessions.first(where: \.runsInZmx)?.record.origin }
         record.agent = store.agent(ofSession: row.sessionID, directory: row.url)
         record.conversation = row.sessionID
         // A run's conversation keeps what a run has, and permission checks are skipped only while the setting is on and this session was started
         // skipping them too (where-it-breaks.md, Panel access): the caller's rule only ever lowers a run's own, which Return keeps.
         model.applyRunFields(to: &record)
         if record.skipPermissions != false, !(Settings.shared.skipPermissions && session.record.skippedAtStart == true) { record.skipPermissions = false }
-        let pane = model.addPane(record, app: nil, beside: session, in: tab, axis: place.axis, controller: nil, resuming: true)
-        let shown = SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab."
-        return Answered(text: "Resumed beside this pane as \(id(for: pane.id, caller: caller)). It is not focused: focus and the panel are as they were.\(shown)",
-                        action: "session " + place.rawValue)
+        let pane = model.addPane(record, app: nil, beside: session, in: tab, axis: place.axis, controller: controller, resuming: true)
+        let where_ = controller.map { " This tab is controlled by \(PeerManager.shared.name(of: $0)), so the pane is in the tab for it and shows there within about 5 seconds." }
+            ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
+        return Answered(text: "Resumed beside this pane as \(id(for: pane.id, caller: caller)). It is not focused: focus and the panel are as they were.\(where_)",
+                        action: "session " + place.rawValue + (controller == nil ? "" : " controlled"))
     }
 
     private func openPage(_ address: String, place: OpenedPanePlace?, _ model: LauncherModel, caller: UUID) async throws -> Answered {
@@ -230,26 +234,44 @@ extension PanelAccess {
             return Answered(text: "Opened in the user's default browser, behind the app in front. The panel was not hidden and the browser was not brought forward: "
                             + "the page is there when the user switches to it.", action: "page")
         }
-        let (tab, session) = try await placingTab(model, caller: caller)
-        var done = try open(["kind": "page", "url": url.absoluteString, "place": place.rawValue], model, tab: tab, caller: session, controller: nil)
-        done.action = "page " + place.rawValue
-        return done
+        let (tab, session, controller) = try await placingTab(model, caller: caller)
+        do {
+            var done = try open(["kind": "page", "url": url.absoluteString, "place": place.rawValue], model, tab: tab, caller: session, controller: controller)
+            done.action = "page " + place.rawValue + (controller == nil ? "" : " controlled")
+            return done
+        } catch let refusal as PanelRefusal where controller != nil {
+            throw PanelRefusal.inControlledTab(refusal)
+        }
     }
 
-    /// The calling pane's tab, for a pane opened beside it: in a tab a session may work in, with no other machine controlling it or holding its layout.
-    private func placingTab(_ model: LauncherModel, caller: UUID) async throws -> (ClaudeTab, ClaudeSession) {
-        let (tab, session) = try Self.callingTab(caller, model)
-        if tab.sessions.contains(where: \.runsInZmx) {
-            switch await model.controller(of: tab) {
-            case .machine, .mixed: throw PanelRefusal.bad("This tab is controlled by another machine, which Varnick doesn't open panes in from here: open it without place")
+    /// The calling pane's tab for a pane opened beside it, as `panes` finds it: a tab a session may work in. `controller` is the machine in control
+    /// of it, for which the pane is added; a tab whose panes are changing hands or whose layout is locked is refused.
+    private func placingTab(_ model: LauncherModel, caller: UUID) async throws -> (tab: ClaudeTab, session: ClaudeSession, controller: String?) {
+        var (tab, session) = try Self.callingTab(caller, model)
+        var controller: String?
+        let running = tab.sessions.filter(\.runsInZmx).map(\.id)
+        if !running.isEmpty {
+            let found = await model.controller(of: tab)
+            (tab, session) = try Self.callingTab(caller, model, was: tab)
+            guard tab.sessions.filter(\.runsInZmx).map(\.id) == running else {
+                throw PanelRefusal.bad("This tab changed while the pane was being worked on: try again in a moment")
+            }
+            switch found {
+            case .machine(let machine): controller = machine
+            case .mixed: throw PanelRefusal.bad("This tab's panes are changing hands: try again in a moment")
             case .here, .nobody: break
             }
-            let (again, sameSession) = try Self.callingTab(caller, model, was: tab)
-            if let reason = model.layoutLockReason(of: again) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
-            return (again, sameSession)
         }
-        if let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
-        return (tab, session)
+        if controller == nil, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
+        return (tab, session, controller)
+    }
+
+    /// `find_open` with no `place` shows and opens on this Mac, which a tab another machine controls does not take from here: the line says what does.
+    private func refuseInControlledTab(_ model: LauncherModel, caller: UUID) async throws {
+        guard case .controlled(let tab, _) = CallingPane.find(caller.uuidString, in: model) else { return }
+        var who = "another Mac or a device"
+        if case .machine(let machine) = await model.controller(of: tab) { who = PeerManager.shared.name(of: machine) }
+        throw PanelRefusal.bad("This tab is controlled by \(who): find_open can only open a result beside this session here (place: beside or below). find and session_read still work.")
     }
 }
 

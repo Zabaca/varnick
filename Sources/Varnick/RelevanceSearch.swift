@@ -73,9 +73,8 @@ struct RelevanceSearch {
     /// names and the time it names are inputs a typed search doesn't take. `filter` keeps the sessions of the named folders on any Mac,
     /// and, when no words are left, the sessions in a time window. Returns at most `limit` sessions (`sessionsShown` unless a caller will drop some).
     /// - With no words: the sessions the filter keeps, most recently used first.
-    /// - With words: ranked as the panel ranks a project's sessions (`LauncherModel.listPromptSessions`): keyword and meaning fused,
-    ///   with the similarity floor, or none when a project or a window chose the sessions. A named project or a filtering window always shows its sessions, so one the words
-    ///   don't match comes most recently used first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
+    /// - With words: ranked as the panel ranks a project's sessions (`rankedSessions`): keyword and meaning fused, with the similarity floor.
+    ///   A named project or a filtering window always shows its sessions, so when the words match none the most recently used come first. Sessions in `boost` go ahead of the others found, before the cut; the boost adds none.
     func spokenSessions(words: String, filter: SessionFilter, boost: DateInterval?, limit: Int = RelevanceSearch.sessionsShown) async throws -> [SearchResult] {
         store.refreshIfChanged()
         guard !words.isEmpty else {
@@ -88,7 +87,7 @@ struct RelevanceSearch {
             // A failure costs the meaning pass only: the keyword matches stay.
             try Task.checkCancellation()
         }
-        var found = rankedSessions(words: words, filter: filter, vector: vector, limit: limit, choosing: filter.choosesSessions).rows
+        var found = rankedSessions(words: words, filter: filter, vector: vector, limit: limit, fallsBack: filter.choosesSessions).rows
         if let boost {
             var window = filter
             window.window = boost
@@ -99,14 +98,15 @@ struct RelevanceSearch {
     }
 
     /// The sessions `filter` keeps ranked for `words`: keyword and meaning (`vector`) fused, this Mac's open ones first, cut by the caller. The
-    /// prompt line, the spoken request and `find` share it. `choosing` (a project or time chose them): no floor, else the latest fill in (`fellBack`).
-    func rankedSessions(words: String, filter: SessionFilter, vector: [Float]?, limit: Int, choosing: Bool) -> (rows: [SearchResult], fellBack: Bool) {
+    /// prompt line, the spoken request and `find` share it. A session matched by meaning alone needs the similarity floor, whoever chose the
+    /// sessions. `fallsBack` (a project or time chose them): when nothing clears it, the most recently used come back instead (`fellBack`).
+    func rankedSessions(words: String, filter: SessionFilter, vector: [Float]?, limit: Int, fallsBack: Bool) -> (rows: [SearchResult], fellBack: Bool) {
         let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
         let semantic = vector.map { store.semanticSessions($0, limit: Self.candidateLimit, filter: filter) } ?? []
         let found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
-                         semanticOnlyFloor: choosing ? -1 : Self.sessionSimilarityFloor,
+                         semanticOnlyFloor: Self.sessionSimilarityFloor,
                          promoted: store.rowIDs(ofSessions: openHere()))
-        guard found.isEmpty, choosing else { return (found, false) }
+        guard found.isEmpty, fallsBack else { return (found, false) }
         return (store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }, true)
     }
 

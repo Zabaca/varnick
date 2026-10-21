@@ -54,8 +54,8 @@ struct SessionFilter: Equatable {
 
     var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil && !thisMacOnly }
 
-    /// Whether a project or a time chose the sessions, so the words only rank them (no similarity floor, and the most recently used fill in when
-    /// the words match none). The leading `#project` word of the prompt line is not that: it keeps the floor.
+    /// Whether a project or a time chose the sessions, so when the words match none the most recently used fill in (`rankedSessions`). The
+    /// leading `#project` word of the prompt line is not that: it shows only what matched.
     var choosesSessions: Bool { folder != nil || !folderNames.isEmpty || window != nil }
 }
 

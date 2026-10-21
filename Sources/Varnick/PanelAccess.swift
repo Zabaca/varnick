@@ -246,9 +246,9 @@ final class PanelAccess {
     /// The tools that answer a session whose pane another machine controls, in a tab of this Mac: the two pane tools (option 04 of
     /// `panes-open-only-by-hand-at-a-mac`) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
     /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
-    /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` shows and opens, so it keeps the refusal.
+    /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` adds a pane there, and refuses what would open on this Mac.
     static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
-                                                 FindMCP.find, FindMCP.sessionRead]
+                                                 FindMCP.find, FindMCP.sessionRead, FindMCP.open]
 
     /// In order: Varnick starting, the pane, then the tool.
     private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {

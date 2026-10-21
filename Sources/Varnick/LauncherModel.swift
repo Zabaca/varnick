@@ -956,7 +956,7 @@ final class LauncherModel: ObservableObject {
         }
         // The same ranking a session's `find` and a spoken request use, staged: the keyword matches now, the meaning after the pause.
         func matches(_ vector: [Float]?) -> [SearchResult] {
-            Array(search.rankedSessions(words: message, filter: filter, vector: vector, limit: Self.promptSessionsShown, choosing: false).rows
+            Array(search.rankedSessions(words: message, filter: filter, vector: vector, limit: Self.promptSessionsShown, fallsBack: false).rows
                 .prefix(Self.promptSessionsShown))
         }
         setPromptResults(matches(nil), keepSelection: keepSelection)

@@ -43,7 +43,7 @@ extension RelevanceSearch {
                 ? store.sessionRows(arguments.filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
                 : []
             if !words.isEmpty {
-                let result = rankedSessions(words: words, filter: arguments.filter, vector: vector, limit: limit, choosing: arguments.filter.choosesSessions)
+                let result = rankedSessions(words: words, filter: arguments.filter, vector: vector, limit: limit, fallsBack: arguments.filter.choosesSessions)
                 ranked = result.rows
                 found.fellBack = result.fellBack
             }

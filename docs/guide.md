@@ -392,7 +392,7 @@ this Mac's open sessions first), each result marked Claude session, page or book
 the part that matched and its conversation id. `project`, `mac`, `agent`, `from` and `to` narrow the sessions as `#project`, `^mac` and `@agent` do. `session_read` gives one session's prompts and what Claude
 wrote, never tool calls or their output, about 40,000 characters a call with the call that continues it; a paired Mac's session gives its prompts and Claude's last reply after each. `find_open`
 does what Return does on a result: a session's tab comes up, a closed tab reopens or the conversation resumes in a new tab (which starts Claude on your plan), and a page opens in your default browser
-behind the app in front. With `place`, the result opens beside the session's own pane instead. **What they return goes to Anthropic with the session, your history's addresses and titles included.** Pages are
+behind the app in front. With `place`, the result opens beside the session's own pane instead (in a tab the phone or another Mac controls, only this form works, and the pane shows there within about 5 seconds). **What they return goes to Anthropic with the session, your history's addresses and titles included.** Pages are
 never sent to TypeSafe or judged for relevance, so a page your `?` search would lift can sit lower here.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
