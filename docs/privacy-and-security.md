@@ -323,7 +323,7 @@ It reads no window through Accessibility and needs no permission. Varnick's log 
 text. Reading a pane's screen resizes, writes to and focuses nothing in it. What a terminal shows can't be kept from a
 session: keep a secret off a screen while a session is running.
 
-They can also read **your Outline** (`outline_read`, only while Settings › Experimental › Outline is on), which is otherwise kept in a file on this Mac and nowhere else:
+They can also read **your Outline** (`outline_read`, only while Settings › Experimental › Outline is on), which is otherwise kept in a file on this Mac, and shown on that Mac's Phone page to your listed devices ([Your Outline, on the Phone page](#your-outline-on-the-phone-page)):
 every bullet's text and note and whether it is completed, collapsed or a mirror, from Home or from a bullet down, or the
 rows as you see them with your zoom, filter and caret. All of it goes to Anthropic with the session and stays in its
 transcript on this Mac. The read loads `outline.json` as showing the Outline would and never writes it, and a file
@@ -386,6 +386,15 @@ What an app does beyond that is its own business, and each catalog app's row say
 
 They talk to the hosts and devices you list, over SSH and Tailscale (below).
 
+### Your Outline, on the Phone page
+
+With Settings › Experimental › Outline on at a Mac, that Mac's Phone page (Settings › Serve the phone page) has an **Outline** button that shows your bullets and notes on your phone and lets you change them. This is the one place your Outline's text leaves the Mac for another device (ADR 0046):
+
+- **It goes only to a device you listed on that Mac, over the tailnet.** The path is Varnick on that Mac, its relay, the page's server, `tailscale serve` and the phone's browser. A Mac you paired is refused, and a headless host has no Outline. With the page in loopback mode (below), any program on that Mac can also ask, as it can already drive your sessions there.
+- **The phone holds it in the page's memory while the view shows, and nowhere else.** The page's worker caches nothing and every reply is `no-store`. No bullet, note or text you typed goes into the page's storage, a push or a notification, the address (it holds ids, not text) or a log; the server's log line is the method, the path, the status, the device and the time, and Varnick's holds the kind of request, its outcome and counts. The only thing the page stores is whether you turned Show completed on. Closing the view, or the page, drops it; anyone who can see your phone's screen can see it, and so can its app switcher's picture.
+- **The phone can change and delete your Outline, without the Mac asking.** Adding, editing text or a note, completing, deleting, moving, indenting and outdenting go through the Outline's own edits: each is one step of your undo (⌘Z at the Mac takes it back), and an edit to the bullet you are typing in goes in as if typed, your caret kept. The phone has no undo of its own; it asks before deleting a bullet that has others nested under it. A save over a bullet or note you changed at the Mac after the phone read it is refused, and the phone keeps what it typed beside the Mac's version for you to choose. Zooming, collapsing and Show completed on the phone belong to the phone and are never saved to your file.
+- **Turn the Outline off, or the page, to stop it.** With the Outline off the Mac refuses every request in the Outline's words, and nothing is read or changed. List only devices you control.
+
 ## What can act as you
 
 ### Custom apps
@@ -434,7 +443,7 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   matching `Origin`, and websockets are checked against it.
 - **Installing it as an app keeps no session content on the phone.** The page's service worker answers a page load that failed
   on the network with a note naming the host, and nothing else: it caches no reply, and every other request goes to the host as
-  before. Every reply is still `no-store`. The only thing the page stores on the phone is whether you dismissed the install offer.
+  before. Every reply is still `no-store`. The only things the page stores on the phone are whether you dismissed the install offer and, once you set it, whether the Outline shows completed bullets.
   The manifest, the icons and the worker are served only to a listed device, like every file of the page.
 - **Notifications go through Apple's or Google's push service,** the only request the page server makes outside the tailnet, and
   only after you turn them on in the page, for that host. A push carries ids and the kind of notice (done, needs permission, an
@@ -457,7 +466,7 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   its own Remote Control mobile pushes, and Varnick's decide alone.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
   take over and type in a terminal, and mark any tab of the host Done, which closes every pane of it (terminals and dev servers
-  included), whoever controls it or started it. Not the search sync, upgrades or restarts. List only devices you control.
+  included), whoever controls it or started it. On a Mac they also read and change its Outline (above). Not the search sync, upgrades or restarts. List only devices you control.
 
 **Known weakness: loopback mode.** The server listens either on a Unix socket in a folder only your account can
 enter (socket mode), or on `127.0.0.1:18444` (loopback mode). In loopback mode any process on the Mac, other

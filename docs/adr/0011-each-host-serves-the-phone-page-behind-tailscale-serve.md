@@ -20,6 +20,7 @@ Every host serves a web page, the Phone page, to the user's own devices, such as
 - Funnel stays off. Nothing in Varnick or the installer runs `tailscale funnel`, and each publishes only the one mount 8444 (see the note at the end).
 - The page can hold the user's microphone and send a Mac host audio, in chunks inside relay requests, for Voice mode: [ADR 0043](0043-voice-mode-on-the-phone-page-talks-to-a-macs-voice-session-through-its-relay-and-is-kept-alive-by-a-quiet-tone.md).
 - On a headless host a device can be in control. This amends ADR 0009's "always in control" by a Mac.
+- The page can show and edit a Mac's Outline, and holds its bullets in memory while that view shows: [ADR 0046](0046-the-phone-page-shows-a-macs-outline-to-its-listed-devices-and-edits-it-through-the-apps-model.md). The only preference it keeps for that view is whether Show completed is on.
 
 ## Changed by the user, 2026-10-06: Launchy and the installer publish 8444 themselves
 

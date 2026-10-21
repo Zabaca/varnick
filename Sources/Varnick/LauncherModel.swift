@@ -3987,7 +3987,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .listen: Listener.shared.state.detail
         case .transcript: "Today's transcript in a tab, following new lines"
         case .kanban: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)"
-        case .outline: "Your bullets, kept on this Mac (also !wf)"
+        case .outline: "Your bullets, kept on this Mac and on its Phone page (also !wf)"
         case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         case .resources: "Memory by tab, pane and helper (also !memory)"
         case .task: "On this site (a Website pane), and the Tasks saved as files: each with a form for its input"

@@ -82,7 +82,7 @@ Anything else leaves only when you turn it on:
 Claude sessions in Varnick's panes can also, with no switch, read what Varnick's own panel shows: whether it is open, which tab, pane or
 board is in it, which has the keyboard, the session board's cards (every session's title, folder, turn and
 note), the text on the screen of any terminal pane, other sessions' and shells' too, whatever it shows, and your
-Outline's bullets and notes (which are otherwise kept on this Mac only), and can switch the panel to the search, the
+Outline's bullets and notes (which are otherwise kept on this Mac, and shown on its Phone page to your own devices), and can switch the panel to the search, the
 board, the Outline or a pane. They can also edit your Outline without asking: each edit is one ⌘Z step, and the bullet
 you are typing in goes in as a typed change, around your caret. They can press keys in the panel while it is open and you are not typing in
 it, but never the ones that end, mark done or restart a session, start one, quit or paste. They can also open a pane beside their own and close

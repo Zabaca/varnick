@@ -137,7 +137,7 @@ Another device of the user's on the tailnet, such as the phone, listed on a **Ho
 _Avoid_: Client, browser, peer (a peer is paired over SSH)
 
 **Phone page**:
-The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time (with a menu of Done, which closes the whole tab on the host, Redraw and Restart, beside End), **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages. It installs as an app on the phone, one per host (each host's page is its own origin), named for its host and opening full screen. It can send the phone a push notification when a session of the host needs the user, with one switch each for needs me, done, errors and messages: the **Notice** table, sent when the user is away from the Mac that controls the session (see **Presence**), or when the phone controls it. The same server runs the host's **Port proxy**.
+The web page a **Host** serves on port 8444 of its tailnet name, for a **Device**: its open tabs, each shown one pane at a time (with a menu of Done, which closes the whole tab on the host, Redraw and Restart, beside End), **Recent**, a new session and a terminal (typed into with the phone's own keyboard, plus one row of keys it lacks: Esc, Tab, Shift+Tab, the arrows and a sticky Ctrl), all through the host's own relay, and links to the other hosts' pages. On a Mac's page, the **Outline** of that Mac, with the phone's own zoom, collapse and Show completed (never saved on the Mac), edited in place by tapping a bullet, Enter, a row of keys above the keyboard and a + at the foot; a headless host has none. It installs as an app on the phone, one per host (each host's page is its own origin), named for its host and opening full screen. It can send the phone a push notification when a session of the host needs the user, with one switch each for needs me, done, errors and messages: the **Notice** table, sent when the user is away from the Mac that controls the session (see **Presence**), or when the phone controls it. The same server runs the host's **Port proxy**.
 _Avoid_: Web UI, dashboard, remote
 
 **Presence**:
@@ -216,7 +216,7 @@ _Avoid_: Tag, assignment
 ### Outline
 
 **Outline**:
-The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and nowhere else (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do. It is behind a switch, off by default (Settings › Experimental); the switch never touches the file.
+The panel's view of one tree of **Bullet**s the user writes, kept in a file on this Mac and shown, and edited, on that Mac's **Phone page** for the user's listed **Device**s, held in the page's memory alone; no other machine gets it (a **Session** that **Panel access** lets read it sends what it reads to Anthropic, and can edit it without asking). It replaces the panel's content as Settings and the **Session board** do. It is behind a switch, off by default (Settings › Experimental); the switch never touches the file.
 _Avoid_: WorkFlowy (the app it copies), notes, outliner, document
 
 **Bullet**:
