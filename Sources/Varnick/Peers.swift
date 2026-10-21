@@ -937,9 +937,8 @@ final class PeerManager: ObservableObject {
         }
     }
 
-    /// Done on a tab of the host (`done`, ADR 0045): an open tab is closed there as its own Done closes it, every pane ended, whoever controls or
-    /// started it; a closed tab is marked, or with `mark` false has the mark taken off (ADR 0032). Nil once the host took it, else why not: a host
-    /// that can't be reached is a refusal too. A failure is logged, and nothing sends it again.
+    /// Done on a tab of the host (`done`, ADR 0045). Nil once the host took it, else why not (a host that can't be reached is a refusal too).
+    /// A failure is logged, and nothing sends it again.
     func done(tab id: UUID, on host: String, mark: Bool) async -> String? {
         guard status[host] != .removedThisMac else { return "\(name(of: host)) doesn't list this Mac any more" }
         var request = PeerRequest(.done)

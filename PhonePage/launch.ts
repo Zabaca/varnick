@@ -465,9 +465,8 @@ export async function restartPane(asker: Asker, device: Device, host: string, as
 }
 
 /**
- * `POST /api/done` (protocol 33, ADR 0045): Done on a tab of the host, from the tab's menu. Any tab, whether or not this phone controls it and whoever started
- * it: the host closes it as its own Done does, every pane ended, and puts it in Completed and Recent. The host judges the rest and refuses a tab it doesn't
- * have or one with no Claude pane, in its own words, which the page shows. Asked once, under a start's wait, since the host may wait on zmx.
+ * `POST /api/done` (protocol 33, ADR 0045): one `done` for the tab, as the device. The host judges the rest and its refusal reaches the page in its own
+ * words. Asked once, under a start's wait, since the host may wait on zmx.
  */
 export async function doneTab(asker: Asker, device: Device, tab: string): Promise<{ status: number; body: Json }> {
   const done = await asker.ask("done", device.id, { tab, mark: true }, launchTimeoutMs);

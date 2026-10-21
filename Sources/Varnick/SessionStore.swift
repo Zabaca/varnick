@@ -338,9 +338,6 @@ struct SessionStore {
         var name: String?
         /// File tree shown (⌘⇧F).
         var showsFiles: Bool?
-        /// Only read: when another machine marked the tab done while it was open here, in a file saved before protocol 33 (ADR 0045), where an open
-        /// tab carries no mark. `migrated()` drops it, so nothing reads it and the tab is saved without it. Optional so older files load.
-        var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
         /// A tab of another machine's: this Mac was in control of it when it was saved. The host's next listing says whether it still is.
@@ -371,12 +368,11 @@ struct SessionStore {
             return tab
         }
 
-        /// The tab as `State.openTabs` hands it out: its id set, and no mark: an open tab carries none (ADR 0045), so one saved with a mark, or
-        /// whose panes' records carry one from before marks were the tab's, is open and unmarked.
+        /// The tab as `State.openTabs` hands it out: its id set, and no mark (ADR 0045: an open tab carries none, and a file's old `done` key is ignored
+        /// on decoding), so one whose panes' records carry a mark from before marks were the tab's is open and unmarked.
         fileprivate func migrated() -> SavedTab {
             var tab = self
             tab.id = resolvedID
-            tab.done = nil
             tab.layout = layout.mapping { record in
                 record.completedAt = nil
                 record.hostHoldsDone = nil

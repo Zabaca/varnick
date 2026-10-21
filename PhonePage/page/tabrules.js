@@ -163,9 +163,9 @@ export const offersRestart = (tab, pane) => tab.mine === true && pane?.kind === 
 
 /**
  * Whether Done is offered in the tab's menu (protocol 33, ADR 0045): the tab has a Claude pane, whether or not this phone controls it. The host closes the
- * tab whoever controls or started it, and refuses a tab with no Claude pane, as a Mac's Done needs one.
+ * tab whoever controls or started it, and refuses a tab with no Claude pane, as a Mac's Done needs one. The single-session view (`#s=`) has no tab.
  */
-export const offersDone = (tab) => tab.panes.some((pane) => pane.kind === "claude");
+export const offersDone = (tab) => Boolean(tab) && tab.panes.some((pane) => pane.kind === "claude");
 
 /** What Done asks before the host closes the tab: it always asks, whether or not a session works, since the phone can't see what runs. */
 export const doneQuestion = (title, host) => `Done with “${title}”? Every pane of it ends on ${host || "its host"}, terminals and pages included, and it goes to Completed.`;

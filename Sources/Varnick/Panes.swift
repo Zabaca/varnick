@@ -454,11 +454,8 @@ final class ClaudeTab: ObservableObject {
                               history: history.isEmpty ? nil : history, inControl: inControl && host != nil ? true : nil)
     }
 
-    /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`). Another machine's tab asks
-    /// for a pane that shows a card too: its host closes the tab (ADR 0045), so no card asks for itself.
-    var asksBeforeDone: Bool {
-        host == nil ? claudeSessions.contains(where: \.asksBeforeDone) : claudeSessions.contains { Turn.asksBeforeDone($0.turn?.turn, showingCard: false) }
-    }
+    /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
+    var asksBeforeDone: Bool { claudeSessions.contains(where: \.asksBeforeDone) }
 
     /// What a pane is called in this tab (the tab's name when it has one pane), which the sign of its screen tools shows (`ScreenAccess`).
     func boardTitle(of pane: ClaudeSession) -> String { sessions.count == 1 ? name ?? pane.label : pane.label }
@@ -482,27 +479,28 @@ final class ClaudeTab: ObservableObject {
         focus(new)
     }
 
-    /// The tab's ×: ends every pane, as ⌘W would one by one; the last one to go closes the tab.
-    func close() {
-        onClosing()
-        onEnding()
-        for session in sessions { session.end() }
+    /// How the tab's panes are ended.
+    enum Closing {
+        /// The tab's ×, or Done on this Mac's own tab: as ⌘W would one by one, and another machine's host is told once (`onEnding`).
+        case byUser
+        /// The host of another machine's tab took a Done (ADR 0045) and closed the sessions itself: it is told nothing more.
+        case hostTookDone
+        /// Another Mac or device asked for a Done of this Mac's tab (ADR 0045): no question, even on a card.
+        case askedByPeer
     }
 
-    /// Done asked by another Mac or device (ADR 0045): every pane ends with no question, as the host's `end` for a tab ends them. A pane
-    /// showing a card, because the asker controls the tab, would ask on the card for the Mac's own close.
-    func closeForPeer() {
+    /// Ends every pane; the last one to go closes the tab.
+    func close(_ how: Closing = .byUser) {
         onClosing()
-        for session in sessions { session.endSession() }
-    }
-
-    /// Done on another machine's tab that its host has taken (ADR 0045): the host closes the tab's sessions itself, so the panes close here and
-    /// the host is told nothing more, unlike the ×.
-    func closeAfterHostDone() {
-        onClosing()
+        if how == .byUser { onEnding() }
         for session in sessions {
-            session.endsWithTab = true
-            session.end()
+            switch how {
+            case .byUser: session.end()
+            case .hostTookDone:
+                session.endsWithTab = true
+                session.end()
+            case .askedByPeer: session.endForPeer()
+            }
         }
     }
 

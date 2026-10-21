@@ -21,9 +21,11 @@ extension Turn {
     /// Claude is at work, or has agents, workflows or shells that are running and will start its next turn by themselves.
     var isRunning: Bool { self == .working || self == .background }
 
-    /// Done on a session in this turn asks first, board card and Claude pane alike: it is mid-turn, unless its
-    /// pane shows a card, which asks for itself.
-    static func asksBeforeDone(_ turn: Turn?, showingCard: Bool) -> Bool { turn?.isRunning == true && !showingCard }
+    /// Done on a session in this turn asks first, board card and Claude pane alike: it is mid-turn, unless its pane shows a card, which asks for
+    /// itself. A session on a paired Mac asks anyway: its host closes the tab (ADR 0045), so no card asks.
+    static func asksBeforeDone(_ turn: Turn?, showingCard: Bool, onPeer: Bool = false) -> Bool {
+        turn?.isRunning == true && (!showingCard || onPeer)
+    }
 
     /// When a turn began that a host said began `ageSeconds` ago in a reply that came at `reply`; counting
     /// from the reply keeps the two Macs' clocks out of it.
@@ -200,10 +202,9 @@ final class SessionBoard: ObservableObject {
 
         var inRunningColumn: Bool { closed == nil && lead.isRunning }
 
-        /// Done on it asks first while any session in the tab is mid-turn (`Turn.asksBeforeDone`). A session of a paired Mac asks even when its
-        /// pane shows a card, since the host closes the tab (ADR 0045).
+        /// Done on it asks first while any session in the tab is mid-turn (`Turn.asksBeforeDone`).
         var asksBeforeDone: Bool {
-            closed == nil && lines.contains { Turn.asksBeforeDone($0.turn, showingCard: !$0.foreign && $0.note != nil) }
+            closed == nil && lines.contains { Turn.asksBeforeDone($0.turn, showingCard: $0.note != nil, onPeer: $0.foreign) }
         }
 
         var column: Column {
@@ -424,7 +425,7 @@ final class SessionBoard: ObservableObject {
             record.host.map { id in PeerManager.shared.peers.contains { $0.id == id } } ?? true
         }
         for record in model.ended where paired(record) && !next.contains(where: { $0.id == record.id }) {
-            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: model.reopening[record.id]?.text, model) { next.append(card) }
+            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: model.hostAsk[record.id]?.text, model) { next.append(card) }
         }
         for record in model.completed where paired(record) {
             if let card = card(for: record, closed: .done(at: record.completedAt ?? record.lastUsed), note: model.completedNote(for: record), model) {
@@ -473,7 +474,7 @@ final class SessionBoard: ObservableObject {
                     hostName: titled.hostName,
                     folder: titled.record.folderName,
                     lines: claude.map(line(for:)),
-                    note: model.marking[tab.id]?.text)
+                    note: model.hostAsk[tab.id]?.text)
     }
 
     private func line(for pane: ClaudeSession) -> Card.Line {
@@ -509,7 +510,7 @@ final class SessionBoard: ObservableObject {
                     hostName: tab.peer.name,
                     folder: (first.info.folder as NSString).lastPathComponent,
                     lines: lines,
-                    note: model.marking[tab.id]?.text,
+                    note: model.hostAsk[tab.id]?.text,
                     hasNoPane: true)
     }
 

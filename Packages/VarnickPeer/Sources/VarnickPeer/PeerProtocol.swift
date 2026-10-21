@@ -133,9 +133,7 @@ public enum PeerOp: String, Codable, Sendable {
     case pages
     /// The receiving Mac's Recent: its closed tabs, for the other Mac's own. The relay answers it from the saved tabs alone.
     case recent
-    /// Done on a tab of the host (`PeerRequest.tab`), from any Mac or device it lists, whoever controls or started the tab (protocol 33, ADR 0045):
-    /// an open tab with a Claude pane is closed as Done on the host closes it, every pane ended, and goes to Completed and Recent; a closed
-    /// tab is marked, or with `mark` false has the mark taken off. Who answers and where each host keeps a mark: ADR 0032, as ADR 0045 amends it.
+    /// Done on a tab of the host (`PeerRequest.tab`), from any listed Mac or device: closes an open tab, marks a closed one (protocol 33, ADR 0045).
     case done
     /// Take over a tab (`PeerRequest.tab`): relabel every Claude and terminal pane of it for the asker, then detach their clients, in that
     /// order. The asker then attaches each pane, which finds the label naming it. The relay answers it from zmx and the host's tabs alone.

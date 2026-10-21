@@ -81,10 +81,9 @@ final class LauncherModel: ObservableObject {
     /// doesn't undo it, and how many such changes are still waiting on the host: no listing is believed meanwhile.
     var layoutActedAt: [UUID: Date] = [:]
     var layoutPending: [UUID: Int] = [:]
-    /// What a reopen of a paired Mac's closed tab is doing or why it failed, by tab id, for the row or card of the tab to say.
-    @Published private(set) var reopening: [UUID: ReopenState] = [:]
-    /// A Done on another machine's tab that waits for its host, or why the host refused it, by tab id, for the card of the tab to say (ADR 0045).
-    @Published private(set) var marking: [UUID: ReopenState] = [:]
+    /// What a request to a paired Mac about one of its tabs is doing or why it failed, by tab id, for the row or card of the tab to say: a reopen
+    /// of a closed tab, or a Done on an open one (ADR 0045). A tab has one at a time.
+    @Published private(set) var hostAsk: [UUID: HostAskState] = [:]
     /// `recent` with the paired Macs' closed tabs (`rebuildRecent`), which the session list shows.
     @Published private(set) var allRecent: [TabRecord] = []
     /// Highlighted row in the session list (empty query): open tabs, then recent.
@@ -292,6 +291,8 @@ final class LauncherModel: ObservableObject {
     private var closedHereAt: [UUID: Date] = [:]
     /// One ask of each Mac's Recent at a time, so one Mac can be asked again alone (`refreshPeerRecent(only:)`).
     private var peerRecentTasks: [String: Task<Void, Never>] = [:]
+    /// The asks of a paired Mac's Recent that a closed tab waits on (`watchRecent`).
+    private var recentWatches: [String: Task<Void, Never>] = [:]
     private var peerRecentAskedAt = Date.distantPast
     /// When the ask behind each paired Mac's last Recent answer was sent, an unchanged reply included.
     private var peerRecentSentAt: [String: Date] = [:]
@@ -1595,7 +1596,7 @@ final class LauncherModel: ObservableObject {
     func completedNote(for record: TabRecord) -> String? {
         var parts: [String] = []
         if let mac = stillOpenOn(record) { parts.append("Still open on " + mac) }
-        if let reopening = reopening[record.id] { parts.append(reopening.text) }
+        if let asking = hostAsk[record.id] { parts.append(asking.text) }
         if record.host != nil, record.hostHoldsDone != true, !pendingDone.contains(record.id) { parts.append("Done on this Mac only") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -1690,6 +1691,19 @@ final class LauncherModel: ObservableObject {
         guard changed else { return }
         saveSessions()
         if showingBoard { board.refresh() }
+    }
+
+    /// A tab waiting for `host`'s Recent (`addClosed`) asks it every 5 s for the minute `hasUnresolvedSessions` covers, even when no listing is being
+    /// asked, so its card appears within seconds and not at the board's next open.
+    private func watchRecent(of host: String) {
+        guard recentWatches[host] == nil else { return }
+        recentWatches[host] = Task { [weak self] in
+            while let self, !Task.isCancelled, self.hasUnresolvedSessions(on: host) {
+                if self.peerRecentTasks[host] == nil { self.refreshPeerRecent(only: [host]) }
+                try? await Task.sleep(for: .seconds(Self.peerFollowInterval))
+            }
+            self?.recentWatches[host] = nil
+        }
     }
 
     /// Whether `host` stopped listing a tab within the last minute that its Recent hasn't accounted for yet.
@@ -2722,7 +2736,7 @@ final class LauncherModel: ObservableObject {
         if let host = record.host, waitsForRecent {
             remembered.removeAll { $0.id == record.id }
             remembered.append(record)
-            refreshPeerRecent(only: [host])
+            watchRecent(of: host)
         } else {
             addEnded(record)
         }
@@ -2760,8 +2774,7 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Done on a tab (a board card, a pane's Done button or key): closes every pane as its × does, and the tab goes into Completed once
-    /// its last pane has closed. A close that needs the host card's question brings that tab on screen to ask. Another machine's tab is closed by
-    /// its host first (`markDoneOnHost`); `pane` is where a refusal is shown when Done was pressed in one.
+    /// its last pane has closed. Another machine's tab is closed by its host first (`markDoneOnHost`); `pane` is where a refusal is shown.
     func markDone(_ id: UUID, from pane: ClaudeSession? = nil) {
         guard let tab = tabs.first(where: { $0.id == id && !$0.claudeSessions.isEmpty }) else { return }
         if let host = tab.host { return markDoneOnHost(tab, host: host, from: pane) }
@@ -2779,47 +2792,48 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// Done on another machine's tab shown here, in control or showing cards (ADR 0045): its host closes the tab, whoever controls or started it,
-    /// and then the copy here closes as a Done that sends no `end` and goes into Completed flagged as the host's mark. A host that refuses, or can't
-    /// be reached, leaves the tab as it was: it still runs there.
+    /// Done on another machine's tab shown here (ADR 0045): its host closes it, then the copy here closes as a Done flagged as the host's mark.
     private func markDoneOnHost(_ tab: ClaudeTab, host: String, from pane: ClaudeSession?) {
         let id = tab.id
-        if case .inFlight = marking[id] { return }
+        if case .inFlight = hostAsk[id] { return }
         Task { [weak self] in
             guard let self, await self.askHostDone(id, on: host, from: pane) else { return }
             // The host's sessions went with the tab, so a pane here may have closed already: it waits for the host's Recent, which has the mark.
             guard let copy = self.tabs.first(where: { $0.id == id && $0.host == host }) else { return self.refreshPeerRecent(only: [host]) }
             self.beginDone(of: copy, hostHoldsDone: true)
-            copy.closeAfterHostDone()
+            copy.close(.hostTookDone)
         }
     }
 
-    /// Sends the host a Done for its tab and waits (ADR 0045); `marking` says so meanwhile and, when the host refuses, why, for a few seconds
-    /// (and over `pane`, where Done was pressed in one). Whether the host took it.
+    /// Sends the host a Done for its tab and waits (ADR 0045); the card says so meanwhile and, when the host refuses, why (and over `pane`). Whether it took it.
     private func askHostDone(_ id: UUID, on host: String, from pane: ClaudeSession? = nil) async -> Bool {
         let name = PeerManager.shared.name(of: host)
-        marking[id] = .inFlight("Marking done on \(name)…")
+        hostAsk[id] = .inFlight("Marking done on \(name)…")
         if showingBoard { board.refresh() }
         noteActed(on: id)
         let refusal = await PeerManager.shared.done(tab: id, on: host, mark: true)
         // Asked before the host answered, a listing can't know of the close.
         if refusal == nil { noteActed(on: id) }
         guard let refusal else {
-            marking[id] = nil
+            hostAsk[id] = nil
             if showingBoard { board.refresh() }
             return true
         }
         let text = "Couldn't mark done on \(name): \(refusal)"
-        marking[id] = .failed(text)
         pane?.showRefusal(text)
+        await showFailure(text, of: id, for: 8)
+        return false
+    }
+
+    /// Says why a request about tab `id` failed, on its row or card, for `seconds`, unless another request about the tab began meanwhile.
+    private func showFailure(_ text: String, of id: UUID, for seconds: Double) async {
+        hostAsk[id] = .failed(text)
         if showingBoard { board.refresh() }
-        try? await Task.sleep(for: .seconds(8))
-        // Only this failure: a Done begun meanwhile is under way and keeps its own state.
-        if case .failed = marking[id] {
-            marking[id] = nil
+        try? await Task.sleep(for: .seconds(seconds))
+        if case .failed = hostAsk[id] {
+            hostAsk[id] = nil
             if showingBoard { board.refresh() }
         }
-        return false
     }
 
     /// Done in a Claude pane (its Done button, the Mark tab done key): marks its tab, as on the board. A tab with a session
@@ -2943,7 +2957,7 @@ final class LauncherModel: ObservableObject {
     /// into Completed flagged as the host's mark. A host that refuses, or can't be reached, leaves the card where it was, saying why.
     func markPeerDone(_ id: UUID) {
         guard let tab = boardPeerTabs.first(where: { $0.id == id }), var record = record(of: tab) else { return }
-        if case .inFlight = marking[id] { return }
+        if case .inFlight = hostAsk[id] { return }
         let host = tab.peer.id
         record.hostHoldsDone = true
         Task { [weak self] in
@@ -3013,30 +3027,26 @@ final class LauncherModel: ObservableObject {
             if openHostTab(listing, on: peer) != nil { showTab(record.id) }
             return
         }
-        if case .inFlight = reopening[record.id] { return }
-        reopening[record.id] = .inFlight("Reopening on \(peer.name)…")
+        if case .inFlight = hostAsk[record.id] { return }
+        hostAsk[record.id] = .inFlight("Reopening on \(peer.name)…")
         let id = record.id
         Task { [weak self] in
             let result = await PeerManager.shared.reopen(tab: id, on: host)
             guard let self else { return }
             switch result {
             case .failure(let refusal):
-                self.reopening[id] = .failed("Couldn't reopen on \(peer.name): \(refusal.message)")
                 // A card the user opened from Completed or Stopped is not lost: it goes back to Stopped, saying why.
                 if keepOnFailure {
                     Self.put(record, first: &self.ended)
                     self.saveSessions()
-                    if self.showingBoard { self.board.refresh() }
                 }
-                try? await Task.sleep(for: .seconds(10))
-                // Only this failure: a retry begun meanwhile is under way and keeps its own state.
-                if case .failed = self.reopening[id] { self.reopening[id] = nil }
+                await self.showFailure("Couldn't reopen on \(peer.name): \(refusal.message)", of: id, for: 10)
             case .success(let reply):
                 let opened = reply.tab.flatMap(UUID.init(uuidString:)) ?? id
                 let sentAt = Date()
                 let found = await PeerManager.shared.tabs(on: host)
                 if let found { self.updatePeerTabs(found, for: host, sentAt: sentAt) }
-                self.reopening[id] = nil
+                self.hostAsk[id] = nil
                 if let listing = self.peerTabs[host]?.first(where: { UUID(uuidString: $0.tab) == opened }), self.openHostTab(listing, on: peer) != nil {
                     self.showTab(opened)
                 }
@@ -3831,9 +3841,8 @@ final class LauncherModel: ObservableObject {
         return reply
     }
 
-    /// A peer's `done` (ADR 0045), from any Mac or device this Mac lists, whoever controls or started the tab: an open tab with a Claude pane is
-    /// closed as Done here closes it, every pane ended, and goes to Completed and Recent; an ended tab moves from its ended card or Recent into
-    /// Completed; with `mark` false a closed tab's mark comes off. The reply comes once the close is under way, not once the panes have gone.
+    /// A peer's `done` (ADR 0045). An open tab is closed as its Done closes it and the reply waits until it has left `tabs` and is saved, so the
+    /// asker's next listing can't show it running; an ended tab moves into Completed, and with `mark` false a closed tab's mark comes off.
     func hostDone(_ request: PeerRequest) async -> PeerReply {
         guard let id = request.tab.flatMap(UUID.init(uuidString:)) else { return .failure("Not a Varnick tab id") }
         let mark = request.mark ?? true
@@ -3844,7 +3853,10 @@ final class LauncherModel: ObservableObject {
             if mark {
                 guard !tab.claudeSessions.isEmpty else { return .failure("That tab has no Claude session to mark done") }
                 beginDone(of: tab)
-                tab.closeForPeer()
+                tab.close(.askedByPeer)
+                guard await closed(tab: id, within: 6) else {
+                    return .failure("\(here) hasn't closed that tab's panes yet: it is still closing, and may be gone when you look again")
+                }
             }
         } else if let record = ended.first(where: { $0.id == id && $0.host == nil }) ?? recent.first(where: { $0.id == id && $0.host == nil }) {
             if mark && !inCompleted { addCompleted(record) }
@@ -3856,6 +3868,16 @@ final class LauncherModel: ObservableObject {
         saveSessions()
         if showingBoard { board.refresh() }
         return .success()
+    }
+
+    /// Whether tab `id` has left `tabs` (and so been saved, in `sessionExited`) within `seconds`; its panes end a moment after they are asked to.
+    private func closed(tab id: UUID, within seconds: Double) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while tabs.contains(where: { $0.id == id }) {
+            guard Date() < deadline, !Task.isCancelled else { return false }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return true
     }
 
     /// A peer's `projects`: scanned fresh, off the main actor, since a repo cloned since the prompt
@@ -3891,7 +3913,8 @@ final class LauncherModel: ObservableObject {
 }
 
 /// What a reopen of a paired Mac's closed tab is doing, or why it failed, for a row or a card to say.
-enum ReopenState: Equatable {
+/// What a request to a paired Mac about one of its tabs is doing, or why it failed (`LauncherModel.hostAsk`).
+enum HostAskState: Equatable {
     case inFlight(String)
     case failed(String)
 

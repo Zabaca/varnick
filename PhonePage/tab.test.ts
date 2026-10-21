@@ -4,6 +4,7 @@ import {
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
+import { readFileSync } from "node:fs";
 
 const tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77";
 const a = "aaaaaaaa-0000-4000-8000-0000000000a1";
@@ -270,6 +271,19 @@ describe("the menu's Done (protocol 33)", () => {
     expect([offersDone(foreign), offersRestart(foreign, claude(a))]).toEqual([true, false]);
     // Over a terminal: Done still acts on the tab, Restart is the Claude pane's only.
     expect([offersDone(owned), offersRestart(owned, terminal(b))]).toEqual([true, false]);
+  });
+
+  test("the single-session view has no tab, so its menu holds Redraw alone", () => {
+    expect(offersDone(null)).toBe(false);
+    expect(offersDone(undefined)).toBe(false);
+    // Done starts hidden in the markup and only tab.js shows it; session.js, which the single-session view uses alone, never touches it.
+    const page = (file: string) => readFileSync(new URL(`./page/${file}`, import.meta.url), "utf8");
+    expect(page("index.html")).toMatch(/<button id="done"[^>]*\bhidden\b/);
+    expect(page("session.js")).not.toContain('$("done")');
+    expect(page("tab.js")).toContain('$("done")');
+    // The menu holds exactly the three items, as direct children, which menu.js watches.
+    const list = /<div id="menu-list"[^>]*>([\s\S]*?)<\/div>/.exec(page("index.html"))?.[1] ?? "";
+    expect([...list.matchAll(/<button id="(\w+)"/g)].map((match) => match[1])).toEqual(["done", "redraw", "restart"]);
   });
 
   test("the question always names the tab and the host, and says every pane ends", () => {

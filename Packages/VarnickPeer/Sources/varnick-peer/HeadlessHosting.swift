@@ -92,6 +92,13 @@ extension HeadlessPeerHost {
         return launch(record, control: by, origin: origin, resuming: nil) { ended(id) }
     }
 
+    /// Kills the sessions of records just ended and waits until zmx stops listing them: nothing else does (`reconcile` and the tick only end records,
+    /// never a running session). Nil once all are gone, else a refusal naming the way to end them by hand.
+    private func killedAll(_ ids: [UUID]) -> PeerReply? {
+        let stuck = ids.filter { Zmx.endConfirmed($0) != nil }
+        return stuck.isEmpty ? nil : .failure("zmx still lists \(stuck.count) of the tab's sessions on \(name): end them with `varnick-peer end`")
+    }
+
     /// The control labels of a tab's running panes, nil with a reply to give when the tab isn't open or nothing in it runs.
     private func runningControls(of tab: String) -> (labels: [String?], refusal: PeerReply?) {
         guard let found = try? state.snapshot() else { return ([], .failure("The state folder couldn't be read")) }
@@ -255,7 +262,7 @@ extension HeadlessPeerHost {
         if allName(by, in: labels.map { Zmx.origin(in: $0.labels) }) {
             // The records end first and all at once, so a reconcile can't shrink the layout meanwhile and the tab keeps it whole for a `reopen`.
             ended(panes.map(\.record.id))
-            for found in labels { Zmx.killNow(found.pane.uuid) }
+            if let refusal = killedAll(labels.map(\.pane.uuid)) { return refusal }
         } else {
             for found in labels { Zmx.detachClients(of: found.pane.name) }
             reply.released = true
@@ -369,10 +376,8 @@ extension HeadlessPeerHost {
 
     // MARK: done
 
-    /// `done` (ADR 0045), from any Mac or device the host lists, whoever controls or started the tab: an open tab with a Claude pane is closed
-    /// as Done on a Mac closes it, its records ended and its sessions killed with the mark set, in one write; a closed tab is marked, or with `mark`
-    /// false has the mark taken off. A record is a tab under its id unless a `resume` put it in another (ADR 0032). A Mac host's equivalent is
-    /// `LauncherModel.hostDone`.
+    /// `done` (ADR 0045): an open tab's records end with the mark in one write and their sessions are killed; a closed tab is marked or cleared.
+    /// A Mac host's equivalent is `LauncherModel.hostDone`.
     private func done(_ request: PeerRequest) -> PeerReply {
         guard let tab = request.tab, let id = UUID(uuidString: tab)?.uuidString.lowercased() else { return .failure("Not a Varnick tab id") }
         state.reconcile()
@@ -392,8 +397,7 @@ extension HeadlessPeerHost {
             guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
             // The records end first and all at once, so a reconcile can't shrink the layout meanwhile and the tab keeps it whole for a `reopen`.
             let ended = try state.markTabDone(id) ?? []
-            for record in ended { UUID(uuidString: record).map(Zmx.killNow) }
-            return .success()
+            return killedAll(ended.compactMap(UUID.init(uuidString:))) ?? .success()
         } catch {
             return stateFailure(error)
         }

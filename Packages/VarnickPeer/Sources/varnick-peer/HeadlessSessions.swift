@@ -222,8 +222,8 @@ extension StateFolder {
         }
     }
 
-    /// A `done` on an open tab (ADR 0045): every record of the tab takes the mark, and the open ones end (`HeadlessSession.ending`), in one write.
-    /// Returns the ids it ended, nil when the tab has no record. The caller kills their sessions.
+    /// A `done` on an open tab (ADR 0045): every record takes the mark and the open ones end, in one write. Returns the ids it ended, nil when the tab
+    /// has no record; the caller kills their sessions.
     func markTabDone(_ tab: String, now: Date = Date()) throws -> [String]? {
         try locked(exclusive: true) {
             var sessions = try readSessions()
