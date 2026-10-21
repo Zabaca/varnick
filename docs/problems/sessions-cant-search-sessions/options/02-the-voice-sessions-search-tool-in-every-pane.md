@@ -2,7 +2,8 @@
 problem: sessions-cant-search-sessions
 title: The voice session's `search` tool, as it is, in every pane
 summary: The least to build. The `search` tool the voice session already has is listed for every Claude pane that has Panel access, and the app stops refusing it from other panes. A session then searches History, bookmarks and Claude sessions on this Mac and the paired Macs, by words and meaning, and gets up to 20 pages and 3 sessions, each session with its title, folder, when it was used, its prompts from the start cut at 300 characters, its conversation id and, on this Mac, its transcript's path. That is the voice session's search, not the panel's: 3 sessions, no tab or standing, no matching excerpt, and no way to open what it found. Reading means the raw transcript through the session's own file tools, which a paired Mac's session has none of. It sends the user's browsing history to Anthropic with every session that searches. Recommended against as the answer; it could be a first step only if the user wants something today.
-status: proposed
+status: rejected
+reason: Rejected by the user on 2026-10-20 (relayed by the coordinator), who chose option 01, "New search tools (Recommended)". The user did want browsing history searched ("Include browsing too"), so this option's privacy cost no longer counts against it; it was rejected because it is not the panel's search: 3 sessions, no tab or standing, no matching excerpt, a raw transcript to read and nothing to open with. Option 01 covers History and bookmarks too.
 ---
 
 ## Solution

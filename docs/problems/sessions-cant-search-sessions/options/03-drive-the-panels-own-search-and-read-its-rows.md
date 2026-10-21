@@ -2,7 +2,8 @@
 problem: sessions-cant-search-sessions
 title: A session searches in the panel itself, in front of the user, and reads back the rows it shows
 summary: The search happens where the user would do it. `show` gains `search`, which puts the session's words into the panel's field as typing would, so the panel lists what it lists for the user: up to 5 sessions under the prompt line, under their tabs, or with `?` the sessions and pages. A new `search_read` lists those rows as shown (each tab with its standing, each session with its name, project, Mac, when, the line the row shows and an `r` id), but only while the field still holds the words this session put there, so the user's own typing is still never read. `show` with `result: r2` does what ↩ on that row does. The user sees every search. It takes over the user's search field, works only while the panel is up and the user isn't typing, gives only the panel's few rows and their one line each, and reads nothing more of a session. Recommended against as the answer; its "show the user what I found" part could follow option 01.
-status: proposed
+status: rejected
+reason: Rejected by the user on 2026-10-20 (relayed by the coordinator), who chose option 01, "New search tools (Recommended)". Driving the user's own search field takes it over while he may be using it, gives only the panel's few one-line rows and reads nothing of a session; option 01 searches without touching the panel and opens a result, "Yes, like Return", only when asked.
 ---
 
 ## Solution

@@ -53,10 +53,10 @@ Verified in the code at bddf4ce unless marked.
 - Session search's text stays on this Mac, on the paired Macs and on the user's embeddings server when he set one. It never goes to TypeSafe. The voice session's search tool is the one path by which its rows reach Anthropic, and the privacy doc says so.
 - Varnick's log for these tools holds the tool, the outcome's kind, counts and durations, never a word of a query or a row.
 
-## Unverified
+## Settled after the options were written (2026-10-20)
 
-- Whether a headless host's sessions reach session search. The pull reads every paired peer's rows; whether a headless relay answers `rows` with its sessions was not traced.
-- How large a long session's text is once tool output is left out. The archive keeps Claude's last reply of each exchange cut at 1,000 characters; uncut, those last replies alone came to 8.3 million characters over this Mac's 499 sessions on 2026-10-08 (`session-search-sees-only-the-start`), and Claude's other text in each exchange is on top of that, so a read has to be paged.
+- **A headless host's sessions are not in session search:** a headless host answers a paired Mac's `rows` request with no rows (verified at bddf4ce).
+- **How large a session's text is once tool output is left out:** measured on this Mac, aggregates in option 01's Further Notes. The median session is about 8,300 characters, and about one in five is over 40,000, so a read has to be paged.
 
 ## Left to decide
 
