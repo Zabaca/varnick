@@ -970,7 +970,7 @@ saveRequest.automation = hostBase
 let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveRequest))
 expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
 expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
-expect("this is protocol 32", PeerProtocol.version == 32)
+expect("this is protocol 34", PeerProtocol.version == 34)
 // restartPane (protocol 32): its tab and pane travel as an ordinary request, and an older build's frozen maintenance requests do not include it.
 var restartPaneRequest = PeerRequest(.restartPane)
 restartPaneRequest.tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77"
