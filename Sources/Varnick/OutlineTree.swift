@@ -148,6 +148,9 @@ enum OutlineEdit {
     case addAbove(OutlinePath)
     /// ↩ with the caret (or the selection, which is dropped) at `range`, UTF-16 offsets. At the start of a non-empty bullet it adds an empty one above.
     case split(OutlinePath, range: Range<Int>)
+    /// ↩ for the Phone page: the text after the range becomes the next sibling of the row, after whatever is nested under it, whether the row is collapsed or
+    /// not. The caret goes into the new bullet.
+    case splitBelow(OutlinePath, range: Range<Int>)
     /// ⌫ at the start: an empty bullet with nothing nested is deleted; otherwise the text joins onto the row above, when the bullet has
     /// nothing nested, no note and no other placement.
     case join(OutlinePath)
@@ -331,7 +334,7 @@ extension OutlineEdit {
         case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): run.paths
         case .setDone(let path, _): [path]
         case .insert(_, .after(let path)), .insert(_, .replacing(let path)): [path]
-        case .setText, .setNote, .split, .insert, .addFirstChild, .collapse, .placeMirror: []
+        case .setText, .setNote, .split, .splitBelow, .insert, .addFirstChild, .collapse, .placeMirror: []
         }
     }
 
@@ -697,6 +700,14 @@ struct OutlineTree: Codable, Equatable {
                 let new = tree.insertEmpty(after: path, at: spot, now: now, newID: newID, text: bullet.text.utf16Slice(high..<length))
                 caret = OutlineCaret(path: new, offset: 0)
             }
+        case .splitBelow(let path, let range):
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
+            let length = bullet.text.utf16.count
+            let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
+            tree.bullets[spot.bullet]?.text = bullet.text.utf16Slice(0..<low)
+            tree.bullets[spot.bullet]?.changed = now
+            let new = tree.insertNew(text: bullet.text.utf16Slice(high..<length), at: spot.index + 1, in: spot.parent, now: now, newID: newID)
+            caret = OutlineCaret(path: path.parent.appending(new), offset: 0)
         case .join(let path):
             guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
             guard bullet.children.isEmpty else { return .refused("bullets are nested under it") }

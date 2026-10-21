@@ -110,29 +110,23 @@ enum OutlineRemote {
             switch OutlinePhone.plan(act, in: outline.tree, view: ask.view) {
             case .refused(let why):
                 refused = why
-            case .edits(let edits, let scope, let caretAtStart):
-                var last = Outline.SessionOutcome()
-                for (index, edit) in edits.enumerated() {
-                    let afterSave = ask.save != nil
-                    last = await outline.performForSession(edit, fresh: { tree in index == 0 ? OutlinePhone.stale(act, in: tree, afterSave: afterSave) : nil },
+            case .edit(let edit, let scope):
+                // The text the act's offset is in: what the save left (its stamp is read in the same turn), else what the phone read.
+                let textStamp = ask.save?.field == "text" ? savedStamp : nil
+                let done = await outline.performForSession(edit, fresh: { tree in OutlinePhone.stale(act, in: tree, textStamp: textStamp)?.message },
                                                            allowed: allowed, scope: scope)
-                    if let refusal = last.refusal {
-                        refused = OutlinePhone.refusal(refusal)
-                        break
-                    }
-                }
-                if refused == nil {
+                if let refusal = done.refusal {
+                    refused = OutlinePhone.refusal(refusal)
+                } else {
                     acted = true
                     switch act.kind {
                     case .add:
-                        added = last.run.map(\.placements)
-                        caret = last.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
+                        added = done.run.map(\.placements)
+                        caret = done.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
                     case .enter:
-                        caret = caretAtStart
-                            ? last.run.first.map { PeerOutlineCaret(path: $0.placements, offset: 0) }
-                            : last.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
+                        caret = done.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
                     case .indent, .outdent, .move:
-                        moved = last.run.first?.placements
+                        moved = done.run.first?.placements
                     case .complete, .delete:
                         break
                     }

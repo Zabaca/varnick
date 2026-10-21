@@ -8,9 +8,9 @@
 export const saveDelayMs = 2000;
 /**
  * The numbers the page, its server (outline.ts imports these) and the Mac (`PeerOutlineLimits`) hold to. `fieldBytes` is a text, note or pasted lines as JSON
- * bytes; `note` is the most of a note the Mac lists whole, in UTF-8 bytes; `argument` is the relay's request cap, a base64 string.
+ * bytes; `note` is the most of a note the Mac lists whole, in UTF-8 bytes; `argument` is the relay's request cap, a base64 string; `cutShown` is how much of a cut text the Mac lists.
  */
-export const limits = { fieldBytes: 60_000, toggles: 300, path: 64, idLength: 128, rows: 400, note: 100_000, argument: 120_000 };
+export const limits = { fieldBytes: 60_000, toggles: 300, path: 64, idLength: 128, rows: 400, note: 100_000, argument: 120_000, cutShown: 500 };
 /** The line that makes one empty bullet in an add: the Mac's paste rules read a lone dash as an empty bullet. */
 export const emptyBullet = "-";
 

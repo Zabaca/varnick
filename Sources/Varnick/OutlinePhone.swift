@@ -148,10 +148,9 @@ enum OutlinePhone {
 
     // MARK: Edits
 
-    /// What an act comes to before anything is applied: the tree's edits in order (the first checked by `stale`), the rows they go by, and for a split
-    /// into two edits that the caret goes to the start of the new row; or why not.
+    /// What an act comes to before anything is applied: one tree edit and the rows it goes by, or why not.
     enum Plan {
-        case edits([OutlineEdit], scope: OutlineScope?, caretAtStart: Bool)
+        case edit(OutlineEdit, scope: OutlineScope?)
         case refused(PeerOutlineRefusal)
     }
 
@@ -159,7 +158,7 @@ enum OutlinePhone {
     private static let gone = Plan.refused(refusalGone)
     static let refusalGone = PeerOutlineRefusal(kind: PeerOutlineRefusal.gone, message: "That bullet was moved or removed on the Mac: the list was read again.")
 
-    private static func one(_ edit: OutlineEdit, scope: OutlineScope? = nil) -> Plan { .edits([edit], scope: scope, caretAtStart: false) }
+    private static func one(_ edit: OutlineEdit, scope: OutlineScope? = nil) -> Plan { .edit(edit, scope: scope) }
 
     /// The edits for `act` in `tree`, with the phone's view. Structure goes by the whole tree with the phone's Show completed; the phone's title and the top of
     /// its zoom are kept here, since the tree knows only the Mac's zoom; Enter follows the phone's collapse of the row, not the Mac's.
@@ -219,38 +218,45 @@ enum OutlinePhone {
         }
     }
 
-    /// ↩ at `offset` of a row. At the start of a bullet with text, an empty bullet goes above. In the phone's title, or on a bullet the phone shows open with
-    /// bullets nested under it, the text after the caret becomes the first nested one. On one the phone shows closed it becomes the next sibling, though the tree's
-    /// split would follow the Mac's collapse: when the Mac has it open that is two edits, the text cut and the tail inserted below.
+    /// ↩ by the phone's collapse of the row, not the Mac's: open (or the phone's title), the first nested bullet; closed, the next sibling; at the start, one above.
     private static func enter(_ row: OutlinePath, offset at: Int, in tree: OutlineTree, view: PeerOutlineView?, zoom: OutlinePath) -> Plan {
         if !zoom.placements.isEmpty, row == zoom { return one(.addFirstChild(row, range: at..<at)) }
         guard let id = tree.bulletID(at: row), let bullet = tree.bullets[id] else { return gone }
-        let atStartOfText = at == 0 && !bullet.text.isEmpty
-        guard !bullet.children.isEmpty, !atStartOfText else { return one(.split(row, range: at..<at)) }
-        let phoneCollapsed = viewed(tree, view).tree.placement(at: row)?.collapsed == true
-        if !phoneCollapsed { return one(.addFirstChild(row, range: at..<at)) }
-        if tree.placement(at: row)?.collapsed == true { return one(.split(row, range: at..<at)) }
-        let length = bullet.text.utf16.count, cut = min(at, length)
-        let tail = OutlineDraft(text: bullet.text.utf16Slice(cut..<length))
-        return .edits([.setText(row, bullet.text.utf16Slice(0..<cut)), .insert([tail], at: .after(row))], scope: nil, caretAtStart: true)
+        let macTitle = tree.isTitle(row)
+        if at == 0, !bullet.text.isEmpty {
+            return macTitle ? refuse("The Mac is zoomed into that bullet, so an empty bullet can't go above it until the Mac zooms out.") : one(.split(row, range: at..<at))
+        }
+        let nested = !bullet.children.isEmpty
+        if nested, viewed(tree, view).tree.placement(at: row)?.collapsed != true { return one(.addFirstChild(row, range: at..<at)) }
+        return nested || macTitle ? one(.splitBelow(row, range: at..<at)) : one(.split(row, range: at..<at))
     }
 
-    /// Why an act must not be applied now, checked right before the edit, after the waits; nil when it may. An enter or delete carries the stamp of the text
-    /// the phone read, unless a save in the same request put the text there; a ⌫ in an empty bullet carries `empty`; a delete says whether the phone showed
-    /// bullets nested, so a row that gained some since asks again. A row that is gone is the tree's to refuse.
-    static func stale(_ act: PeerOutlineAct, in tree: OutlineTree, afterSave: Bool) -> String? {
+    /// Why an act must not be applied now, checked right before the edit, after the waits.
+    enum Stale {
+        case textChanged(splitting: Bool)
+        case notEmpty
+        case gainedNested
+
+        var message: String {
+            switch self {
+            case .textChanged(let splitting): "That bullet changed on the Mac after your phone read it, so \(splitting ? "nothing was split" : "it wasn't deleted")."
+            case .notEmpty: "It isn't empty any more on the Mac, so it wasn't deleted."
+            case .gainedNested: "Bullets were added under it on the Mac, so it wasn't deleted: Delete asks again now."
+            }
+        }
+    }
+
+    /// `textStamp` (what a save in the same request left) replaces the stamp the phone read, so keys the Mac commits while the act waits are caught too.
+    static func stale(_ act: PeerOutlineAct, in tree: OutlineTree, textStamp: String?) -> Stale? {
         guard let ids = act.row, !ids.isEmpty, let id = tree.bulletID(at: OutlinePath(placements: ids)), let bullet = tree.bullets[id] else { return nil }
-        let changed = !afterSave && act.stamp.map { $0 != stamp(bullet.text) } == true
+        let changed = (textStamp ?? act.stamp).map { $0 != stamp(bullet.text) } == true
         switch act.kind {
         case .enter:
-            return changed ? "That bullet changed on the Mac after your phone read it, so nothing was split." : nil
+            return changed ? .textChanged(splitting: true) : nil
         case .delete:
-            if act.empty == true, !bullet.text.isEmpty || !(bullet.note ?? "").isEmpty || !bullet.children.isEmpty {
-                return "It isn't empty any more on the Mac, so it wasn't deleted."
-            }
-            if changed { return "That bullet changed on the Mac after your phone read it, so it wasn't deleted." }
-            if act.nested != true, !bullet.children.isEmpty { return "Bullets were added under it on the Mac, so it wasn't deleted: Delete asks again now." }
-            return nil
+            if act.empty == true, !bullet.text.isEmpty || !(bullet.note ?? "").isEmpty || !bullet.children.isEmpty { return .notEmpty }
+            if changed { return .textChanged(splitting: false) }
+            return act.nested != true && !bullet.children.isEmpty ? .gainedNested : nil
         default:
             return nil
         }

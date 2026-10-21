@@ -291,11 +291,11 @@ function shapeRow(raw: unknown): Row | null {
   const row: Row = { path, depth, text: raw.text, textStamp: raw.textStamp, noteStamp: raw.noteStamp };
   const textLength = count(raw.textLength);
   if (textLength !== undefined) row.textLength = textLength;
-  else if (raw.text.length > limits.fieldBytes) Object.assign(row, { text: raw.text.slice(0, 500), textLength: raw.text.length });
+  else if (raw.text.length > limits.fieldBytes) Object.assign(row, { text: raw.text.slice(0, limits.cutShown), textLength: raw.text.length });
   if (typeof raw.note === "string") row.note = raw.note;
   const noteLength = count(raw.noteLength);
   if (noteLength !== undefined) row.noteLength = noteLength;
-  else if (typeof raw.note === "string" && raw.note.length > limits.note) Object.assign(row, { note: raw.note.slice(0, 500), noteLength: raw.note.length });
+  else if (typeof raw.note === "string" && raw.note.length > limits.note) Object.assign(row, { note: raw.note.slice(0, limits.cutShown), noteLength: raw.note.length });
   if (raw.done === true) row.done = true;
   if (raw.dim === true) row.dim = true;
   if (raw.nested === true) row.nested = true;
