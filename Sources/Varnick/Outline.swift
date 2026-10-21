@@ -314,8 +314,9 @@ final class Outline: ObservableObject {
 
     /// One edit for a session: one undo step on the keys' stack, the user's caret moved only as `OutlineActing.caretMove` says, and never the
     /// text of the view that has it. `allowed` is asked right before the edit, after the waits, and then `fresh`, which says why a text or note edit must not
-    /// replace what is there now (the session didn't read it, or it has changed since: the tree's text is the user's, keys typed included).
-    func performForSession(_ edit: OutlineEdit, fresh: (OutlineTree) -> String?, allowed: () -> Bool) async -> SessionOutcome {
+    /// replace what is there now (the session didn't read it, or it has changed since: the tree's text is the user's, keys typed included). The Phone
+    /// page's edits come through here too (`OutlineRemote`); `scope` is then the rows they go by, with the phone's Show completed.
+    func performForSession(_ edit: OutlineEdit, fresh: (OutlineTree) -> String?, allowed: () -> Bool, scope: OutlineScope? = nil) async -> SessionOutcome {
         guard load == .ready else { return SessionOutcome(refusal: .other(load.problem ?? "the outline isn't ready")) }
         // The caret on its way to a row lands first.
         guard await wait(.seconds(1), until: { pending == nil }) else {
@@ -343,7 +344,7 @@ final class Outline: ObservableObject {
         let live = caretView != nil
         let before = tree
         let wholeTree = OutlineScope(wholeTree: true)
-        let done = applyEdit(edit, typing: false, forSession: true, scope: OutlineActing.usesWholeTree(edit) ? wholeTree : nil)
+        let done = applyEdit(edit, typing: false, forSession: true, scope: scope ?? (OutlineActing.usesWholeTree(edit) ? wholeTree : nil))
         if let refusal = done.refusal { return SessionOutcome(refusal: refusal) }
         guard tree != before else { return SessionOutcome() }
         if let user {

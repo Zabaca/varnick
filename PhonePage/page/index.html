@@ -30,6 +30,7 @@
   <p id="notice" class="notice" role="status" hidden></p>
   <a id="new-session" class="button primary" href="#new">New session</a>
   <a id="voice-mode" class="button" href="#voice" hidden>Voice mode</a>
+  <a id="outline-open" class="button" href="#outline" hidden>Outline</a>
   <main>
     <section aria-labelledby="open-heading">
       <h2 id="open-heading">Open tabs</h2>
@@ -110,6 +111,39 @@
     <p id="voice-state" class="voice-state" role="status"></p>
     <button id="voice-open" type="button" hidden>Open the session (ends Voice mode)</button>
     <button id="voice-start" type="button" class="primary">Start</button>
+  </div>
+</div>
+
+<div id="outline" hidden>
+  <header class="bar">
+    <button id="outline-back" type="button" aria-label="Back">←</button>
+    <div class="who">
+      <h1>Outline</h1>
+      <p id="outline-host"></p>
+    </div>
+    <button id="outline-refresh" type="button">Refresh</button>
+  </header>
+  <div class="outline-tools">
+    <nav id="outline-crumbs" class="crumbs" aria-label="Where you are"></nav>
+    <label class="switch"><input id="outline-completed" type="checkbox"> Completed</label>
+  </div>
+  <p id="outline-notice" class="new-status" role="status" hidden></p>
+  <div id="outline-scroll" class="outline-scroll">
+    <div id="outline-title" class="ol-title" hidden></div>
+    <ul id="outline-list" class="ol-list"></ul>
+    <p id="outline-empty" class="empty" hidden></p>
+    <button id="outline-more" type="button" hidden>Show more</button>
+    <button id="outline-add" type="button" class="ol-add" hidden>+ Add a bullet</button>
+  </div>
+  <div id="outline-keys" role="toolbar" aria-label="Edit keys" hidden>
+    <button type="button" data-key="outdent" aria-label="Outdent">⇤</button>
+    <button type="button" data-key="indent" aria-label="Indent">⇥</button>
+    <button type="button" data-key="up" aria-label="Move up">↑</button>
+    <button type="button" data-key="down" aria-label="Move down">↓</button>
+    <button type="button" data-key="complete" aria-label="Complete" aria-pressed="false">✓</button>
+    <button type="button" data-key="note" aria-label="Note" aria-pressed="false">Note</button>
+    <button type="button" data-key="delete" aria-label="Delete">Delete</button>
+    <button type="button" data-key="done">Done</button>
   </div>
 </div>
 

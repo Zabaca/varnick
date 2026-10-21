@@ -556,6 +556,7 @@ enum OutlineCheck {
         clipboardCheck(tree)
         readCheck(tree)
         actCheck(tree)
+        OutlinePhoneCheck.run(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])
         do {

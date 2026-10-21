@@ -1060,6 +1060,13 @@ final class PeerManager: ObservableObject {
             }
             guard let model else { return starting }
             return PeerJSON.line(await VoiceRemote.shared.answer(request, by: by, model: model))
+        case .outlineRead, .outlineEdit:
+            // The Outline's text goes to a listed device alone (ADR 0046), read from the file the relay reads: a paired Mac is refused here as in the relay.
+            guard let by = request.by, UUID(uuidString: by) != nil, MacPeerHost().listsDevice(by) else {
+                return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "That Mac") shows its Outline to a listed device only"))
+            }
+            guard let model else { return starting }
+            return PeerJSON.line(await OutlineRemote.answer(request, by: by, model: model))
         case .attach, .status, .screen, .watch, .tabs, .take, .file, .files, .rows, .pages, .recent, .hosts, .upgrade, .restart:
             // `upgrade` and `restart` were answered above.
             return PeerJSON.line(PeerReply.failure("Unknown request"))

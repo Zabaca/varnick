@@ -1036,7 +1036,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Outline",
-                                       detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac. Turning it off hides it, and Claude sessions' Outline tools stay listed but refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
+                                       detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac; your listed devices see and edit them on its Phone page, and Claude sessions' Outline tools read and edit them without asking (docs/privacy-and-security.md, Your Outline, on the Phone page). Turning it off hides it and makes both refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Tasks",

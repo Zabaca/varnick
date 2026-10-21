@@ -4,7 +4,7 @@ description: The user wants the Outline on the Phone page. Today the Outline liv
 impact: A thought the user has away from the Mac goes into another app or is lost, and a list kept in the Outline can't be checked where it is used. The Outline stays a desk-only tool while sessions, tabs, Recent and Voice mode are already on the phone.
 severity: low
 evidence: The user's request of 2026-10-20, relayed by the coordinator ("the outliner app, could we make that available in phone app", then "proceed" once the coordinator had laid out the decisions below). Code and docs read at 605dd22 (main).
-status: open
+status: closed
 ---
 
 ## What the user wants

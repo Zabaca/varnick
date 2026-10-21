@@ -2,7 +2,7 @@
 problem: outline-out-of-reach-from-the-phone
 title: Edit a Mac's Outline from its Phone page
 summary: Accepted by the user on 2026-10-20 (relayed by the coordinator). Option 01's view, editable as the Outline is on the Mac. Tapping a bullet puts the caret in it. Enter splits the bullet at the caret by the tree's own rule, and ⌫ in an empty bullet deletes it. A row of keys above the keyboard, like the terminal's, indents, outdents, moves, completes, opens the note and deletes. Text is saved when the user leaves the bullet, uses a key, pauses or leaves the page, never letter by letter. Every edit goes through the Outline's edit for callers outside the panel, as Panel access's edits do: one step on the Mac's undo stack, with the Mac's caret respected. A text save is refused if the bullet changed on the Mac since the phone read it, and what the phone typed is kept. Mirrors show, and editing one edits every placement. Placing new mirrors, selecting several bullets and undo stay on the Mac. It adds two relay requests, in one protocol bump.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -179,3 +179,4 @@ The user chose this option ("03 Full editing (Recommended)"), and options 01 and
    - **No undo on the phone.** Delete asks before removing nested bullets, and ⌘Z on the Mac takes back phone edits.
    - **Listed devices only.** A paired Mac is refused.
    - **Each Mac's page shows that Mac's own Outline,** and a headless host's page shows none.
+4. **Very long notes stay cut (2026-10-20, "merge as is").** A note over 100,000 bytes shows its first 500 characters on the phone and says it is cut; option 01's separate read of its own row is not built. ADR 0046 records the cut.

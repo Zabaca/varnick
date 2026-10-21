@@ -6,6 +6,8 @@ import { element, notListed, postJSON, shortFolder } from "/dom.js";
 import { startInstall } from "/install.js";
 import "/menu.js";
 import { closeNew, openNew } from "/new.js";
+import { closeOutline, openOutline } from "/outline.js";
+import { parseOutlineHash } from "/outlinerules.js";
 import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
@@ -87,6 +89,8 @@ function show(home) {
   hostName = home.host.name;
   // Voice mode needs a Mac's transcriber and voice: a headless host has neither.
   $("voice-mode").hidden = home.host.headless === true;
+  // The Outline is a Mac app's file and model: a headless host has none. A Mac with the Outline switched off says so in the view.
+  $("outline-open").hidden = home.host.headless === true;
   titles.clear();
   fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
     for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
@@ -243,7 +247,7 @@ function goHome(text) {
   route();
 }
 
-/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, `#voice` is Voice mode, anything else the home. */
+/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, `#voice` is Voice mode, `#outline` the Outline (`#outline=<ids>` zoomed into a bullet), anything else the home. */
 function route() {
   const tabMatch = parseTabHash(location.hash);
   const match = sessionHash.exec(location.hash);
@@ -252,12 +256,14 @@ function route() {
   const takeSession = takeOnce;
   takeOnce = null;
   // Each view closes the others; the one that opens sets the body's class.
-  const views = { tab: tabMatch !== null, session: match !== null, new: location.hash === "#new", voice: location.hash === "#voice" };
+  const outlineMatch = parseOutlineHash(location.hash);
+  const views = { tab: tabMatch !== null, session: match !== null, new: location.hash === "#new", voice: location.hash === "#voice", outline: outlineMatch !== null };
   if (!views.new) closeNew();
   if (!views.voice) closeVoice();
+  if (!views.outline) closeOutline();
   if (!views.session) closeSession();
   if (!views.tab) closeTab();
-  document.body.classList.remove("in-new", "in-voice");
+  document.body.classList.remove("in-new", "in-voice", "in-outline");
   if (tabMatch) {
     $("home").hidden = true;
     document.body.classList.add("in-session");
@@ -283,6 +289,12 @@ function route() {
     document.body.classList.add("in-voice");
     document.title = hostName ? `Voice mode · ${hostName}` : "Voice mode · Phone page";
     openVoice({ host: hostName, done: goHome, openSession: (session) => enterSession(session, "Hey Varnick", false) });
+  } else if (views.outline) {
+    $("home").hidden = true;
+    document.body.classList.remove("in-session");
+    document.body.classList.add("in-outline");
+    document.title = hostName ? `Outline · ${hostName}` : "Outline · Phone page";
+    openOutline({ host: hostName, zoom: outlineMatch.zoom, done: goHome });
   } else {
     document.body.classList.remove("in-session");
     $("home").hidden = false;
@@ -295,7 +307,7 @@ function route() {
 // The session and New session fill the screen, and the keyboard can scroll the page under them as it opens (Chrome brings the
 // focused box into view before it resizes the page): the page never scrolls back, so the header stays off the top. They
 // take the visible height and go back to the top whenever it changes. Not while pinched in, which also shrinks it.
-const fullScreen = () => document.body.classList.contains("in-session") || document.body.classList.contains("in-new");
+const fullScreen = () => ["in-session", "in-new", "in-outline"].some((name) => document.body.classList.contains(name));
 function fitViewport() {
   const viewport = window.visualViewport;
   if (!viewport || viewport.scale > 1.01) return;

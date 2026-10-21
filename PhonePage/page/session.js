@@ -564,6 +564,9 @@ export const confirmClose = (question) => askInDialog(question, "Close");
 /** Asks whether the host should close the tab (`doneQuestion`'s words); true on Done. */
 export const confirmDone = (question) => askInDialog(question, "Done");
 
+/** Asks whether to delete a bullet of the Outline with what is nested under it (outline.js); true on Delete. */
+export const confirmDelete = (question) => askInDialog(question, "Delete");
+
 async function endSession(s) {
   if (!(await confirmEnd(s.title, s.host, s.tab !== null)) || s.closed) return;
   $("end").disabled = true;

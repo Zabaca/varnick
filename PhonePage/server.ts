@@ -26,10 +26,11 @@ import { certificateFailure, parseSelfAddresses, parseServePorts } from "./proxy
 import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, pageContentPolicy, workerSource } from "./webapp";
 import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
+import { editFields, parseEditBody, parseReadBody, readFields, shapeListing, type EditAsk, type ReadAsk } from "./outline";
 import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 33;
+export const PROTOCOL_VERSION = 34;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -147,6 +148,8 @@ async function main(): Promise<void> {
   // Voice mode's own, so a poll and a chunk never wait on the sessions and Recent, and it never takes more than two relays of a device (a chunk and a poll)
   // or four in all.
   const voiceRelay = new Relay(config, PROTOCOL_VERSION, homedir(), { total: 4, perKey: 2 });
+  // The Outline's own, for the same reason: a save never waits on the sessions and Recent, and the page sends one at a time.
+  const outlineRelay = new Relay(config, PROTOCOL_VERSION, homedir(), { total: 4, perKey: 2 });
   // The anonymous hello Find Macs sends: no from, by or pair, so it pairs nothing.
   const hello = await relay.ask("hello", null);
   if (!hello.ok) fail(`the relay (${config.relay}) didn't answer a hello: ${hello.error}`);
@@ -257,6 +260,8 @@ async function main(): Promise<void> {
     "/voice.js": { file: "page/voice.js", type: js },
     "/voicerules.js": { file: "page/voicerules.js", type: js },
     "/voice-worklet.js": { file: "page/voice-worklet.js", type: js },
+    "/outline.js": { file: "page/outline.js", type: js },
+    "/outlinerules.js": { file: "page/outlinerules.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
@@ -377,7 +382,7 @@ async function main(): Promise<void> {
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
       if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/done" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
-        && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
+        && path !== "/api/voice/audio" && path !== "/api/voice/ask" && path !== "/api/outline/read" && path !== "/api/outline/edit") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (pushPaths.includes(path)) {
@@ -392,6 +397,15 @@ async function main(): Promise<void> {
         const fields = audio ? audioFields(parsed.value as AudioChunk) : askFields(parsed.value as TextAsk);
         const taken = shapeTaken(await voiceRelay.ask(audio ? "voiceAudio" : "voiceAsk", device.id, fields));
         return json(taken.body, taken.status);
+      }
+      // The Outline (outline.ts): the rows of the phone's view, and an edit that lists them again. A Mac host answers; a headless host's relay refuses.
+      if (path === "/api/outline/read" || path === "/api/outline/edit") {
+        const reading = path === "/api/outline/read";
+        const parsed = reading ? parseReadBody(body) : parseEditBody(body);
+        if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
+        const fields = reading ? readFields(parsed.value as ReadAsk) : editFields(parsed.value as EditAsk);
+        const answered = shapeListing(await outlineRelay.ask(reading ? "outlineRead" : "outlineEdit", device.id, fields));
+        return json(answered.body, answered.status);
       }
       if (path === "/api/end") {
         const target = parseEndBody(body);

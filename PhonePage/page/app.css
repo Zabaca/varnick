@@ -218,3 +218,54 @@ body.in-voice { height: var(--page-height, 100dvh); overflow: hidden; display: f
 .voice-state { margin: 0; font-size: 18px; font-weight: 600; text-align: center; }
 #voice-start { min-height: 52px; font-size: 17px; }
 #voice-open { min-height: 48px; }
+
+/* The Outline fills the screen: the header and tools, the list scrolling, and the keys above the keyboard when a bullet is being edited. */
+body.in-outline { max-width: none; padding: 0 16px; height: var(--page-height, 100dvh); overflow: hidden; display: flex; flex-direction: column; }
+#outline { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 40rem; margin: 0 auto; }
+#outline .bar { padding: 8px 0; }
+.outline-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding-bottom: 4px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; font-size: 14px; }
+.crumbs a.crumb { color: var(--accent); text-decoration: none; padding: 8px 0; overflow-wrap: anywhere; }
+.crumb-sep { color: var(--muted); }
+.outline-tools .switch { flex: none; min-height: 44px; font-size: 14px; color: var(--muted); }
+#outline-notice { padding-bottom: 6px; }
+.outline-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 12px; }
+.outline-scroll > button { width: 100%; margin-top: 8px; }
+ul.ol-list { display: block; list-style: none; margin: 0; padding: 0; }
+.ol-title { padding: 4px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.ol-title .ol-text, .ol-title .ol-input { font-size: 20px; font-weight: 600; }
+/* A row is not a boxed card here: the global li style is cancelled. Depth indents it. */
+.ol-row { display: flex; align-items: flex-start; background: none; border: 0; border-radius: 0; padding: 0 0 0 calc(var(--depth, 0) * 20px); min-width: 0; }
+.ol-gutter { display: flex; flex: none; }
+.ol-row button.ol-twisty, .ol-row button.ol-dot { background: none; border: 0; border-radius: 0; padding: 0; min-height: 44px; min-width: 24px; color: var(--muted); font-size: 14px; }
+.ol-row button.ol-twisty:disabled { opacity: 1; visibility: hidden; }
+.ol-row button.ol-dot { min-width: 28px; display: grid; place-items: center; }
+/* The dot: a filled circle; a ring around it when the bullet is a mirror (placed in more than one spot) or collapsed. */
+.ol-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text); }
+.ol-dot.mirror::before { box-shadow: 0 0 0 3px var(--bg), 0 0 0 4px var(--accent); }
+.ol-dot.closed::before { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--muted); }
+.ol-main { flex: 1; min-width: 0; padding: 10px 0; }
+.ol-text-slot, .ol-note-slot { min-width: 0; }
+.ol-text { overflow-wrap: anywhere; white-space: pre-wrap; min-height: 24px; }
+.ol-row.done .ol-text { text-decoration: line-through; }
+.ol-row.done, .ol-row.dim { opacity: .55; }
+.ol-note-slot { margin-top: 2px; }
+.ol-note { font-size: 14px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ol-row.note-open .ol-note { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.ol-cut { margin-top: 2px; font-size: 13px; color: var(--warn); }
+textarea.ol-input, textarea.ol-note-input {
+  display: block; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+  padding: 4px 6px; margin: -5px -7px; width: calc(100% + 14px); resize: none; overflow: hidden; min-height: 32px;
+}
+textarea.ol-note-input { font-size: 14px; }
+.ol-conflict-slot { min-width: 0; }
+.ol-conflict { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 8px; font-size: 14px; }
+.ol-conflict p { margin: 0 0 4px; }
+.ol-conflict-head { font-weight: 600; color: var(--warn); }
+.ol-conflict-label { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.ol-conflict-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ol-conflict .card-actions { margin-top: 8px; }
+/* The keys share one row, as the terminal's do: equal widths, no wrapping, labels short enough for 360px. */
+#outline-keys { display: flex; flex-wrap: nowrap; gap: 4px; padding: 4px 0 max(8px, env(safe-area-inset-bottom)); flex: none; }
+#outline-keys button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 6px 0; font-size: 13px; white-space: nowrap; }
+#outline-keys button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }

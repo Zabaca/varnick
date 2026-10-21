@@ -148,6 +148,9 @@ enum OutlineEdit {
     case addAbove(OutlinePath)
     /// ↩ with the caret (or the selection, which is dropped) at `range`, UTF-16 offsets. At the start of a non-empty bullet it adds an empty one above.
     case split(OutlinePath, range: Range<Int>)
+    /// ↩ for the Phone page: the text after the range becomes the next sibling of the row, after whatever is nested under it, whether the row is collapsed or
+    /// not. The caret goes into the new bullet.
+    case splitBelow(OutlinePath, range: Range<Int>)
     /// ⌫ at the start: an empty bullet with nothing nested is deleted; otherwise the text joins onto the row above, when the bullet has
     /// nothing nested, no note and no other placement.
     case join(OutlinePath)
@@ -186,6 +189,13 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     case insideItself
     /// A path that leads nowhere (the row has left the tree).
     case gone
+    /// The title of the zoom, which can't be moved, joined, deleted or completed from inside it.
+    case title
+    /// The zoom runs through the rows: they can't be moved or removed while the user is zoomed into them.
+    case zoomedInto
+    case noSiblingAbove
+    case atTop
+    case firstOrLast
     case other(String)
 
     init(stringLiteral reason: String) { self = .other(reason) }
@@ -193,7 +203,7 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
     var message: String? {
         switch self {
         case .insideItself: "A bullet can't go inside itself"
-        case .gone, .other: nil
+        case .gone, .title, .zoomedInto, .noSiblingAbove, .atTop, .firstOrLast, .other: nil
         }
     }
 
@@ -202,6 +212,11 @@ enum OutlineRefusal: Equatable, ExpressibleByStringLiteral {
         switch self {
         case .insideItself: "a bullet can't go inside itself"
         case .gone: "no such row"
+        case .title: "the title"
+        case .zoomedInto: "the user is zoomed into it"
+        case .noSiblingAbove: "no sibling above"
+        case .atTop: "already at the top"
+        case .firstOrLast: "first or last"
         case .other(let why): why
         }
     }
@@ -215,6 +230,8 @@ struct OutlineScope {
     var cache: OutlineFoldCache?
     /// A session's edit (Panel access): every row of the tree, whatever the zoom and the collapsed bullets hide. Only Show completed applies.
     var wholeTree = false
+    /// Show completed for these rows when it is not the tree's own: the phone's (Panel access and the Mac's view use the tree's).
+    var showsCompleted: Bool?
 }
 
 /// A `#word` or `@word` in a bullet's text or note. One rule, used by the text views (colour, click) and the filter (a tag word matches a tag
@@ -317,7 +334,7 @@ extension OutlineEdit {
         case .indent(let run), .outdent(let run), .move(let run, _), .complete(let run), .delete(let run): run.paths
         case .setDone(let path, _): [path]
         case .insert(_, .after(let path)), .insert(_, .replacing(let path)): [path]
-        case .setText, .setNote, .split, .insert, .addFirstChild, .collapse, .placeMirror: []
+        case .setText, .setNote, .split, .splitBelow, .insert, .addFirstChild, .collapse, .placeMirror: []
         }
     }
 
@@ -395,6 +412,7 @@ struct OutlineTree: Codable, Equatable {
         let base = scope.wholeTree ? [] : effectiveZoom
         let filter = scope.filter
         let filtering = !filter.isEmpty
+        let showsCompleted = scope.showsCompleted ?? self.showsCompleted
         let placements = placementCounts()
         func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) -> [OutlineRow] {
             var rows: [OutlineRow] = []
@@ -665,7 +683,7 @@ struct OutlineTree: Codable, Equatable {
     /// `scope` is what is on screen: the row above, the next row and the siblings an edit works with are the ones the user can see.
     func applying(_ edit: OutlineEdit, now: Date, newID: () -> String = OutlineTree.newID, scope: OutlineScope = OutlineScope()) -> OutlineEditResult {
         // The title is the bullet zoomed into: its text can be edited, but it can't be moved, joined or deleted from inside the zoom.
-        if edit.restructuredPaths.contains(where: isTitle) { return .refused("the title") }
+        if edit.restructuredPaths.contains(where: isTitle) { return .refused(.title) }
         // ↩ in the title adds the first nested bullet.
         if case .split(let path, let range) = edit, isTitle(path) { return applying(.addFirstChild(path, range: range), now: now, newID: newID, scope: scope) }
         var tree = self
@@ -700,6 +718,14 @@ struct OutlineTree: Codable, Equatable {
                 let new = tree.insertEmpty(after: path, at: spot, now: now, newID: newID, text: bullet.text.utf16Slice(high..<length))
                 caret = OutlineCaret(path: new, offset: 0)
             }
+        case .splitBelow(let path, let range):
+            guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
+            let length = bullet.text.utf16.count
+            let low = min(max(range.lowerBound, 0), length), high = min(max(range.upperBound, low), length)
+            tree.bullets[spot.bullet]?.text = bullet.text.utf16Slice(0..<low)
+            tree.bullets[spot.bullet]?.changed = now
+            let new = tree.insertNew(text: bullet.text.utf16Slice(high..<length), at: spot.index + 1, in: spot.parent, now: now, newID: newID)
+            caret = OutlineCaret(path: path.parent.appending(new), offset: 0)
         case .join(let path):
             guard let spot = locate(path), let bullet = bullets[spot.bullet] else { return .refused(.gone) }
             guard bullet.children.isEmpty else { return .refused("bullets are nested under it") }
@@ -734,7 +760,7 @@ struct OutlineTree: Codable, Equatable {
         case .delete(let run):
             guard let run = resolve(run) else { return .refused(.gone) }
             // The bullet zoomed into, or one it is nested in, can't go while the user is inside it (the title itself is refused above).
-            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
+            if holdsZoom(run.items.map(\.path)) { return .refused(.zoomedInto) }
             let rows = visibleRows(scope)
             let at = rows.firstIndex { $0.path == run.items[0].path }
             run.remove(from: &tree)
@@ -801,11 +827,11 @@ struct OutlineTree: Codable, Equatable {
         case .indent(let asked):
             // Under the nearest sibling above the run that shows (one a filter, or Show completed, hides is stepped over).
             guard let run = resolve(asked), let siblings = bullets[run.parent]?.children else { return .refused(.gone) }
-            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
+            if holdsZoom(run.items.map(\.path)) { return .refused(.zoomedInto) }
             let shown = Set(visibleRows(scope).map(\.path))
             var index = run.items[0].index - 1
             while index >= 0, !shown.contains(run.parentPath.appending(siblings[index].id)) { index -= 1 }
-            guard index >= 0 else { return .refused("no sibling above") }
+            guard index >= 0 else { return .refused(.noSiblingAbove) }
             let above = siblings[index]
             guard !run.items.contains(where: { contains($0.placement.bullet, descendant: above.bullet) }) else { return .refused(.insideItself) }
             run.remove(from: &tree)
@@ -819,9 +845,9 @@ struct OutlineTree: Codable, Equatable {
             // Stops at the top level of the zoom.
             guard let run = resolve(asked), run.parentPath.placements.count > (scope.wholeTree ? 0 : effectiveZoom.count),
                   let parent = locate(run.parentPath) else {
-                return .refused("already at the top")
+                return .refused(.atTop)
             }
-            if holdsZoom(run.items.map(\.path)) { return .refused("the user is zoomed into it") }
+            if holdsZoom(run.items.map(\.path)) { return .refused(.zoomedInto) }
             run.remove(from: &tree)
             tree.bullets[parent.parent]?.children.insert(contentsOf: run.items.map(\.placement), at: parent.index + 1)
             tree.bullets[run.parent]?.changed = now
@@ -837,7 +863,7 @@ struct OutlineTree: Codable, Equatable {
             let shown = Set(visibleRows(scope).map(\.path))
             var target = step < 0 ? first.index + step : last.index + step
             while siblings.indices.contains(target), !shown.contains(run.parentPath.appending(siblings[target].id)) { target += step }
-            guard siblings.indices.contains(target) else { return .refused("first or last") }
+            guard siblings.indices.contains(target) else { return .refused(.firstOrLast) }
             run.remove(from: &tree)
             // Where the sibling it passes stands once the run is out of the list.
             let landing = step < 0 ? target : target - run.items.count + 1
