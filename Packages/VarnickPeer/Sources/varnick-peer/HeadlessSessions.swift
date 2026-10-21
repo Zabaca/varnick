@@ -24,8 +24,9 @@ struct HeadlessSession: Codable, Equatable {
     var ended: Date?
     /// True from the record's first save until `start` has handed the session over.
     var starting: Bool?
-    /// When a Mac marked the session's tab done (`done`), running or ended: the one place a headless host keeps the mark. Each record is
-    /// a tab under its id unless it has `tab` (ADR 0032), and `done` sets the date on every record of the tab. Nil: not marked.
+    /// When a Mac or device marked the session's tab done (`done`), once it has ended: the one place a headless host keeps the mark. Each record
+    /// is a tab under its id unless it has `tab` (ADR 0032), and `done` sets the date on every record of the tab. A record marked while open
+    /// by a build before protocol 33 keeps it and takes it to Recent when it ends; nothing reads it while it is open. Nil: not marked.
     var done: Date?
     /// The tab the session is in, and its name before the tab had a record (`HeadlessTab`). Nil: the record is a tab of its own, under its id.
     /// Each record of a tab carries the tab's mark in `done`.
@@ -218,6 +219,29 @@ extension StateFolder {
             }
             if changed { try writeSessions(sessions) }
             return found
+        }
+    }
+
+    /// A `done` on an open tab (ADR 0045): every record of the tab takes the mark, and the open ones end (`HeadlessSession.ending`), in one write.
+    /// Returns the ids it ended, nil when the tab has no record. The caller kills their sessions.
+    func markTabDone(_ tab: String, now: Date = Date()) throws -> [String]? {
+        try locked(exclusive: true) {
+            var sessions = try readSessions()
+            let members = sessions.indices.filter { sessions[$0].tabID == tab }
+            guard !members.isEmpty else { return nil }
+            var ended: [String] = []
+            for index in members {
+                if sessions[index].done == nil { sessions[index].done = now }
+                if sessions[index].ended == nil {
+                    ended.append(sessions[index].id)
+                    sessions[index] = sessions[index].ending(at: now, reported: Self.reported(for: sessions[index].id))
+                }
+            }
+            var tabs = try readTabs()
+            let settled = settle(&tabs, in: sessions, [tab])
+            try writeSessions(sessions)
+            if settled { try writeTabs(tabs) }
+            return ended
         }
     }
 

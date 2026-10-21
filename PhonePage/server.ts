@@ -17,7 +17,7 @@ import { inputLimitBytes, Terminals, type TerminalData } from "./bridge";
 import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
-import { agentsOf, closePane, parseAgentsFolder, parseCloseBody, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
+import { agentsOf, closePane, doneTab, parseAgentsFolder, parseCloseBody, parseDoneBody, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
 import { clean, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
@@ -29,7 +29,7 @@ import { Shared } from "./pushwatch";
 import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
-export const PROTOCOL_VERSION = 32;
+export const PROTOCOL_VERSION = 33;
 
 const whoisLifetime = 60_000;
 /** How long the other hosts' links are kept, and how long a failure to read them is. */
@@ -239,6 +239,7 @@ async function main(): Promise<void> {
     "/tabrules.js": { file: "page/tabrules.js", type: js },
     "/rules.js": { file: "page/rules.js", type: js },
     "/dom.js": { file: "page/dom.js", type: js },
+    "/menu.js": { file: "page/menu.js", type: js },
     "/live.js": { file: "page/live.js", type: js },
     "/liverules.js": { file: "page/liverules.js", type: js },
     "/new.js": { file: "page/new.js", type: js },
@@ -375,7 +376,7 @@ async function main(): Promise<void> {
     const refused = gateMutation(request.method, request.headers, wantOrigin);
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
-      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
+      if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/done" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
         && path !== "/api/voice/audio" && path !== "/api/voice/ask") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
@@ -437,6 +438,13 @@ async function main(): Promise<void> {
         if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
         const restarted = await restartPane(relay, device, host.name, ask.value);
         return json(restarted.body, restarted.status);
+      }
+      // Done (protocol 33, ADR 0045), from the tab view's menu: the host closes the tab, whoever controls or started it.
+      if (path === "/api/done") {
+        const ask = parseDoneBody(body);
+        if (!ask.ok) return json({ ok: false, error: ask.error }, 400);
+        const done = await doneTab(relay, device, ask.value);
+        return json(done.body, done.status);
       }
       const tab = parseResumeBody(body);
       if (!tab.ok) return json({ ok: false, error: tab.error }, 400);

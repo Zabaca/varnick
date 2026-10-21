@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, closeQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
@@ -244,6 +244,41 @@ describe("Close", () => {
     expect(closeQuestion(last, terminal(c, { running: false }), "Mac mini")).not.toContain("can't change the tab");
     expect(closeQuestion(last, other(b, "file"), "Mac mini")).not.toContain("can't change the tab");
     expect(closeQuestion({ mine: true, panes: [claude(a), terminal(b)] }, claude(a), "Mac mini")).not.toContain("can't change the tab");
+  });
+});
+
+describe("the menu's Done (protocol 33)", () => {
+  test("is offered in any tab with a Claude pane, whether or not this phone controls it", () => {
+    expect(offersDone({ mine: true, panes: [claude(a)] })).toBe(true);
+    expect(offersDone({ mine: false, panes: [claude(a)] })).toBe(true);
+    expect(offersDone({ mine: false, panes: [terminal(a), claude(b)] })).toBe(true);
+    // A Claude pane that is down is still the tab's, as on a Mac.
+    expect(offersDone({ mine: false, panes: [claude(a, { running: false })] })).toBe(true);
+  });
+
+  test("is not offered in a tab with no Claude pane", () => {
+    expect(offersDone({ mine: true, panes: [terminal(a), other(b, "web")] })).toBe(false);
+    expect(offersDone({ mine: true, panes: [other(a, "file")] })).toBe(false);
+    expect(offersDone({ mine: true, panes: [] })).toBe(false);
+  });
+
+  test("the menu's three items follow their own rules: Done the tab's, Restart the pane's and the phone's control", () => {
+    const owned = { mine: true, panes: [claude(a), terminal(b)] };
+    const foreign = { mine: false, panes: [claude(a), terminal(b)] };
+    // Over the Claude pane: in control all three can show (Redraw is the screen's, in session.js); not in control only Done does.
+    expect([offersDone(owned), offersRestart(owned, claude(a))]).toEqual([true, true]);
+    expect([offersDone(foreign), offersRestart(foreign, claude(a))]).toEqual([true, false]);
+    // Over a terminal: Done still acts on the tab, Restart is the Claude pane's only.
+    expect([offersDone(owned), offersRestart(owned, terminal(b))]).toEqual([true, false]);
+  });
+
+  test("the question always names the tab and the host, and says every pane ends", () => {
+    const text = doneQuestion("Fix it", "Mac mini");
+    expect(text).toContain("“Fix it”");
+    expect(text).toContain("Mac mini");
+    expect(text).toContain("Every pane of it ends");
+    expect(text).toContain("Completed");
+    expect(doneQuestion("Fix it", "")).toContain("its host");
   });
 });
 

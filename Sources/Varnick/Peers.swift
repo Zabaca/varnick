@@ -937,10 +937,11 @@ final class PeerManager: ObservableObject {
         }
     }
 
-    /// Marks a tab done on its host, or with `mark` false takes the mark off, and ends nothing (ADR 0032). Whether the host took it:
-    /// a failure is only logged, and nothing sends it again.
-    func done(tab id: UUID, on host: String, mark: Bool) async -> Bool {
-        guard status[host] != .removedThisMac else { return false }
+    /// Done on a tab of the host (`done`, ADR 0045): an open tab is closed there as its own Done closes it, every pane ended, whoever controls or
+    /// started it; a closed tab is marked, or with `mark` false has the mark taken off (ADR 0032). Nil once the host took it, else why not: a host
+    /// that can't be reached is a refusal too. A failure is logged, and nothing sends it again.
+    func done(tab id: UUID, on host: String, mark: Bool) async -> String? {
+        guard status[host] != .removedThisMac else { return "\(name(of: host)) doesn't list this Mac any more" }
         var request = PeerRequest(.done)
         request.by = PeerIdentity.id
         request.tab = id.uuidString.lowercased()
@@ -948,9 +949,9 @@ final class PeerManager: ObservableObject {
         switch await send(request, to: host) {
         case .failure(let refusal):
             NSLog("Varnick: couldn't \(mark ? "mark" : "unmark") tab \(id.uuidString.lowercased()) done on \(self.name(of: host)): \(refusal.message)")
-            return false
+            return refusal.message
         case .success:
-            return true
+            return nil
         }
     }
 
@@ -1023,17 +1024,11 @@ final class PeerManager: ObservableObject {
         switch request.op {
         case .hello:
             return PeerJSON.line(PeerReply(v: PeerProtocol.version, ok: true, paired: noteCaller(request)))
-        case .done:
-            // Who may send it: ADR 0032.
-            guard let model else { return starting }
-            guard let by = request.by, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
-                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
-            }
-            return PeerJSON.line(await model.hostDone(request))
-        case .start, .resume, .end, .arrange, .reopen, .restartPane:
+        case .start, .resume, .end, .arrange, .reopen, .restartPane, .done:
             guard let model else { return starting }
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit
-            // counts at once), except `arrange`, which a Mac alone may send. The id goes into a zmx label, so it has to be a UUID.
+            // counts at once), except `arrange`, which a Mac alone may send. A `done` is a device's too (ADR 0045). The id goes into a zmx label, so it
+            // has to be a UUID.
             guard let by = request.by, UUID(uuidString: by) != nil,
                   peers.contains(where: { Zmx.sameID($0.id, by) }) || (request.op != .arrange && MacPeerHost().listsDevice(by)) else {
                 return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac or device that asked"))
@@ -1044,6 +1039,7 @@ final class PeerManager: ObservableObject {
             case .arrange: return PeerJSON.line(await model.hostArrange(request, by: by))
             case .reopen: return PeerJSON.line(await model.hostReopen(request, by: by))
             case .restartPane: return PeerJSON.line(await model.hostRestartPane(request, by: by))
+            case .done: return PeerJSON.line(await model.hostDone(request))
             default: return PeerJSON.line(await model.hostEnd(request, by: by))
             }
         case .projects:

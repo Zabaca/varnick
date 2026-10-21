@@ -546,7 +546,7 @@ async function askInDialog(text, action) {
 }
 
 /** Tells the user something that may be long, in the page's dialog, which wraps; resolves when it is dismissed. */
-async function tell(text) {
+export async function tell(text) {
   $("alert-text").textContent = text;
   const dialog = $("alert");
   dialog.showModal();
@@ -560,6 +560,9 @@ export function confirmEnd(title, host, whole) {
 
 /** Asks whether to close one pane of a tab (`question` is `closeQuestion`'s); true on Close. */
 export const confirmClose = (question) => askInDialog(question, "Close");
+
+/** Asks whether the host should close the tab (`doneQuestion`'s words); true on Done. */
+export const confirmDone = (question) => askInDialog(question, "Done");
 
 async function endSession(s) {
   if (!(await confirmEnd(s.title, s.host, s.tab !== null)) || s.closed) return;

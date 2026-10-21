@@ -170,8 +170,13 @@ export const parseRestartBody = (body: unknown): Parsed<PlaceAsk> => readPlace(b
 /** `POST /api/close`'s body: a tab and a pane of it, and nothing else is read. */
 export const parseCloseBody = (body: unknown): Parsed<PlaceAsk> => readPlace(body);
 
+/** `POST /api/done`'s body (protocol 33, ADR 0045): the tab, and nothing else. Which tab it is, who controls it and who started it are the host's to judge. */
+export const parseDoneBody = (body: unknown): Parsed<string> => parseTabId(body);
+
 /** `POST /api/resume`'s body: the closed tab, and nothing else. Its sessions, their folders and agents are the host's own, from its Recent. */
-export function parseResumeBody(body: unknown): Parsed<string> {
+export const parseResumeBody = (body: unknown): Parsed<string> => parseTabId(body);
+
+function parseTabId(body: unknown): Parsed<string> {
   if (!isObject(body) || typeof body.tab !== "string" || !uuidPattern.test(body.tab)) return refuse("That isn't a tab id");
   return { ok: true, value: body.tab.toLowerCase() };
 }
@@ -457,6 +462,16 @@ export async function restartPane(asker: Asker, device: Device, host: string, as
   if (!found.pane.running) return failed(409, "That session isn't running: there is nothing to restart");
   const restarted = await asker.ask("restartPane", device.id, { tab: ask.tab, pane: ask.pane }, launchTimeoutMs);
   return restarted.ok ? { status: 200, body: { ok: true } } : failed(502, restarted.error);
+}
+
+/**
+ * `POST /api/done` (protocol 33, ADR 0045): Done on a tab of the host, from the tab's menu. Any tab, whether or not this phone controls it and whoever started
+ * it: the host closes it as its own Done does, every pane ended, and puts it in Completed and Recent. The host judges the rest and refuses a tab it doesn't
+ * have or one with no Claude pane, in its own words, which the page shows. Asked once, under a start's wait, since the host may wait on zmx.
+ */
+export async function doneTab(asker: Asker, device: Device, tab: string): Promise<{ status: number; body: Json }> {
+  const done = await asker.ask("done", device.id, { tab, mark: true }, launchTimeoutMs);
+  return done.ok ? { status: 200, body: { ok: true, text: "Done" } } : failed(502, done.error);
 }
 
 /**

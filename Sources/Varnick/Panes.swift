@@ -380,8 +380,6 @@ final class ClaudeTab: ObservableObject {
     /// File tree on the right (⌘⇧F).
     @Published var showsFiles = false
     let files = FileTree()
-    /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
-    var completedAt: Date?
     /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
     var history: [HeldConversation] = []
     /// Layout changed (divider moved); the model saves.
@@ -395,12 +393,10 @@ final class ClaudeTab: ObservableObject {
     /// A pane of the tab being dragged to another place in it.
     let paneDrag = PaneDrag()
 
-    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-         history: [HeldConversation] = []) {
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, history: [HeldConversation] = []) {
         self.id = id
         self.root = root
         self.name = name
-        self.completedAt = completedAt
         self.history = history
         self.focused = focused ?? root.leaves[0]
         paneDrag.tab = self
@@ -454,12 +450,15 @@ final class ClaudeTab: ObservableObject {
 
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
-        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil,
                               history: history.isEmpty ? nil : history, inControl: inControl && host != nil ? true : nil)
     }
 
-    /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`).
-    var asksBeforeDone: Bool { claudeSessions.contains(where: \.asksBeforeDone) }
+    /// Done on it asks first while any Claude session in it is working or has background work (`Turn.asksBeforeDone`). Another machine's tab asks
+    /// for a pane that shows a card too: its host closes the tab (ADR 0045), so no card asks for itself.
+    var asksBeforeDone: Bool {
+        host == nil ? claudeSessions.contains(where: \.asksBeforeDone) : claudeSessions.contains { Turn.asksBeforeDone($0.turn?.turn, showingCard: false) }
+    }
 
     /// What a pane is called in this tab (the tab's name when it has one pane), which the sign of its screen tools shows (`ScreenAccess`).
     func boardTitle(of pane: ClaudeSession) -> String { sessions.count == 1 ? name ?? pane.label : pane.label }
@@ -488,6 +487,23 @@ final class ClaudeTab: ObservableObject {
         onClosing()
         onEnding()
         for session in sessions { session.end() }
+    }
+
+    /// Done asked by another Mac or device (ADR 0045): every pane ends with no question, as the host's `end` for a tab ends them. A pane
+    /// showing a card, because the asker controls the tab, would ask on the card for the Mac's own close.
+    func closeForPeer() {
+        onClosing()
+        for session in sessions { session.endSession() }
+    }
+
+    /// Done on another machine's tab that its host has taken (ADR 0045): the host closes the tab's sessions itself, so the panes close here and
+    /// the host is told nothing more, unlike the ×.
+    func closeAfterHostDone() {
+        onClosing()
+        for session in sessions {
+            session.endsWithTab = true
+            session.end()
+        }
     }
 
     /// Splits `target`'s pane without moving focus (a file pane stacking under the file column).

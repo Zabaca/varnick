@@ -369,17 +369,31 @@ extension HeadlessPeerHost {
 
     // MARK: done
 
-    /// `done`: sets the done date of every record in the tab, or with `mark` false clears it, and ends nothing. A record is a tab under
-    /// its id unless a `resume` put it in another (ADR 0032). A Mac host's equivalent is `LauncherModel.hostDone`.
+    /// `done` (ADR 0045), from any Mac or device the host lists, whoever controls or started the tab: an open tab with a Claude pane is closed
+    /// as Done on a Mac closes it, its records ended and its sessions killed with the mark set, in one write; a closed tab is marked, or with `mark`
+    /// false has the mark taken off. A record is a tab under its id unless a `resume` put it in another (ADR 0032). A Mac host's equivalent is
+    /// `LauncherModel.hostDone`.
     private func done(_ request: PeerRequest) -> PeerReply {
-        guard let tab = request.tab, let id = UUID(uuidString: tab) else { return .failure("Not a Varnick tab id") }
+        guard let tab = request.tab, let id = UUID(uuidString: tab)?.uuidString.lowercased() else { return .failure("Not a Varnick tab id") }
         state.reconcile()
         let mark = request.mark ?? true
         do {
-            let found = try state.updateTab(id.uuidString.lowercased()) { record in
-                if !mark { record.done = nil } else if record.done == nil { record.done = Date() }
+            let members = try state.sessions().filter { $0.tabID == id }
+            guard !members.isEmpty else { return .failure("That tab isn't on \(name)") }
+            let open = members.filter { $0.ended == nil }
+            guard mark, !open.isEmpty else {
+                // A closed tab: the mark goes on or off its records. An open one has no mark to take off.
+                _ = try state.updateTab(id) { record in
+                    if !mark { record.done = nil } else if record.done == nil, record.ended != nil { record.done = Date() }
+                }
+                return .success()
             }
-            return found ? .success() : .failure("That tab isn't on \(name)")
+            guard open.contains(where: { !$0.isTerminal }) else { return .failure("That tab has no Claude session to mark done") }
+            guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
+            // The records end first and all at once, so a reconcile can't shrink the layout meanwhile and the tab keeps it whole for a `reopen`.
+            let ended = try state.markTabDone(id) ?? []
+            for record in ended { UUID(uuidString: record).map(Zmx.killNow) }
+            return .success()
         } catch {
             return stateFailure(error)
         }
@@ -433,7 +447,6 @@ extension HeadlessPeerHost {
         let statuses = Zmx.statuses(of: open.compactMap { UUID(uuidString: $0.id).map(Zmx.sessionName) })
         var order: [String] = []
         for record in open where !order.contains(record.tabID) { order.append(record.tabID) }
-        let now = Date()
         var reply = PeerReply.success()
         reply.tabs = order.compactMap { id in
             guard let record = HeadlessTabs.record(of: id, sessions: found.sessions, tabs: found.tabs) else { return nil }
@@ -446,8 +459,7 @@ extension HeadlessPeerHost {
             // A run nobody opened is marked (protocol 29), with its automation: the Macs keep it out of their lists and the phone lists it under Runs.
             let unopened = members.filter { $0.runUnopened == true }
             let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first)
-            var tab = PeerTab(tab: id, name: record.name, doneAge: members.compactMap(\.done).max().map { Int(max(0, now.timeIntervalSince($0))) },
-                              layout: record.layout, panes: panes, run: mark)
+            var tab = PeerTab(tab: id, name: record.name, layout: record.layout, panes: panes, run: mark)
             tab.settleControl()
             return tab
         }

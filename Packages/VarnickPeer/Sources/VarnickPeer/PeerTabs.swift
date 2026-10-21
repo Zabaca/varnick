@@ -294,14 +294,12 @@ public struct PeerRunMark: Codable, Equatable, Sendable {
     public init(automation: String? = nil) { self.automation = automation }
 }
 
-/// An open tab of the host: its id, name and mark, who is in control of it, how its panes are laid out and what each shows.
+/// An open tab of the host: its id and name, who is in control of it, how its panes are laid out and what each shows.
 public struct PeerTab: Codable, Equatable, Sendable {
     /// The tab's id (ADR 0032), a lowercase uuid.
     public var tab: String
     /// Its ⌘⇧R name, when it has one.
     public var name: String?
-    /// How many seconds ago the host marked it done, by the host's clock. Nil: not marked. A device isn't sent it.
-    public var doneAge: Int?
     /// Who is in control of the tab: the label its Claude and terminal panes' zmx sessions carry, the same on each. Nil: the host itself, or
     /// the tab has none of those. A device is told only its own id here, as for `PeerSessionStatus`.
     public var control: String?
@@ -317,11 +315,10 @@ public struct PeerTab: Codable, Equatable, Sendable {
     /// it under Runs. Nil: an ordinary tab.
     public var run: PeerRunMark?
 
-    public init(tab: String, name: String? = nil, doneAge: Int? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
+    public init(tab: String, name: String? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
                 layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil) {
         self.tab = tab
         self.name = name
-        self.doneAge = doneAge
         self.control = control
         self.controlName = controlName
         self.clients = clients
@@ -343,12 +340,11 @@ public struct PeerTab: Codable, Equatable, Sendable {
         clients = running.isEmpty ? nil : running.compactMap(\.clients).reduce(0, +)
     }
 
-    /// What a device is told: the controller's id only when it is the device, no work links and no mark. The host's own Phone page server
+    /// What a device is told: the controller's id only when it is the device, and no work links. The host's own Phone page server
     /// (`keepingControllers`, protocol 27) is told a device's answer with the controllers' ids too: it routes a push by who controls a pane.
     public func hiding(from device: String, keepingControllers: Bool = false) -> PeerTab {
         var tab = self
         if !keepingControllers, !Zmx.sameID(tab.control, device) { tab.control = nil }
-        tab.doneAge = nil
         tab.panes = tab.panes.map { pane in
             var pane = pane
             if !keepingControllers, !Zmx.sameID(pane.control, device) { pane.control = nil }
@@ -359,13 +355,13 @@ public struct PeerTab: Codable, Equatable, Sendable {
     }
 
     /// The Claude panes that run, as the per-session entries the board and the session lists use (`PeerOpenSession`), each with the tab's
-    /// name and mark. A pane with no zmx session running isn't one.
+    /// name. A pane with no zmx session running isn't one.
     public var openSessions: [PeerOpenSession] {
         panes.compactMap { pane -> PeerOpenSession? in
             guard pane.kind == .claude, pane.running == true, let session = pane.session else { return nil }
             return PeerOpenSession(session: session, title: pane.title, folder: pane.folder, agent: pane.agent, conversation: pane.conversation,
                                    control: pane.control, controlName: pane.controlName, clients: pane.clients, turn: pane.turn,
-                                   turnAge: pane.turnAge, work: pane.work, doneAge: doneAge, tab: tab, tabName: name)
+                                   turnAge: pane.turnAge, work: pane.work, tab: tab, tabName: name)
         }
     }
 }

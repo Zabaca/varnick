@@ -76,8 +76,15 @@ body.in-session { max-width: none; padding: 0; height: var(--page-height, 100dvh
 .bar p { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #back { font-size: 18px; min-width: 44px; }
 #end { color: var(--warn); }
-/* Redraw, Restart and End share the bar with the back arrow and the title at 360px: tighter than a button elsewhere, still a 44px target. */
-#redraw, #restart, #end { padding-inline: 10px; }
+/* The menu button and End share the bar with the back arrow and the title at 360px: tighter than a button elsewhere, still a 44px target. */
+#menu, #end { padding-inline: 10px; }
+#menu { min-width: 44px; font-size: 18px; line-height: 1; }
+/* Done, Redraw and Restart, under the menu button; a hidden item takes no room. The list's own [hidden] has to beat its display. */
+.menu-wrap { position: relative; flex: none; }
+.menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; display: flex; flex-direction: column; gap: 2px; min-width: 9rem; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 18px rgb(0 0 0 / .35); }
+.menu-list[hidden] { display: none; }
+.menu-list button { width: 100%; text-align: left; background: transparent; border-color: transparent; }
+.menu-list button:active { background: var(--button); }
 #restart:disabled { opacity: 1; color: var(--muted); }
 
 /* The tab's panes, a button each, side by side and scrolling when they don't fit. */

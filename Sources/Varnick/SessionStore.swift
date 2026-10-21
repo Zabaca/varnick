@@ -338,21 +338,21 @@ struct SessionStore {
         var name: String?
         /// File tree shown (⌘⇧F).
         var showsFiles: Bool?
-        /// When another machine marked the tab done while it is open here. Optional so older files load.
+        /// Only read: when another machine marked the tab done while it was open here, in a file saved before protocol 33 (ADR 0045), where an open
+        /// tab carries no mark. `migrated()` drops it, so nothing reads it and the tab is saved without it. Optional so older files load.
         var done: Date?
         /// The conversations it has held, newest first (`TabHistory`). Optional so older files load.
         var history: [HeldConversation]?
         /// A tab of another machine's: this Mac was in control of it when it was saved. The host's next listing says whether it still is.
         var inControl: Bool?
 
-        init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil, done: Date? = nil,
+        init(id: UUID? = nil, layout: PaneLayout, focused: UUID? = nil, name: String? = nil, showsFiles: Bool? = nil,
              history: [HeldConversation]? = nil, inControl: Bool? = nil) {
             self.id = id
             self.layout = layout
             self.focused = focused
             self.name = name
             self.showsFiles = showsFiles
-            self.done = done
             self.history = history
             self.inControl = inControl
         }
@@ -371,24 +371,17 @@ struct SessionStore {
             return tab
         }
 
-        /// The tab as `State.openTabs` hands it out: its id set, and a mark migrated from its panes' records.
+        /// The tab as `State.openTabs` hands it out: its id set, and no mark: an open tab carries none (ADR 0045), so one saved with a mark, or
+        /// whose panes' records carry one from before marks were the tab's, is open and unmarked.
         fileprivate func migrated() -> SavedTab {
             var tab = self
             tab.id = resolvedID
-            if tab.done == nil { tab.done = Self.markFromPanes(layout) }
+            tab.done = nil
             tab.layout = layout.mapping { record in
                 record.completedAt = nil
                 record.hostHoldsDone = nil
             }
             return tab
-        }
-
-        /// A mark on the panes of a tab saved before marks were the tab's: the tab is marked only if every one of its Claude panes that
-        /// runs here is, at the newest date; otherwise the marks are dropped.
-        private static func markFromPanes(_ layout: PaneLayout) -> Date? {
-            let claude = layout.records.filter { $0.isClaude && $0.host == nil }
-            let dates = claude.compactMap(\.completedAt)
-            return !claude.isEmpty && dates.count == claude.count ? dates.max() : nil
         }
 
         /// A tab with panes on more than one machine (a split made before such splits were refused) is one tab per machine: the first
@@ -403,7 +396,7 @@ struct SessionStore {
                 let first = pieces.isEmpty
                 pieces.append(SavedTab(id: first ? resolvedID : pruned.records[0].id, layout: pruned,
                                        focused: pruned.records.contains { $0.id == focused } ? focused : nil,
-                                       name: first ? name : nil, showsFiles: first ? showsFiles : nil, done: first ? done : nil,
+                                       name: first ? name : nil, showsFiles: first ? showsFiles : nil,
                                        history: first ? history : nil, inControl: inControl))
             }
             return pieces
