@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  backspaceAt, caretAfterDelete, caretAfterHiding, cleanNote, cleanText, conflictCard, deleteAsks, enterAt, fits, jsonBytes, keyOf, keysFor, limits, newConflict,
+  backspaceAt, caretAfterDelete, caretAfterHiding, cleanNote, cleanText, conflictCard, deleteAsks, enterAt, fieldKey, fits, fitsRequest, hasNoteControl, hasTextControl, jsonBytes, keyOf, keysFor, limits, newConflict,
   noteEditable, outlineHash, parseCompleted, parseOutlineHash, pasteAction, refusalLine, saveDelayMs, saveIn, siblingAbove, siblingBelow, textEditable, Toggles, viewBody,
 } from "./page/outlinerules.js";
 
@@ -229,9 +229,28 @@ describe("what a refusal shows", () => {
   });
 
   test("a conflict keeps what the phone typed beside the Mac's version, with the stamp to save over it", () => {
-    const found = newConflict({ kind: "changed", message: "m", row: ["a", "b"], field: "text", current: "the Mac's", stamp: "0123456789abcdef" }, "mine");
-    expect(found).toEqual({ key: "a/b", row: ["a", "b"], field: "text", mine: "mine", theirs: "the Mac's", stamp: "0123456789abcdef" });
-    expect(conflictCard({ ...found, mine: "x".repeat(500) }).mine.length).toBe(401);
-    expect(conflictCard(found)).toEqual({ mine: "mine", theirs: "the Mac's", field: "text" });
+    const found = newConflict({ kind: "changed", message: "m", row: ["a", "b"], field: "text", current: "the Mac's", stamp: "0123456789abcdef" });
+    expect(found).toEqual({ key: "a/b", row: ["a", "b"], field: "text", theirs: "the Mac's", stamp: "0123456789abcdef" });
+    expect(conflictCard({ ...found, theirs: "x".repeat(500) }).theirs.length).toBe(401);
+    expect(conflictCard(found)).toEqual({ theirs: "the Mac's", field: "text" });
+    expect(fieldKey("a/b", "note")).toBe("a/b|note");
+  });
+});
+
+describe("what a request may be", () => {
+  test("a body fits the relay's one base64 argument with room for the fields the server adds", () => {
+    expect(fitsRequest({ view: {}, act: { kind: "delete", row: ["a"] } })).toBe(true);
+    // 60,000 bytes of JSON string is 80,000 as base64, and the view's ids and two paths are the rest.
+    expect(fitsRequest({ save: { text: "x".repeat(limits.fieldBytes - 2) }, view: { opened: Array.from({ length: limits.toggles }, () => "0".repeat(36)) } })).toBe(true);
+    expect(fitsRequest({ act: { lines: "x".repeat(90_000) } })).toBe(false);
+    expect(fitsRequest({ act: { lines: "\n".repeat(50_000) } })).toBe(false);
+  });
+
+  test("control characters are told by one rule on the page and in its server", () => {
+    expect(hasTextControl("a\tb")).toBe(true);
+    expect(hasTextControl("a\u2028b")).toBe(true);
+    expect(hasTextControl("plain")).toBe(false);
+    expect(hasNoteControl("a\tb")).toBe(true);
+    expect(hasNoteControl("a\nb\r\nc")).toBe(false);
   });
 });

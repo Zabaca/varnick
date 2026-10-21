@@ -2,17 +2,14 @@ import CryptoKit
 import Foundation
 import VarnickPeer
 
-// The Outline on a Mac's Phone page (option 03 of `outline-out-of-reach-from-the-phone`, ADR 0046): the rules that need no view or clock, so
-// `--outline-check` runs them. The phone sends its own view of the tree (zoom, the bullets it opened and closed, Show completed) and the app lists
-// the rows that view shows with the tree's own rules, on a copy that is never saved or published; the page decides nothing about the tree. An edit
-// is the tree's, applied by `OutlineRemote` through the same edit a session's `outline_act` uses. Foundation and CryptoKit only. Nothing here logs
-// a bullet's text, and nothing keeps it.
+// The Outline on a Mac's Phone page, the rules that need no view or clock, so `--outline-check` runs them: the phone's view listed from a copy of the tree,
+// the stamps, and what an act comes to. `OutlineRemote` applies it. The mechanism and the privacy rule are in docs/agents/where-it-breaks.md, The Outline on
+// the phone. Foundation and CryptoKit only; nothing here logs or keeps a bullet's text.
 
 enum OutlinePhone {
     // MARK: Stamps
 
-    /// A short digest of a field's whole text, the same in every launch (Swift's `Hasher` is seeded per launch, so a stamp made with it would refuse
-    /// every save after a restart). The page sends back the stamp it read and never makes one.
+    /// A short digest of a field's whole text, the same in every launch (why not `Hasher`: where-it-breaks).
     static func stamp(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -138,8 +135,7 @@ enum OutlinePhone {
         return reply
     }
 
-    /// The reply under `replyLimit`: rows are dropped from the end, and `more` and `next` say where to continue. An edit's reply holds a refusal's
-    /// field, and the title, besides the rows, so the listing's own cap isn't enough for it.
+    /// The reply under `replyLimit`: rows are dropped from the end (`more` and `next` say where to continue), since an edit's reply holds a refusal's field too.
     static func fit(_ reply: PeerOutlineReply) -> PeerOutlineReply {
         var fitted = reply
         while PeerJSON.line(fitted).utf8.count > PeerOutlineLimits.replyLimit, fitted.rows.count > 1 {
@@ -152,9 +148,10 @@ enum OutlinePhone {
 
     // MARK: Edits
 
-    /// What a request's act comes to, before anything is applied: the tree's edit and the rows it goes by, or why not.
+    /// What an act comes to before anything is applied: the tree's edits in order (the first checked by `stale`), the rows they go by, and for a split
+    /// into two edits that the caret goes to the start of the new row; or why not.
     enum Plan {
-        case edit(OutlineEdit, scope: OutlineScope?)
+        case edits([OutlineEdit], scope: OutlineScope?, caretAtStart: Bool)
         case refused(PeerOutlineRefusal)
     }
 
@@ -162,13 +159,10 @@ enum OutlinePhone {
     private static let gone = Plan.refused(refusalGone)
     static let refusalGone = PeerOutlineRefusal(kind: PeerOutlineRefusal.gone, message: "That bullet was moved or removed on the Mac: the list was read again.")
 
-    /// The edit for `act` in `tree`, with the phone's view (which says what its title is and what Show completed means to it).
-    ///
-    /// - Indent, outdent and move go by the whole tree, as a session's do, with the phone's Show completed (`OutlineScope.showsCompleted`): the
-    ///   siblings are the ones the phone's rows show.
-    /// - The phone's title (the bullet it is zoomed into) can't be moved, indented, outdented or deleted, and nothing outdents past the top of the
-    ///   phone's zoom: the tree only knows the Mac's zoom, so these are kept here.
-    /// - ↩ in the phone's title adds its first nested bullet, whatever the Mac's zoom is.
+    private static func one(_ edit: OutlineEdit, scope: OutlineScope? = nil) -> Plan { .edits([edit], scope: scope, caretAtStart: false) }
+
+    /// The edits for `act` in `tree`, with the phone's view. Structure goes by the whole tree with the phone's Show completed; the phone's title and the top of
+    /// its zoom are kept here, since the tree knows only the Mac's zoom; Enter follows the phone's collapse of the row, not the Mac's.
     static func plan(_ act: PeerOutlineAct, in tree: OutlineTree, view: PeerOutlineView?) -> Plan {
         var zoom = OutlinePath(placements: view?.zoom ?? [])
         if tree.zoomed(into: zoom) == nil { zoom = OutlinePath(placements: []) }
@@ -186,64 +180,96 @@ enum OutlinePhone {
             switch act.place {
             case "after":
                 guard let row = existing() else { return gone }
-                return .edit(.insert(made.drafts, at: .after(row)), scope: nil)
+                return one(.insert(made.drafts, at: .after(row)))
             case "inside":
                 guard let row = existing() else { return gone }
-                return .edit(.insert(made.drafts, at: .lastUnder(row)), scope: nil)
+                return one(.insert(made.drafts, at: .lastUnder(row)))
             case "end":
-                return .edit(.insert(made.drafts, at: .lastUnder(zoom)), scope: nil)
+                return one(.insert(made.drafts, at: .lastUnder(zoom)))
             case "replace":
-                // A paste into an empty bullet takes its place, as on the Mac (`Outline.pasteBullets`); into any other, it goes below.
+                // As a paste on the Mac (`Outline.pasteBullets`): into an empty bullet it takes the place, into the title it goes first, else below.
                 guard let row = existing() else { return gone }
-                if !zoom.placements.isEmpty, row == zoom { return .edit(.insert(made.drafts, at: .firstUnder(row)), scope: nil) }
-                return .edit(.insert(made.drafts, at: tree.canReplace(row) ? .replacing(row) : .after(row)), scope: nil)
+                if !zoom.placements.isEmpty, row == zoom { return one(.insert(made.drafts, at: .firstUnder(row))) }
+                return one(.insert(made.drafts, at: tree.canReplace(row) ? .replacing(row) : .after(row)))
             default:
                 return refuse("An add goes after a bullet, inside one, in place of an empty one or at the end of the list.")
             }
         case .complete:
             guard let row = existing() else { return gone }
             guard let done = act.done else { return refuse("Complete needs to know whether the bullet ends up completed or not.") }
-            return .edit(.setDone(row, done), scope: nil)
+            return one(.setDone(row, done))
         case .enter:
             guard let row = existing() else { return gone }
-            let at = max(act.offset ?? 0, 0)
-            if !zoom.placements.isEmpty, row == zoom { return .edit(.addFirstChild(row, range: at..<at), scope: nil) }
-            return .edit(.split(row, range: at..<at), scope: nil)
+            return enter(row, offset: max(act.offset ?? 0, 0), in: tree, view: view, zoom: zoom)
         case .delete, .indent, .outdent, .move:
             guard let row = existing() else { return gone }
             if !zoom.placements.isEmpty, row == zoom { return refuse("The title of the list can't be moved or deleted here: zoom out first.") }
             switch act.kind {
             case .delete:
-                return .edit(.delete(OutlineRun(row)), scope: nil)
+                return one(.delete(OutlineRun(row)))
             case .indent:
-                return .edit(.indent(OutlineRun(row)), scope: phoneScope)
+                return one(.indent(OutlineRun(row)), scope: phoneScope)
             case .outdent:
                 if row.parent == zoom { return refuse("It is already at the top of this list.") }
-                return .edit(.outdent(OutlineRun(row)), scope: phoneScope)
+                return one(.outdent(OutlineRun(row)), scope: phoneScope)
             default:
                 guard let by = act.by, by == 1 || by == -1 else { return refuse("A move goes up or down by one.") }
-                return .edit(.move(OutlineRun(row), by: by), scope: phoneScope)
+                return one(.move(OutlineRun(row), by: by), scope: phoneScope)
             }
+        }
+    }
+
+    /// ↩ at `offset` of a row. At the start of a bullet with text, an empty bullet goes above. In the phone's title, or on a bullet the phone shows open with
+    /// bullets nested under it, the text after the caret becomes the first nested one. On one the phone shows closed it becomes the next sibling, though the tree's
+    /// split would follow the Mac's collapse: when the Mac has it open that is two edits, the text cut and the tail inserted below.
+    private static func enter(_ row: OutlinePath, offset at: Int, in tree: OutlineTree, view: PeerOutlineView?, zoom: OutlinePath) -> Plan {
+        if !zoom.placements.isEmpty, row == zoom { return one(.addFirstChild(row, range: at..<at)) }
+        guard let id = tree.bulletID(at: row), let bullet = tree.bullets[id] else { return gone }
+        let atStartOfText = at == 0 && !bullet.text.isEmpty
+        guard !bullet.children.isEmpty, !atStartOfText else { return one(.split(row, range: at..<at)) }
+        let phoneCollapsed = viewed(tree, view).tree.placement(at: row)?.collapsed == true
+        if !phoneCollapsed { return one(.addFirstChild(row, range: at..<at)) }
+        if tree.placement(at: row)?.collapsed == true { return one(.split(row, range: at..<at)) }
+        let length = bullet.text.utf16.count, cut = min(at, length)
+        let tail = OutlineDraft(text: bullet.text.utf16Slice(cut..<length))
+        return .edits([.setText(row, bullet.text.utf16Slice(0..<cut)), .insert([tail], at: .after(row))], scope: nil, caretAtStart: true)
+    }
+
+    /// Why an act must not be applied now, checked right before the edit, after the waits; nil when it may. An enter or delete carries the stamp of the text
+    /// the phone read, unless a save in the same request put the text there; a ⌫ in an empty bullet carries `empty`; a delete says whether the phone showed
+    /// bullets nested, so a row that gained some since asks again. A row that is gone is the tree's to refuse.
+    static func stale(_ act: PeerOutlineAct, in tree: OutlineTree, afterSave: Bool) -> String? {
+        guard let ids = act.row, !ids.isEmpty, let id = tree.bulletID(at: OutlinePath(placements: ids)), let bullet = tree.bullets[id] else { return nil }
+        let changed = !afterSave && act.stamp.map { $0 != stamp(bullet.text) } == true
+        switch act.kind {
+        case .enter:
+            return changed ? "That bullet changed on the Mac after your phone read it, so nothing was split." : nil
+        case .delete:
+            if act.empty == true, !bullet.text.isEmpty || !(bullet.note ?? "").isEmpty || !bullet.children.isEmpty {
+                return "It isn't empty any more on the Mac, so it wasn't deleted."
+            }
+            if changed { return "That bullet changed on the Mac after your phone read it, so it wasn't deleted." }
+            if act.nested != true, !bullet.children.isEmpty { return "Bullets were added under it on the Mac, so it wasn't deleted: Delete asks again now." }
+            return nil
+        default:
+            return nil
         }
     }
 
     /// A refusal of the tree, or of `Outline.performForSession`, in words for the phone's user. Never a bullet's text.
     static func refusal(_ reason: OutlineRefusal) -> PeerOutlineRefusal {
+        let message: String
         switch reason {
-        case .gone:
-            return refusalGone
-        case .insideItself:
-            return PeerOutlineRefusal(kind: PeerOutlineRefusal.other, message: "A bullet can't go inside itself.")
-        case .other(let why):
-            let known: [String: String] = [
-                "the title": "The Mac is zoomed into that bullet, so it can't be moved, deleted or completed until the Mac zooms out.",
-                "the user is zoomed into it": "The Mac is zoomed into it, or into a bullet inside it, so it can't be moved or deleted until the Mac zooms out.",
-                "no sibling above": "There is no bullet above it to go under.",
-                "already at the top": "It is already at the top level.",
-                "first or last": "It can't move any further that way.",
-            ]
-            return PeerOutlineRefusal(kind: PeerOutlineRefusal.other, message: known[why] ?? sentence(why))
+        case .gone: return refusalGone
+        case .insideItself: message = "A bullet can't go inside itself."
+        case .title: message = "The Mac is zoomed into that bullet, so it can't be moved, deleted or completed until the Mac zooms out."
+        case .zoomedInto: message = "The Mac is zoomed into it, or into a bullet inside it, so it can't be moved or deleted until the Mac zooms out."
+        case .noSiblingAbove: message = "There is no bullet above it to go under."
+        case .atTop: message = "It is already at the top level."
+        case .firstOrLast: message = "It can't move any further that way."
+        case .other(let why): message = sentence(why)
         }
+        return PeerOutlineRefusal(kind: PeerOutlineRefusal.other, message: message)
     }
 
     /// A reason as a sentence: its first letter capital and a full stop at the end.

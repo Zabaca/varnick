@@ -9,8 +9,8 @@
 import { element, postJSON } from "/dom.js";
 import { confirmDelete } from "/session.js";
 import {
-  backspaceAt, caretAfterDelete, caretAfterHiding, cleanNote, cleanText, conflictCard, conflictKey, deleteAsks, emptyBullet, enterAt, fits, keyOf, keysFor, limits, newConflict,
-  noteEditable, outlineHash, parseCompleted, pasteAction, refusalLine, sameKeyMs, saveIn, textEditable, Toggles, viewBody,
+  backspaceAt, caretAfterDelete, caretAfterHiding, cleanNote, cleanText, conflictCard, deleteAsks, emptyBullet, enterAt, fieldKey, fits, fitsRequest, keyOf, keysFor,
+  newConflict, noteEditable, outlineHash, parseCompleted, pasteAction, refusalLine, sameKeyMs, saveIn, textEditable, Toggles, viewBody,
 } from "/outlinerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -21,12 +21,31 @@ const keep = (value) => { try { localStorage.setItem(completedKey, value ? "1" :
 
 /** The open Outline view, or null. One at a time. */
 let current = null;
+/** Views closed while some of what was typed was still unsaved: their saves go on, and leaving the page asks first. */
+const lingering = new Set();
+const hasUnsaved = () => [current, ...lingering].some((one) => one && one.owned.size > 0);
+window.addEventListener("beforeunload", (event) => {
+  if (hasUnsaved()) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+
+/** The home's own line, for what happened to a save after the view was gone. */
+function tellHome(text) {
+  const line = document.getElementById("notice");
+  if (!line) return;
+  line.textContent = text;
+  line.hidden = false;
+}
 
 const lostRead = "The host didn't answer. Check that you're on the tailnet, then Refresh.";
 const lostEdit = "The host didn't answer. What you typed is still here, and is saved when it does.";
 /** How many pages a refill reads on at most, so a view that listed many pages is covered again after an edit. */
 const refillPages = 12;
 const retryMs = 5_000;
+/** A save the host doesn't answer is tried this many times, then left until the user types or leaves. */
+const retryLimit = 12;
 /** A save sent as the page goes away is a keepalive request, which a browser limits to 64 KB. */
 const keepaliveBytes = 60_000;
 
@@ -44,10 +63,11 @@ export function openOutline({ host, zoom, done }) {
     return;
   }
   const v = {
-    host, done, zoom, closed: false, loaded: false, loading: false, painting: false,
+    host, done, zoom, closed: false, loaded: false, listed: false, loading: false, painting: false,
     toggles: new Toggles(), completed: parseCompleted(stored()),
     rows: [], title: null, crumbs: [], more: 0, next: null,
-    editing: null, caretAt: undefined, pending: new Map(), conflicts: new Map(), busy: false, queue: Promise.resolve(), pushes: 0, note: "",
+    // `pending` is the text of a field that is not saved yet, shown in its row; `owned` is the field object holding it, so a field made again for the row picks it up.
+    editing: null, caretAt: undefined, pending: new Map(), owned: new Map(), conflicts: new Map(), noteOpen: new Set(), busy: false, queue: Promise.resolve(), pushes: 0, note: "",
   };
   current = v;
   $("outline").hidden = false;
@@ -81,7 +101,7 @@ export function closeOutline() {
   flush(v, true);
   current = null;
   v.closed = true;
-  clearTimeout(v.editing?.timer);
+  if (v.owned.size > 0) lingering.add(v);
   document.removeEventListener("visibilitychange", v.onVisibility);
   window.removeEventListener("pagehide", v.onHide);
   // What was read goes with the view.
@@ -131,7 +151,7 @@ function setNotice(text) {
 
 function say(v, text) {
   v.note = text;
-  setNotice(text);
+  if (!v.closed) setNotice(text);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -208,6 +228,7 @@ async function setCompleted(v, on) {
 /** What the Mac listed becomes the view. A zoom that led nowhere is Home's now, and the address says so. */
 function setListing(v, listing) {
   v.loaded = true;
+  v.listed = true;
   v.rows = listing.rows;
   v.title = listing.title ?? null;
   v.crumbs = listing.crumbs;
@@ -227,7 +248,6 @@ function setListing(v, listing) {
 
 const entryAt = (v, key) => (v.title && keyOf(v.title.path) === key ? v.title : v.rows.find((row) => keyOf(row.path) === key));
 const indexAt = (v, key) => (v.title && keyOf(v.title.path) === key ? -1 : v.rows.findIndex((row) => keyOf(row.path) === key));
-const pendingKey = (key, field) => `${key}|${field}`;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Drawing
@@ -264,7 +284,7 @@ function paint(v) {
     empty.textContent = loadingFirst ? "Loading…" : "The Outline is empty.";
     $("outline-more").hidden = v.more === 0;
     $("outline-more").textContent = `Show more (${v.more})`;
-    $("outline-add").hidden = !v.loaded;
+    $("outline-add").hidden = !v.listed;
     $("outline-refresh").disabled = v.loading;
     $("outline-keys").hidden = v.editing === null;
     paintKeys(v);
@@ -363,7 +383,7 @@ function makeRow(v, isTitle) {
 function paintRow(v, li, row, isTitle) {
   const key = keyOf(row.path);
   const { twisty, dot, text, note, conflict } = li.slots;
-  li.className = `ol-row${isTitle ? " ol-title-row" : ""}${row.done ? " done" : ""}${row.dim ? " dim" : ""}`;
+  li.className = `ol-row${isTitle ? " ol-title-row" : ""}${row.done ? " done" : ""}${row.dim ? " dim" : ""}${v.noteOpen.has(key) ? " note-open" : ""}`;
   li.style.setProperty("--depth", String(isTitle ? 0 : row.depth));
   twisty.hidden = isTitle;
   dot.hidden = isTitle;
@@ -379,32 +399,30 @@ function paintRow(v, li, row, isTitle) {
 }
 
 function paintText(v, slot, row, key) {
-  const shown = v.pending.get(pendingKey(key, "text")) ?? row.text;
+  const shown = v.pending.get(fieldKey(key, "text")) ?? row.text;
   slot.replaceChildren(element("div", `ol-text${shown === "" ? " blank" : ""}`, shown));
   if (row.textLength !== undefined) slot.append(element("div", "ol-cut", `${row.textLength} characters: too long to edit on the phone.`));
-  slot.hidden = v.conflicts.has(conflictKey(key, "text"));
+  slot.hidden = false;
 }
 
 function paintNote(v, slot, row, key) {
-  const shown = v.pending.get(pendingKey(key, "note")) ?? row.note ?? "";
+  const shown = v.pending.get(fieldKey(key, "note")) ?? row.note ?? "";
   slot.replaceChildren();
-  slot.hidden = shown === "" || v.conflicts.has(conflictKey(key, "note"));
+  slot.hidden = shown === "";
   if (shown === "") return;
   slot.append(element("div", "ol-note", shown));
   if (row.noteLength !== undefined || !noteEditable(row.note)) slot.append(element("div", "ol-cut", "This note is too long to edit on the phone."));
 }
 
-/** A save the Mac refused because the field changed there: what the phone typed beside the Mac's version, and the choice. */
+/** A save the Mac refused because the field changed there: the Mac's version, and the choice. What the phone typed stays in its field, or in its row. */
 function paintConflicts(v, slot, key) {
   slot.replaceChildren();
   for (const field of ["text", "note"]) {
-    const found = v.conflicts.get(conflictKey(key, field));
+    const found = v.conflicts.get(fieldKey(key, field));
     if (!found) continue;
-    const card = conflictCard(found);
     const box = element("div", "ol-conflict");
-    box.append(element("p", "ol-conflict-head", `Changed on the Mac${field === "note" ? " (the note)" : ""}`));
-    box.append(element("p", "ol-conflict-label", "Yours"), element("p", "ol-conflict-text", card.mine === "" ? "(empty)" : card.mine));
-    box.append(element("p", "ol-conflict-label", "The Mac's"), element("p", "ol-conflict-text", card.theirs === "" ? "(empty)" : card.theirs));
+    box.append(element("p", "ol-conflict-head", `Changed on the Mac${field === "note" ? " (the note)" : ""}: yours is kept ${v.editing?.key === key && v.editing.field === field ? "in the field" : "above"}`));
+    box.append(element("p", "ol-conflict-label", "The Mac's"), element("p", "ol-conflict-text", conflictCard(found).theirs || "(empty)"));
     const actions = element("div", "card-actions");
     const mine = element("button", "", "Use mine");
     mine.type = "button";
@@ -447,33 +465,36 @@ function offsetAtPoint(node, x, y) {
 
 /**
  * Edits the text or the note of a row: a field is made in its place with the keyboard up. The field before it is saved, and goes once this one has the focus, so the
- * keyboard stays up between two bullets.
+ * keyboard stays up between two bullets. A row whose earlier field still holds text not saved gets that field's object back, with the text in it.
  */
 function startEditing(v, key, field, offset) {
   const entry = entryAt(v, key);
   if (!entry || v.closed) return;
-  if (v.conflicts.has(conflictKey(key, field))) return;
-  if (field === "text" && !textEditable(entry)) return say(v, "That text is too long to edit on the phone.");
-  if (field === "note" && entry.note !== undefined && (entry.noteLength !== undefined || !noteEditable(entry.note))) return say(v, "That note is too long to edit on the phone.");
   const old = v.editing;
   if (old && old.key === key && old.field === field) return placeCaret(old.el, offset);
-  // A save of this field is still on its way: the field is made once it has answered, with the stamp the Mac gave it.
-  if (v.pending.has(pendingKey(key, field))) {
-    void v.queue.then(() => setTimeout(() => { if (!v.closed) startEditing(v, key, field, offset); }, 0));
-    return;
-  }
-  const e = {
+  if (field === "text" && !textEditable(entry)) return say(v, "That text is too long to edit on the phone.");
+  if (field === "note" && entry.note !== undefined && (entry.noteLength !== undefined || !noteEditable(entry.note))) return openNote(v, key);
+  const e = v.owned.get(fieldKey(key, field)) ?? {
     key, path: entry.path, field, base: field === "text" ? entry.text : entry.note ?? "", stamp: field === "text" ? entry.textStamp : entry.noteStamp,
-    inflight: null, lastInput: 0, composing: false, timer: null, conflicted: false, el: null, pressed: { kind: "", at: 0 },
+    inflight: null, unsendable: null, forced: false, tries: 0, lastInput: 0, composing: false, timer: null, conflicted: false, el: null, pressed: { kind: "", at: 0 },
   };
+  clearTimeout(e.timer);
   e.el = makeField(v, e);
   v.editing = e;
   v.caretAt = offset;
   say(v, "");
   mountEditor(v);
   if (old) retire(v, old);
+  const li = rowElement(v, key);
+  if (li) paintConflicts(v, li.slots.conflict, key);
   $("outline-keys").hidden = false;
   paintKeys(v);
+}
+
+/** A note too long to edit on the phone opens to its whole text, or closes to two lines. */
+function openNote(v, key) {
+  if (!v.noteOpen.delete(key)) v.noteOpen.add(key);
+  rowElement(v, key)?.classList.toggle("note-open", v.noteOpen.has(key));
 }
 
 const rowElement = (v, key) => (v.title && keyOf(v.title.path) === key ? $("outline-title").firstElementChild : [...$("outline-list").children].find((li) => li.dataset.key === key));
@@ -513,17 +534,31 @@ function fit(el) {
 }
 
 const valueOf = (e) => (e.field === "note" ? cleanNote(e.el.value) : cleanText(e.el.value));
-const dirty = (e) => valueOf(e) !== e.base && valueOf(e) !== e.inflight;
+/** Typed text not saved: it differs from what the Mac has, is not on its way, and was not refused as unsendable. Use mine forces it once. */
+const dirty = (e) => e.forced || (valueOf(e) !== e.base && valueOf(e) !== e.inflight && valueOf(e) !== e.unsendable);
+
+/** A field's text not saved yet is kept with its field object until the Mac has it, so a row shows it and a field made again for the row picks it up. */
+function own(v, e) {
+  const k = fieldKey(e.key, e.field);
+  v.pending.set(k, valueOf(e));
+  v.owned.set(k, e);
+}
+
+function release(v, e) {
+  const k = fieldKey(e.key, e.field);
+  v.pending.delete(k);
+  v.owned.delete(k);
+  if (v.closed && v.owned.size === 0) lingering.delete(v);
+}
 
 function makeField(v, e) {
   const el = document.createElement("textarea");
   const note = e.field === "note";
   el.className = note ? "ol-note-input" : "ol-input";
   el.rows = 1;
-  el.value = v.pending.get(pendingKey(e.key, e.field)) ?? e.base;
+  el.value = v.pending.get(fieldKey(e.key, e.field)) ?? e.base;
   el.setAttribute("enterkeyhint", note ? "enter" : "next");
   el.setAttribute("aria-label", note ? "Note" : "Bullet");
-  if (!note) el.maxLength = limits.text;
   el.addEventListener("input", () => {
     // A bullet is one line: a line break that got in (a paste is handled apart) becomes a space.
     if (!note && cleanText(el.value) !== el.value) {
@@ -565,7 +600,7 @@ function atEmptyStart(v, e) {
   if (!entry || indexAt(v, e.key) < 0) return false;
   return backspaceAt({
     text: e.el.value, start: e.el.selectionStart, end: e.el.selectionEnd,
-    hasNote: (v.pending.get(pendingKey(e.key, "note")) ?? entry?.note ?? "") !== "", nested: entry?.nested === true,
+    hasNote: (v.pending.get(fieldKey(e.key, "note")) ?? entry.note ?? "") !== "", nested: entry.nested === true,
   }) === "delete";
 }
 
@@ -633,13 +668,14 @@ async function save(v, e, keepalive = false) {
 /** The field leaves its row: what it holds is saved, and the row shows what was typed until the Mac answers. */
 function retire(v, e) {
   clearTimeout(e.timer);
-  const text = valueOf(e);
-  if (text !== e.base && text !== e.inflight) v.pending.set(pendingKey(e.key, e.field), text);
+  if (valueOf(e) !== e.base || e.forced || e.conflicted) own(v, e);
+  else release(v, e);
   const li = rowElement(v, e.key);
   const entry = entryAt(v, e.key);
   if (li && entry && e.el.parentNode) {
     if (e.field === "text") paintText(v, li.slots.text, entry, e.key);
     else paintNote(v, li.slots.note, entry, e.key);
+    paintConflicts(v, li.slots.conflict, e.key);
   } else {
     e.el.remove();
   }
@@ -659,116 +695,160 @@ function endEditing(v) {
 /** The page goes out of view or away: a save is sent now, and does not wait for the page to come back. */
 function flush(v, keepalive) {
   const e = v.editing;
-  if (!e) return;
+  if (!e || !dirty(e) || e.conflicted) return;
   clearTimeout(e.timer);
-  if (dirty(e) && !e.conflicted) void runEdit(v, { e, keepalive });
+  // Owned before the request is made, so a view closed with this text unsaved is known to hold it.
+  own(v, e);
+  void runEdit(v, { e, keepalive });
 }
 
 /**
- * One request to the Mac: the field's save if it has typed text, then the act if there is one. The reply lists the view's rows again. `then` says where the caret
- * goes after an act the Mac took: "reply" (where the Mac's key would put it), "moved" (the row's new place), "above" (the row above, after a delete), "hiding" (the
- * next row, when a complete took the row out of the view) or "stay".
+ * One request to the Mac, made when its turn in the line comes: the field's save if it has typed text, then the act if there is one (`act` may be a function of the
+ * field). The reply lists the view's rows again. `then` says where the caret goes after an act the Mac took: "reply" (where the Mac's key would put it), "moved" (the
+ * row's new place), "above" (the row above, after a delete), "hiding" (the next row, when a complete took the row out of the view) or "stay".
  */
-async function runEdit(v, { e = null, act = null, then = "stay", keepalive = false, caretOffset = 0 }) {
-  const body = { view: viewOf(v) };
-  if (e && dirty(e) && !e.conflicted) {
-    const text = valueOf(e);
-    if (!fits(text)) return say(v, e.field === "note" ? "That note is too long to save from the phone." : "That text is too long to save from the phone.");
-    body.save = { row: e.path, field: e.field, text, stamp: e.stamp };
-    e.inflight = text;
-    v.pending.set(pendingKey(e.key, e.field), text);
+async function runEdit(v, opts) {
+  if (opts.act) {
+    if (v.busy) return;
+    setBusy(v, true);
   }
-  if (act) body.act = act;
+  try {
+    await enqueue(v, () => sendEdit(v, opts));
+  } finally {
+    if (opts.act) setBusy(v, false);
+  }
+}
+
+async function sendEdit(v, { e = null, act = null, then = "stay", keepalive = false, caretOffset = 0 }) {
+  // Made here, not when the request was asked for: an earlier request in the line has answered by now, and the field's stamp is the one it left.
+  const body = { view: viewOf(v) };
+  let text = null;
+  if (e && dirty(e) && !e.conflicted) {
+    text = valueOf(e);
+    if (!fits(text)) {
+      e.unsendable = text;
+      return say(v, e.field === "note" ? "That note is too long to save from the phone." : "That text is too long to save from the phone.");
+    }
+    body.save = { row: e.path, field: e.field, text, stamp: e.stamp };
+  }
+  if (act) body.act = typeof act === "function" ? act(e) : act;
   if (!body.save && !body.act) return;
-  if (act) setBusy(v, true);
+  if (!fitsRequest(body) || (body.act?.lines !== undefined && !fits(body.act.lines))) {
+    if (text !== null) e.unsendable = text;
+    return say(v, body.act?.lines ? "That is too much to paste at once." : "That is too long to send from the phone.");
+  }
+  if (text !== null) {
+    e.inflight = text;
+    e.forced = false;
+    own(v, e);
+  }
   const at = zoomKey(v);
   const before = v.rows;
   const wanted = v.rows.length;
   const options = keepalive && JSON.stringify(body).length < keepaliveBytes ? { keepalive: true } : undefined;
-  const result = await enqueue(v, async () => {
-    const first = await postJSON("/api/outline/edit", body, lostEdit, options);
-    return first.ok ? fillTo(v, first, wanted) : first;
-  });
-  if (act) setBusy(v, false);
-  if (body.save) e.inflight = null;
-  if (v.closed) return;
-  if (!result.ok) {
-    say(v, result.error);
-    // What was typed is still in the field and not saved: it is tried again.
-    if (body.save && !e.conflicted) e.timer = setTimeout(() => void save(v, e), retryMs);
-    return paint(v);
+  const first = await postJSON("/api/outline/edit", body, lostEdit, options);
+  const result = first.ok ? await fillTo(v, first, wanted) : first;
+  if (text !== null) e.inflight = null;
+  if (!result.ok) return failed(v, e, text, result);
+  if (text !== null) {
+    e.tries = 0;
+    saved(v, e, text, result);
   }
-  if (zoomKey(v) !== at) return;
+  // The save is settled whatever the view has become; the rest is for a view that is still where the request was made.
+  if (v.closed || zoomKey(v) !== at) return;
   say(v, "");
-  if (body.save) {
-    if (result.saved === true) {
-      e.base = body.save.text;
-      const entry = [result.title, ...result.rows].find((one) => one && keyOf(one.path) === e.key);
-      if (entry) e.stamp = e.field === "text" ? entry.textStamp : entry.noteStamp;
-      v.pending.delete(pendingKey(e.key, e.field));
-    } else if (result.refused?.kind === "changed") {
-      conflict(v, e, result.refused, body.save.text);
-    } else {
-      v.pending.delete(pendingKey(e.key, e.field));
-    }
-  }
   if (result.refused && result.refused.kind !== "changed") say(v, refusalLine(result.refused));
   if (result.refused?.kind === "gone" && result.rows.length === 0) return void load(v);
-  // A row the Mac moved keeps its field: the field is now in the row's new place.
+  // A row the Mac moved keeps its field: the field is now in the row's new place, and its unsaved text is kept under the new key.
   if (then === "moved" && result.moved && e && v.editing === e) {
+    release(v, e);
     e.key = keyOf(result.moved);
     e.path = result.moved;
+    if (valueOf(e) !== e.base) own(v, e);
   }
   setListing(v, result);
-  caretAfter(v, { act, then, result, before, caretOffset });
+  caretAfter(v, { e, act: body.act, then, result, before, caretOffset });
 }
 
-/** A save the Mac refused: the field's text is kept beside the Mac's, and the choice is the user's. Autosave is off for the field until then. */
-function conflict(v, e, refused, mine) {
-  e.conflicted = true;
-  const found = newConflict({ ...refused, row: refused.row ?? e.path, field: refused.field ?? e.field }, mine);
-  v.conflicts.set(conflictKey(found.key, found.field), found);
-  v.pending.delete(pendingKey(e.key, e.field));
-  if (v.editing === e) {
-    v.editing = null;
-    $("outline-keys").hidden = true;
-    e.el.blur();
+/** The request got no answer. Typed text stays in the field and is tried again, a few times; past that it waits for the user, and says so. */
+function failed(v, e, text, result) {
+  say(v, result.error);
+  if (text !== null && !e.conflicted) {
+    e.tries += 1;
+    if (e.tries < retryLimit) {
+      e.timer = setTimeout(() => void save(v, e), retryMs);
+    } else {
+      e.unsendable = text;
+      if (v.closed) tellHome(`What you typed in the Outline was not saved: ${result.error}`);
+      else say(v, `${result.error} Your text is kept here, and is saved when you change it again.`);
+    }
   }
-  e.el.remove();
-  say(v, "That changed on the Mac after your phone read it. Choose which to keep.");
+  if (!v.closed) paint(v);
 }
 
-/** Use mine: the phone's text is saved over the Mac's, with the stamp of the version it was shown. */
-async function useMine(v, found) {
-  const body = { view: viewOf(v), save: { row: found.row, field: found.field, text: found.mine, stamp: found.stamp } };
-  const result = await enqueue(v, () => postJSON("/api/outline/edit", body, lostEdit));
-  if (v.closed) return;
-  if (!result.ok) return say(v, result.error);
-  if (result.refused?.kind === "changed") {
-    // It changed again meanwhile: the card shows the newest.
-    v.conflicts.set(conflictKey(found.key, found.field), newConflict({ ...result.refused, row: found.row, field: found.field }, found.mine));
-    say(v, "It changed on the Mac again. Choose which to keep.");
+/** What the Mac did with a save, once its reply is in. */
+function saved(v, e, text, result) {
+  if (result.saved === true) {
+    e.base = text;
+    // The stamp the Mac made of what the save left, in the same turn: a listing's may be of a later change, and a save over that would overwrite it.
+    if (result.savedStamp) e.stamp = result.savedStamp;
+    if (valueOf(e) === e.base) release(v, e);
+    else own(v, e);
+  } else if (result.refused?.kind === "changed") {
+    conflict(v, e, result.refused);
+  } else if (result.refused?.kind === "gone") {
+    release(v, e);
   } else {
-    v.conflicts.delete(conflictKey(found.key, found.field));
-    v.pending.delete(pendingKey(found.key, found.field));
-    say(v, result.refused ? refusalLine(result.refused) : "");
+    // Refused for another reason: the text stays where it is, not sent again until it changes.
+    e.unsendable = text;
   }
-  setListing(v, result);
 }
 
-/** Use the Mac's: what the phone typed is dropped. */
+/** A save the Mac refused because the field changed there. What was typed stays in its field (or its row) beside the Mac's version, and autosave is off for it until the user chooses. */
+function conflict(v, e, refused) {
+  e.conflicted = true;
+  clearTimeout(e.timer);
+  const found = newConflict({ ...refused, row: refused.row ?? e.path, field: refused.field ?? e.field });
+  v.conflicts.set(fieldKey(found.key, found.field), found);
+  own(v, e);
+  if (v.closed) tellHome(`What you typed in the Outline was not saved, because the bullet changed on the Mac as well. It began: “${valueOf(e).slice(0, 80)}”.`);
+  else say(v, "That changed on the Mac after your phone read it. Choose which to keep.");
+}
+
+/** Use mine: the field's text is saved over the Mac's, with the stamp of the version the card shows. */
+async function useMine(v, found) {
+  const e = v.owned.get(fieldKey(found.key, found.field));
+  if (!e) return;
+  v.conflicts.delete(fieldKey(found.key, found.field));
+  Object.assign(e, { conflicted: false, forced: true, stamp: found.stamp, unsendable: null, tries: 0 });
+  paint(v);
+  await runEdit(v, { e });
+}
+
+/** Use the Mac's: what the phone typed is dropped, and the field shows the Mac's version. */
 function useTheirs(v, found) {
-  v.conflicts.delete(conflictKey(found.key, found.field));
-  v.pending.delete(pendingKey(found.key, found.field));
+  const k = fieldKey(found.key, found.field);
+  const e = v.owned.get(k);
+  v.conflicts.delete(k);
+  if (e) {
+    Object.assign(e, { conflicted: false, forced: false, base: found.theirs, stamp: found.stamp, inflight: null, unsendable: null, tries: 0 });
+    e.el.value = found.theirs;
+    release(v, e);
+  } else {
+    v.pending.delete(k);
+  }
   say(v, "");
+  paint(v);
   void load(v);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Where the caret goes after an act
 
-function caretAfter(v, { act, then, result, before, caretOffset }) {
+function caretAfter(v, { e, act, then, result, before, caretOffset }) {
   if (!act || result.acted !== true) return;
+  // The field that asked is no longer the one being edited (the user went to another bullet meanwhile): leave the caret where they put it.
+  if (e && v.editing && v.editing !== e) return;
   let target = null;
   if (then === "reply") {
     target = result.caret ?? (result.added?.[0] ? { path: result.added[0], offset: Infinity } : null);
@@ -777,31 +857,34 @@ function caretAfter(v, { act, then, result, before, caretOffset }) {
   } else if (then === "hiding") {
     target = caretAfterHiding(before, v.rows, act.row, v.title);
   }
-  if (target) startEditing(v, keyOf(target.path), "text", target.offset);
+  if (target && entryAt(v, keyOf(target.path))) startEditing(v, keyOf(target.path), "text", target.offset);
   else if (then === "moved" && v.editing) placeCaret(v.editing.el, caretOffset);
-  else if (v.editing && !entryAt(v, v.editing.key)) endEditing(v);
+  // The new row is not in the rows listed (a long list, or filtered): the field still holds the text from before the split, so it ends rather than save it again.
+  else if (v.editing && (then === "reply" || !entryAt(v, v.editing.key))) endEditing(v);
 }
 
 function setBusy(v, busy) {
   v.busy = busy;
-  paintKeys(v);
+  if (!v.closed) paintKeys(v);
 }
 
 function enter(v, e) {
   if (v.busy) return;
   const { text, offset } = enterAt(e.el.value, e.el.selectionStart, e.el.selectionEnd);
   e.el.value = text;
-  void runEdit(v, { e, act: { kind: "enter", row: e.path, offset }, then: "reply" });
+  // The stamp of the text the offset is in, for the Mac to check unless this request saves the text first.
+  void runEdit(v, { e, act: (now) => ({ kind: "enter", row: now.path, offset, stamp: now.stamp }), then: "reply" });
 }
 
-/** ⌫ at the start of an empty bullet with nothing nested under it. */
+/** ⌫ at the start of an empty bullet with nothing nested under it: the Mac deletes it only if it is still empty there. */
 async function deleteEmpty(v, e) {
   if (v.busy) return;
-  await runEdit(v, { e, act: { kind: "delete", row: e.path }, then: "above" });
+  await runEdit(v, { e, act: (now) => ({ kind: "delete", row: now.path, empty: true, stamp: now.stamp }), then: "above" });
 }
 
 /** + at the foot: an empty bullet at the end of the list, with the caret in it. The field that had the caret has saved what it held as it left. */
 async function add(v) {
+  if (v.busy) return;
   await runEdit(v, { act: { kind: "add", place: "end", lines: emptyBullet }, then: "reply" });
 }
 
@@ -830,16 +913,17 @@ async function key(v, name) {
     case "note":
       return startEditing(v, e.key, e.field === "note" ? "text" : "note", Infinity);
     case "complete":
-      return runEdit(v, { e, act: { kind: "complete", row: e.path, done: row.done !== true }, then: "hiding" });
+      return runEdit(v, { e, act: (now) => ({ kind: "complete", row: now.path, done: row.done !== true }), then: "hiding" });
     case "delete":
       if (deleteAsks(row) && !(await confirmDelete("Delete this bullet and everything nested under it? The phone has no undo; ⌘Z on the Mac takes it back."))) return;
-      return runEdit(v, { e, act: { kind: "delete", row: e.path }, then: "above" });
+      // What the phone showed is what the Mac checks: the text's stamp, and whether bullets were nested (a row that gained some asks again).
+      return runEdit(v, { e, act: (now) => ({ kind: "delete", row: now.path, nested: row.nested === true, stamp: now.field === "text" ? now.stamp : row.textStamp }), then: "above" });
     case "indent":
     case "outdent":
-      return runEdit(v, { e, act: { kind: name, row: e.path }, then: "moved", caretOffset: offset });
+      return runEdit(v, { e, act: (now) => ({ kind: name, row: now.path }), then: "moved", caretOffset: offset });
     case "up":
     case "down":
-      return runEdit(v, { e, act: { kind: "move", row: e.path, by: name === "up" ? -1 : 1 }, then: "moved", caretOffset: offset });
+      return runEdit(v, { e, act: (now) => ({ kind: "move", row: now.path, by: name === "up" ? -1 : 1 }), then: "moved", caretOffset: offset });
     default:
   }
 }

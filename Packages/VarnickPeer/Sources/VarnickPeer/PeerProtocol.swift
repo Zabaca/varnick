@@ -181,8 +181,8 @@ public enum PeerOp: String, Codable, Sendable {
     case voiceStatus
     /// Restarts a Claude pane (`PeerRequest.tab` and `pane`) of a tab the asker controls, in place, resuming it (protocol 32; where-it-breaks, The tab view on the phone).
     case restartPane
-    /// The Outline on a Mac's Phone page (protocol 34, `PeerOutlineAsk`): the rows of the phone's view, and an edit that lists them again. Only a Mac's
-    /// running Varnick answers, and only for a listed device: a paired Mac and a headless host are refused (ADR 0045).
+    /// The Outline on a Mac's Phone page (protocol 34, `PeerOutlineAsk`): the rows of the phone's view, and an edit that lists them again. A listed device may
+    /// ask; a paired Mac and a headless host are refused (ADR 0046).
     case outlineRead
     case outlineEdit
 }

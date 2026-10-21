@@ -78,8 +78,10 @@ describe("an edit from the page", () => {
 
   test("a bullet's text is one line of at most 10,000 characters; a note keeps its line feeds", () => {
     expect(parseEditBody({ save: { ...save, text: "" } }).ok).toBe(true);
-    expect(parseEditBody({ save: { ...save, text: "x".repeat(limits.text) } }).ok).toBe(true);
-    for (const text of ["x".repeat(limits.text + 1), "a\nb", "a\rb", "a\tb", "a\u2028b", "a\u2029b", "a\u0085b", "a\0b", "\ud800"]) expect(parseEditBody({ save: { ...save, text } }).ok).toBe(false);
+    expect(parseEditBody({ save: { ...save, text: "x".repeat(10_000) } }).ok).toBe(true);
+    // The Mac holds a text to 10,000 characters and says so; the page's server holds only the bytes, so a bullet of 6,000 emoji (12,000 UTF-16 units) is not refused here.
+    expect(parseEditBody({ save: { ...save, text: "😀".repeat(6_000) } }).ok).toBe(true);
+    for (const text of ["a\nb", "a\rb", "a\tb", "a\u2028b", "a\u2029b", "a\u0085b", "a\0b", "\ud800"]) expect(parseEditBody({ save: { ...save, text } }).ok).toBe(false);
     expect(parseEditBody({ save: { ...save, field: "note", text: "one\ntwo\r\nthree" } }).ok).toBe(true);
     expect(parseEditBody({ save: { ...save, field: "note", text: "a\tb" } }).ok).toBe(false);
     expect(parseEditBody({ save: { ...save, field: "note", text: "" } }).ok).toBe(true);
@@ -105,8 +107,8 @@ describe("an edit from the page", () => {
       { kind: "add", place: "after", row, lines: "one\n  two" }, { kind: "add", place: "inside", row, lines: "one" }, { kind: "add", place: "replace", row, lines: "one\ntwo" }, { kind: "add", place: "end", lines: "one" },
       { kind: "add", place: "end", row: [], lines: "one" }, { kind: "add", place: "end", row, lines: "one" },
       { kind: "complete", row, done: true }, { kind: "complete", row, done: false },
-      { kind: "enter", row, offset: 0 }, { kind: "enter", row, offset: limits.text },
-      { kind: "delete", row }, { kind: "indent", row }, { kind: "outdent", row }, { kind: "move", row, by: 1 }, { kind: "move", row, by: -1 },
+      { kind: "enter", row, offset: 0 }, { kind: "enter", row, offset: limits.fieldBytes },
+      { kind: "delete", row }, { kind: "delete", row, empty: true, nested: false, stamp }, { kind: "enter", row, offset: 2, stamp }, { kind: "indent", row }, { kind: "outdent", row }, { kind: "move", row, by: 1 }, { kind: "move", row, by: -1 },
     ];
     for (const act of good) expect(parseEditBody({ act }).ok).toBe(true);
     const bad: unknown[] = [
@@ -115,7 +117,8 @@ describe("an edit from the page", () => {
       { kind: "add", place: "after", row }, { kind: "add", place: "after", row, lines: "  \n " }, { kind: "add", place: "after", row, lines: 5 },
       { kind: "add", place: "after", row, lines: "a\0b" }, { kind: "add", place: "after", row, lines: "x".repeat(limits.fieldBytes) },
       { kind: "complete", row }, { kind: "complete", row, done: "yes" },
-      { kind: "enter", row }, { kind: "enter", row, offset: -1 }, { kind: "enter", row, offset: 1.5 }, { kind: "enter", row, offset: limits.text + 1 },
+      { kind: "enter", row }, { kind: "enter", row, offset: -1 }, { kind: "enter", row, offset: 1.5 }, { kind: "enter", row, offset: limits.fieldBytes + 1 },
+      { kind: "delete", row, empty: "yes" }, { kind: "delete", row, nested: 1 }, { kind: "delete", row, stamp: "nope" }, { kind: "enter", row, offset: 1, stamp: "nope" },
       { kind: "move", row }, { kind: "move", row, by: 2 }, { kind: "move", row, by: 0 }, { kind: "move", row, by: "1" },
     ];
     for (const act of bad) expect(parseEditBody({ act }).ok).toBe(false);
@@ -208,11 +211,28 @@ describe("the host's reply", () => {
     expect("more" in answered.body).toBe(false);
   });
 
-  test("a text or note over the limits is cut where the page reads it", () => {
-    const answered = shapeListing(listed({ rows: [{ path: [uuid(1)], depth: 0, text: "x".repeat(limits.text + 50), textStamp: stamp, note: "n".repeat(limits.note + 50), noteStamp: stamp }] }));
-    const one = (answered.body as { rows: { text: string; note: string }[] }).rows[0];
-    expect(one.text.length).toBe(limits.text + 1);
-    expect(one.note.length).toBe(limits.note + 1);
+  test("a text or note the Mac sent whole is shown whole, in whatever unit it counts in", () => {
+    // 6,000 emoji are 6,000 characters to the Mac and 12,000 UTF-16 units here.
+    const emoji = "😀".repeat(6_000);
+    const answered = shapeListing(listed({ rows: [{ path: [uuid(1)], depth: 0, text: emoji, textStamp: stamp, note: "é".repeat(40_000), noteStamp: stamp }] }));
+    const one = (answered.body as { rows: { text: string; note: string; textLength?: number; noteLength?: number }[] }).rows[0];
+    expect(one.text).toBe(emoji);
+    expect(one.note.length).toBe(40_000);
+    expect(one.textLength).toBeUndefined();
+    expect(one.noteLength).toBeUndefined();
+  });
+
+  test("a cut the Mac made keeps its length, and one the page makes is flagged, so a cut text is never edited and saved short", () => {
+    const cut = shapeListing(listed({ rows: [{ path: [uuid(1)], depth: 0, text: "x".repeat(500), textLength: 12_000, textStamp: stamp, note: "n", noteLength: 150_000, noteStamp: stamp }] }));
+    expect((cut.body as { rows: unknown[] }).rows[0]).toMatchObject({ textLength: 12_000, noteLength: 150_000 });
+    const over = shapeListing(listed({ rows: [{ path: [uuid(1)], depth: 0, text: "x".repeat(limits.fieldBytes + 50), textStamp: stamp, noteStamp: stamp }] }));
+    expect((over.body as { rows: { text: string; textLength: number }[] }).rows[0]).toMatchObject({ textLength: limits.fieldBytes + 50 });
+    expect((over.body as { rows: { text: string }[] }).rows[0].text.length).toBe(500);
+  });
+
+  test("carries the stamp of what a save left, for the page to save over next", () => {
+    expect((shapeListing(listed({ saved: true, savedStamp: stamp })).body as { savedStamp?: string }).savedStamp).toBe(stamp);
+    expect((shapeListing(listed({ saved: true, savedStamp: "nope" })).body as { savedStamp?: string }).savedStamp).toBeUndefined();
   });
 
   test("a relay's failure is the page's error, and a reply that isn't a listing is unreadable", () => {

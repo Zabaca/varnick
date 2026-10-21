@@ -11,33 +11,16 @@
 
 import { isObject, type Json } from "./json";
 import type { RelayResult } from "./home";
+import { hasNoteControl, hasTextControl, jsonBytes, limits } from "./page/outlinerules.js";
+
+export { limits };
 
 type Parsed<Value> = { ok: true; value: Value } | { ok: false; error: string };
 const refuse = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
-/** `PeerOutlineLimits` in Packages/VarnickPeer: the page and the Mac hold to the same numbers, and `outline.test.ts` checks the largest request against the argument limit. */
-export const limits = {
-  /** The most a text, a note or pasted lines may be, as the UTF-8 bytes of the JSON string (quotes included): a newline or a quote costs two. */
-  fieldBytes: 60_000,
-  /** The most bullets the view may have opened and closed together, and the most levels a path may have. */
-  toggles: 300,
-  path: 64,
-  /** The longest id a placement may have. The Mac's own are 36 characters; a file edited by hand may have others. */
-  idLength: 128,
-  /** The longest text the page can edit, in characters. */
-  text: 10_000,
-  /** The longest note a reply lists whole, in UTF-8 bytes (`PeerOutlineLimits.noteBytes`). */
-  note: 100_000,
-  /** The most rows a reply lists. */
-  rows: 400,
-} as const;
-
-/** A placement id: printable ASCII with no space, so it can't be mistaken for anything else when a path is joined with slashes. */
-const idPattern = /^[\x21-\x2e\x30-\x7e]{1,128}$/;
+/** A placement id: printable ASCII with no space or slash, so it can't be mistaken for anything else when a path is joined with slashes. */
+const idPattern = new RegExp(`^[\\x21-\\x2e\\x30-\\x7e]{1,${limits.idLength}}$`);
 const stampPattern = /^[0-9a-f]{16}$/;
-/** Control characters: a bullet's text refuses all of them (and a line break), a note keeps its line feeds. */
-const textControls = /[\x00-\x1f\x7f\u0085\u2028\u2029]/;
-const noteControls = /[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/;
 
 export type Path = string[];
 
@@ -46,8 +29,6 @@ function parsePath(value: unknown, what: string, allowEmpty = false): Parsed<Pat
   for (const id of value) if (typeof id !== "string" || !idPattern.test(id)) return refuse(`That isn't ${what}`);
   return { ok: true, value: value as Path };
 }
-
-const jsonBytes = (text: string): number => Buffer.byteLength(JSON.stringify(text), "utf8");
 
 /** The phone's view as the host takes it. Nothing here holds a bullet's text. */
 export interface View {
@@ -112,6 +93,9 @@ export interface Act {
   by?: 1 | -1;
   lines?: string;
   place?: "after" | "inside" | "replace" | "end";
+  stamp?: string;
+  empty?: boolean;
+  nested?: boolean;
 }
 
 function parseSave(value: unknown): Parsed<Save> {
@@ -121,13 +105,21 @@ function parseSave(value: unknown): Parsed<Save> {
   if (value.field !== "text" && value.field !== "note") return refuse("A save is of the text or the note");
   const field = value.field;
   if (typeof value.text !== "string" || !value.text.isWellFormed()) return refuse("That isn't text");
-  if (field === "text" ? textControls.test(value.text) : noteControls.test(value.text)) {
+  if (field === "text" ? hasTextControl(value.text) : hasNoteControl(value.text)) {
     return refuse(field === "text" ? "A bullet's text is one line, with no tabs or other control characters" : "A note can't hold tabs or other control characters");
   }
-  if (field === "text" && value.text.length > limits.text) return refuse(`A bullet's text takes at most ${limits.text} characters`);
   if (jsonBytes(value.text) > limits.fieldBytes) return refuse(field === "text" ? "That text is too long to save from the phone" : "That note is too long to save from the phone");
   if (typeof value.stamp !== "string" || !stampPattern.test(value.stamp)) return refuse("That isn't a stamp");
   return { ok: true, value: { row: row.value, field, text: value.text, stamp: value.stamp } };
+}
+
+/** An enter or a delete carries the stamp of the text the phone read, when it has one. */
+function withStamp(act: Act, value: Json): Parsed<Act> {
+  if (value.stamp !== undefined && value.stamp !== null) {
+    if (typeof value.stamp !== "string" || !stampPattern.test(value.stamp)) return refuse("That isn't a stamp");
+    act.stamp = value.stamp;
+  }
+  return { ok: true, value: act };
 }
 
 function parseAct(value: unknown): Parsed<Act> {
@@ -154,10 +146,20 @@ function parseAct(value: unknown): Parsed<Act> {
       if (typeof value.done !== "boolean") return refuse("Complete says whether the bullet ends up completed");
       act.done = value.done;
       break;
+    case "delete":
+      if (value.empty !== undefined && value.empty !== null) {
+        if (typeof value.empty !== "boolean") return refuse("Empty is true or false");
+        act.empty = value.empty;
+      }
+      if (value.nested !== undefined && value.nested !== null) {
+        if (typeof value.nested !== "boolean") return refuse("Nested is true or false");
+        act.nested = value.nested;
+      }
+      return withStamp(act, value);
     case "enter":
-      if (typeof value.offset !== "number" || !Number.isInteger(value.offset) || value.offset < 0 || value.offset > limits.text) return refuse("That isn't a place in the text");
+      if (typeof value.offset !== "number" || !Number.isInteger(value.offset) || value.offset < 0 || value.offset > limits.fieldBytes) return refuse("That isn't a place in the text");
       act.offset = value.offset;
-      break;
+      return withStamp(act, value);
     case "move":
       if (value.by !== 1 && value.by !== -1) return refuse("A move goes up or down by one");
       act.by = value.by;
@@ -262,6 +264,7 @@ export interface Listing {
   completed: boolean;
   zoomLost?: true;
   saved?: boolean;
+  savedStamp?: string;
   acted?: boolean;
   refused?: Refusal;
   caret?: { path: Path; offset: number };
@@ -283,13 +286,16 @@ function shapeRow(raw: unknown): Row | null {
   const depth = count(raw.depth, 1000);
   if (path === null || depth === undefined || typeof raw.text !== "string" || typeof raw.textStamp !== "string" || !stampPattern.test(raw.textStamp)) return null;
   if (typeof raw.noteStamp !== "string" || !stampPattern.test(raw.noteStamp)) return null;
-  // The host lists a text whole to `limits.text` characters and a note to `limits.note`; a longer one in a reply is cut here all the same.
-  const row: Row = { path, depth, text: raw.text.slice(0, limits.text + 1), textStamp: raw.textStamp, noteStamp: raw.noteStamp };
+  // The Mac says when it cut a text or note (`textLength`, `noteLength`); one it sent whole is never cut here. A text too long to be saved from the phone anyway
+  // (more UTF-16 units than `fieldBytes`) is shown cut and flagged, so it can't be edited and saved short.
+  const row: Row = { path, depth, text: raw.text, textStamp: raw.textStamp, noteStamp: raw.noteStamp };
   const textLength = count(raw.textLength);
   if (textLength !== undefined) row.textLength = textLength;
-  if (typeof raw.note === "string") row.note = raw.note.slice(0, limits.note + 1);
+  else if (raw.text.length > limits.fieldBytes) Object.assign(row, { text: raw.text.slice(0, 500), textLength: raw.text.length });
+  if (typeof raw.note === "string") row.note = raw.note;
   const noteLength = count(raw.noteLength);
   if (noteLength !== undefined) row.noteLength = noteLength;
+  else if (typeof raw.note === "string" && raw.note.length > limits.note) Object.assign(row, { note: raw.note.slice(0, 500), noteLength: raw.note.length });
   if (raw.done === true) row.done = true;
   if (raw.dim === true) row.dim = true;
   if (raw.nested === true) row.nested = true;
@@ -306,7 +312,7 @@ function shapeRefusal(raw: unknown): Refusal | undefined {
   const row = shapePath(raw.row);
   if (row) refusal.row = row;
   if (raw.field === "text" || raw.field === "note") refusal.field = raw.field;
-  if (typeof raw.current === "string") refusal.current = raw.current.slice(0, limits.note + 1);
+  if (typeof raw.current === "string") refusal.current = raw.current;
   if (typeof raw.stamp === "string" && stampPattern.test(raw.stamp)) refusal.stamp = raw.stamp;
   return refusal;
 }
@@ -335,12 +341,13 @@ export function shapeListing(result: RelayResult): Answer {
   if (next) listing.next = next;
   if (raw.zoomLost === true) listing.zoomLost = true;
   if (typeof raw.saved === "boolean") listing.saved = raw.saved;
+  if (typeof raw.savedStamp === "string" && stampPattern.test(raw.savedStamp)) listing.savedStamp = raw.savedStamp;
   if (typeof raw.acted === "boolean") listing.acted = raw.acted;
   const refused = shapeRefusal(raw.refused);
   if (refused) listing.refused = refused;
   if (isObject(raw.caret)) {
     const path = shapePath(raw.caret.path);
-    const offset = count(raw.caret.offset, limits.text * 10);
+    const offset = count(raw.caret.offset, limits.fieldBytes * 10);
     if (path && offset !== undefined) listing.caret = { path, offset };
   }
   const moved = shapePath(raw.moved);

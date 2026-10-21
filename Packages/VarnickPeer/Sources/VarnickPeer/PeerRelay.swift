@@ -97,7 +97,7 @@ public enum PeerRelay {
                 ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
-            // The Outline's text goes to a listed device alone (ADR 0045): a paired Mac has no Outline view of another Mac's, so it would only be another reader.
+            // The Outline's text goes to a listed device alone (ADR 0046).
             if PeerProtocol.isOutlineRequest(op), device == nil || ownPageServer {
                 return finish(.failure("\(host.name) shows its Outline to a listed device only"))
             }

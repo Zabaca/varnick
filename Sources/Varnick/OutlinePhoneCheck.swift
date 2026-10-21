@@ -39,9 +39,13 @@ enum OutlinePhoneCheck {
         -> (tree: OutlineTree, caret: OutlineCaret?, run: [OutlinePath])? {
         var seed = 0
         func newID() -> String { seed += 1; return "n\(seed)" }
-        guard case .edit(let edit, let scope) = OutlinePhone.plan(act, in: tree, view: view),
-              case .applied(let done, let caret, let run) = tree.applying(edit, now: at, newID: newID, scope: scope ?? OutlineScope()) else { return nil }
-        return (done, caret, run)
+        guard case .edits(let edits, let scope, _) = OutlinePhone.plan(act, in: tree, view: view) else { return nil }
+        var current = tree, caret: OutlineCaret?, run: [OutlinePath] = []
+        for edit in edits {
+            guard case .applied(let done, let one, let moved) = current.applying(edit, now: at, newID: newID, scope: scope ?? OutlineScope()) else { return nil }
+            (current, caret, run) = (done, one, moved)
+        }
+        return (current, caret, run)
     }
 
     private static func refused(_ act: PeerOutlineAct, in tree: OutlineTree, view: PeerOutlineView? = nil) -> PeerOutlineRefusal? {
@@ -50,8 +54,8 @@ enum OutlinePhoneCheck {
         switch OutlinePhone.plan(act, in: tree, view: view) {
         case .refused(let why):
             return why
-        case .edit(let edit, let scope):
-            if case .refused(let reason) = tree.applying(edit, now: at, newID: newID, scope: scope ?? OutlineScope()) { return OutlinePhone.refusal(reason) }
+        case .edits(let edits, let scope, _):
+            if case .refused(let reason) = tree.applying(edits[0], now: at, newID: newID, scope: scope ?? OutlineScope()) { return OutlinePhone.refusal(reason) }
             return nil
         }
     }
@@ -289,7 +293,68 @@ enum OutlinePhoneCheck {
         print("phone check: a row the Mac is zoomed into can't be deleted from the phone, and the refusal says why: "
               + ok(refused(PeerOutlineAct(.delete, row: ["p2"]), in: macSees)?.message.contains("zoomed") == true))
         print("phone check: the Mac's words reach the phone as sentences, with no text of a bullet in them: "
-              + ok(OutlinePhone.refusal(.other("the title")).message.hasSuffix(".") && OutlinePhone.sentence("no sibling above") == "No sibling above."))
+              + ok(OutlinePhone.refusal(.title).message.hasSuffix(".") && OutlinePhone.sentence("no sibling above") == "No sibling above."))
+        staleCheck(tree)
+        enterCheck(tree)
+    }
+
+    /// Acts carry what the phone read: an enter or a delete is refused if the text changed, ⌫ if the row is no longer empty, a delete if bullets appeared under a
+    /// row the phone showed with none; a save in the same request makes the stamp moot.
+    private static func staleCheck(_ tree: OutlineTree) {
+        let alpha = ["p1"]
+        let stamp = OutlinePhone.stamp("alpha")
+        var typed = tree
+        typed.bullets["a"]?.text = "alpha, typed on the Mac"
+        let enter = PeerOutlineAct(.enter, row: alpha, offset: 2, stamp: stamp)
+        print("phone check: an enter is refused when the text changed on the Mac, taken when it didn't, and not asked when a save came first: "
+              + ok(OutlinePhone.stale(enter, in: tree, afterSave: false) == nil && OutlinePhone.stale(enter, in: typed, afterSave: false) != nil
+                   && OutlinePhone.stale(enter, in: typed, afterSave: true) == nil))
+        var empty = tree
+        empty.bullets["a"]?.text = ""
+        let backspace = PeerOutlineAct(.delete, row: alpha, stamp: OutlinePhone.stamp(""), empty: true)
+        var noted = empty
+        noted.bullets["a"]?.note = "n"
+        var kids = empty
+        kids.bullets["a"]?.children = [OutlinePlacement(id: "k1", bullet: "c")]
+        print("phone check: ⌫ in an empty bullet is refused unless the row is still empty on the Mac, with no note and no bullets nested: "
+              + ok(OutlinePhone.stale(backspace, in: empty, afterSave: false) == nil && OutlinePhone.stale(backspace, in: tree, afterSave: false) != nil
+                   && OutlinePhone.stale(backspace, in: noted, afterSave: false) != nil && OutlinePhone.stale(backspace, in: kids, afterSave: false) != nil))
+        var withKids = tree
+        withKids.bullets["a"]?.children = [OutlinePlacement(id: "k1", bullet: "c")]
+        let plain = PeerOutlineAct(.delete, row: alpha, stamp: stamp, nested: false)
+        let asked = PeerOutlineAct(.delete, row: alpha, stamp: stamp, nested: true)
+        print("phone check: a Delete the phone sent for a row it showed with nothing nested is refused when bullets appeared, and one it asked about is taken: "
+              + ok(OutlinePhone.stale(plain, in: tree, afterSave: false) == nil && OutlinePhone.stale(plain, in: withKids, afterSave: false) != nil
+                   && OutlinePhone.stale(asked, in: withKids, afterSave: false) == nil && OutlinePhone.stale(plain, in: typed, afterSave: false) != nil))
+        print("phone check: a row that left the tree is the tree's to refuse as gone, not stale: "
+              + ok(OutlinePhone.stale(PeerOutlineAct(.delete, row: ["zz"], stamp: stamp), in: tree, afterSave: false) == nil))
+    }
+
+    /// Enter on a bullet with bullets nested follows the phone's collapse of it, whatever the Mac's saved one is.
+    private static func enterCheck(_ tree: OutlineTree) {
+        let beta = PeerOutlineAct(.enter, row: ["p2"], offset: 2)
+        func nestedFirst(_ result: (tree: OutlineTree, caret: OutlineCaret?, run: [OutlinePath])?) -> Bool {
+            guard let result, let caret = result.caret else { return false }
+            return caret.path.parent == OutlinePath(placements: ["p2"]) && result.tree.bullets["b"]?.children.count == 3
+        }
+        func sibling(_ result: (tree: OutlineTree, caret: OutlineCaret?, run: [OutlinePath])?) -> Bool {
+            guard let result, let caret = result.caret else { return false }
+            return caret.path.parent == OutlinePath(placements: []) && result.tree.bullets["b"]?.children.count == 2 && result.tree.text(at: OutlinePath(placements: ["p2"])) == "be"
+                && result.tree.text(at: caret.path) == "ta"
+        }
+        var macClosed = tree
+        macClosed.bullets["r"]?.children[1].collapsed = true
+        let phoneOpens = PeerOutlineView(opened: ["p2"], completed: true)
+        let phoneCloses = PeerOutlineView(closed: ["p2"], completed: true)
+        print("phone check: Enter on a bullet the phone shows open makes the first nested one, though the Mac keeps it closed: "
+              + ok(nestedFirst(apply(beta, to: tree, view: PeerOutlineView(completed: true))) && nestedFirst(apply(beta, to: macClosed, view: phoneOpens))))
+        let shut = apply(beta, to: tree, view: phoneCloses)
+        print("phone check: Enter on a bullet the phone shows closed makes the next sibling with the text after the caret, though the Mac has it open (two edits, "
+              + "the caret at the start of the new row), and when the Mac has it closed too: "
+              + ok(sibling(shut) && shut?.run.first.map { $0.parent.placements.isEmpty } == true && sibling(apply(beta, to: macClosed, view: phoneCloses))))
+        let start = apply(PeerOutlineAct(.enter, row: ["p2"], offset: 0), to: tree, view: phoneCloses)
+        print("phone check: Enter at the start of a bullet with text adds the empty bullet above whatever the collapse: "
+              + ok(start.map { $0.tree.bullets["r"]?.children.count == 5 && $0.tree.text(at: OutlinePath(placements: ["p2"])) == "beta" } ?? false))
     }
 
     static func run(_ tree: OutlineTree) {

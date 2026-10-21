@@ -6,8 +6,11 @@
 
 /** A save waits this long after the last key. */
 export const saveDelayMs = 2000;
-/** The Mac's numbers (`limits` in outline.ts, `PeerOutlineLimits` in the relay's package): the page checks a request against them before it is sent. */
-export const limits = { text: 10_000, fieldBytes: 60_000, toggles: 300, path: 64 };
+/**
+ * The numbers the page, its server (outline.ts imports these) and the Mac (`PeerOutlineLimits`) hold to. `fieldBytes` is a text, note or pasted lines as JSON
+ * bytes; `note` is the most of a note the Mac lists whole, in UTF-8 bytes; `argument` is the relay's request cap, a base64 string.
+ */
+export const limits = { fieldBytes: 60_000, toggles: 300, path: 64, idLength: 128, rows: 400, note: 100_000, argument: 120_000 };
 /** The line that makes one empty bullet in an add: the Mac's paste rules read a lone dash as an empty bullet. */
 export const emptyBullet = "-";
 
@@ -43,11 +46,22 @@ export const jsonBytes = (text) => new TextEncoder().encode(JSON.stringify(text)
 /** Whether a text or note fits a request: the Mac holds a field to `fieldBytes` of JSON string. */
 export const fits = (text) => jsonBytes(text) <= limits.fieldBytes;
 
-/** A bullet's text is one line: a line break or any other control character becomes a space. */
-export const cleanText = (text) => text.replace(/[\x00-\x1f\x7f\u0085\u2028\u2029]+/g, " ");
+/** Whether a request body fits the relay's one base64 argument, with room for the fields the server adds. */
+export const fitsRequest = (body) => Math.ceil(new TextEncoder().encode(JSON.stringify(body)).length / 3) * 4 + 600 <= limits.argument;
+
+/** A bullet's text is one line: any control character or line break in it is refused by the Mac, and becomes a space here. */
+const textControls = "\\x00-\\x1f\\x7f\\u0085\\u2028\\u2029";
+const textHas = new RegExp(`[${textControls}]`);
+const textAll = new RegExp(`[${textControls}]+`, "g");
+export const hasTextControl = (text) => textHas.test(text);
+export const cleanText = (text) => text.replace(textAll, " ");
 
 /** A note keeps its line feeds; a tab becomes a space and any other control character goes. */
-export const cleanNote = (text) => text.replace(/\r\n?/g, "\n").replace(/\t/g, " ").replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, "");
+const noteControls = "\\x00-\\x09\\x0b\\x0c\\x0e-\\x1f\\x7f";
+const noteHas = new RegExp(`[${noteControls}]`);
+const noteAll = new RegExp(`[${noteControls}]`, "g");
+export const hasNoteControl = (text) => noteHas.test(text);
+export const cleanNote = (text) => text.replace(/\r\n?/g, "\n").replace(/\t/g, " ").replace(noteAll, "");
 
 /** A note too long to edit on the phone: it is shown, and the page says so. */
 export const noteEditable = (note) => fits(note ?? "");
@@ -227,16 +241,15 @@ export function refusalLine(refused) {
   return refused.message;
 }
 
-/** The two texts a conflict shows side by side, each cut for a card. */
+/** The Mac's version of a conflicted field as a card shows it, cut; Use the Mac's takes the whole. */
 export function conflictCard(conflict) {
-  const cut = (text) => (text.length > 400 ? `${text.slice(0, 400)}…` : text);
-  return { mine: cut(conflict.mine), theirs: cut(conflict.theirs), field: conflict.field };
+  return { theirs: conflict.theirs.length > 400 ? `${conflict.theirs.slice(0, 400)}…` : conflict.theirs, field: conflict.field };
 }
 
-/** A conflict is kept per row and field: the text the phone typed, the Mac's version and its stamp (so Use mine saves over it, and only it). */
-export function newConflict(refused, mine) {
-  return { key: keyOf(refused.row), row: refused.row, field: refused.field, mine, theirs: refused.current ?? "", stamp: refused.stamp };
+/** A conflict is kept per row and field: the Mac's version and its stamp (so Use mine saves over it, and only it). What the phone typed stays in its field. */
+export function newConflict(refused) {
+  return { key: keyOf(refused.row), row: refused.row, field: refused.field, theirs: refused.current ?? "", stamp: refused.stamp };
 }
 
-/** The key a conflict is kept under: the row and the field. */
-export const conflictKey = (key, field) => `${key}|${field}`;
+/** The key a field's unsaved text and its conflict are kept under: the row and the field. */
+export const fieldKey = (key, field) => `${key}|${field}`;

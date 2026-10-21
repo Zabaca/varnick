@@ -1,11 +1,9 @@
 import Foundation
 import VarnickPeer
 
-// The Outline on this Mac's Phone page (option 03 of `outline-out-of-reach-from-the-phone`, ADR 0046; protocol 34): answers `outlineRead` and
-// `outlineEdit` on the main actor, for a listed device, from Varnick's own model. The rules (the stamps, the phone's view, what an act comes to) are
-// `OutlinePhone`'s; the edits are `Outline.performForSession`'s, the one Panel access's `outline_act` uses: one step on the Outline's undo stack, the
-// user's caret moved only where the same key would move it, the panel never shown, raised or focused. Nothing of a bullet is logged: the timing line
-// holds the kind of request, its outcome and counts.
+// The Outline on this Mac's Phone page (protocol 34): answers `outlineRead` and `outlineEdit` on the main actor, for a listed device. The rules are
+// `OutlinePhone`'s; the edits are `Outline.performForSession`'s, the one Panel access's `outline_act` uses. The mechanism is in docs/agents/where-it-breaks.md, The
+// Outline on the phone. Nothing of a bullet is logged: the timing line holds the request's kind, its outcome and counts.
 
 @MainActor
 enum OutlineRemote {
@@ -14,7 +12,6 @@ enum OutlineRemote {
         var outcome = "ok"
         var counts = ""
         defer {
-            // Only the request's kind, the outcome's kind and counts, and the duration.
             NSLog("Varnick: outline phone %@ %@%@ [%.2f s]", request.op.rawValue, outcome, counts.isEmpty ? "" : " (\(counts))", began.duration(to: .now).seconds)
         }
         guard let ask = request.outline else {
@@ -28,7 +25,6 @@ enum OutlineRemote {
         }
         let outline = model.outline
         await outline.loadForSession()
-        // The load may have waited: the switch can have been turned off meanwhile.
         guard Settings.shared.outlineOn else {
             outcome = "outline off"
             return .failure(off)
@@ -48,6 +44,11 @@ enum OutlineRemote {
                 return .failure("There was nothing to change")
             }
             reply = await edit(ask, outline: outline)
+            // The switch can have been turned off while the edit waited: nothing of the Outline is listed then.
+            guard Settings.shared.outlineOn else {
+                outcome = "outline off"
+                return .failure(off)
+            }
         default:
             outcome = "unknown"
             return .failure("Unknown request")
@@ -65,7 +66,7 @@ enum OutlineRemote {
 
     /// The save, then the act, each its own step on the Outline's undo stack; a refused save stops there. The reply lists the view's rows again.
     private static func edit(_ ask: PeerOutlineAsk, outline: Outline) async -> PeerOutlineReply {
-        var saved: Bool?, acted: Bool?
+        var saved: Bool?, savedStamp: String?, acted: Bool?
         var refused: PeerOutlineRefusal?
         var caret: PeerOutlineCaret?
         var moved: [String]?
@@ -80,23 +81,27 @@ enum OutlineRemote {
             } else if let problem = OutlineActing.problem(withText: save.text, note: field == .note) {
                 refused = PeerOutlineRefusal(kind: PeerOutlineRefusal.other, message: OutlinePhone.sentence(problem))
             } else {
-                var changedOnMac = false
+                var staleness = OutlinePhone.Staleness.current
                 let done = await outline.performForSession(field == .note ? .setNote(path, save.text) : .setText(path, save.text), fresh: { tree in
                     // Right before the edit, after its waits: the stamp is of the field now, keys the user typed included.
-                    guard OutlinePhone.staleness(of: save, in: tree) != .current else { return nil }
-                    changedOnMac = true
-                    return "changed on the Mac"
+                    staleness = OutlinePhone.staleness(of: save, in: tree)
+                    return staleness == .current ? nil : "changed on the Mac"
                 }, allowed: allowed)
                 if let refusal = done.refusal {
-                    if changedOnMac {
+                    switch staleness {
+                    case .gone:
+                        refused = OutlinePhone.refusalGone
+                    case .changed:
                         let current = field == .text ? outline.tree.text(at: path) : outline.tree.note(at: path)
                         refused = PeerOutlineRefusal(kind: PeerOutlineRefusal.changed, message: "That changed on the Mac after your phone read it.", row: save.row,
                                                      field: save.field, current: current ?? "", stamp: OutlinePhone.stamp(current ?? ""))
-                    } else {
+                    case .current:
                         refused = OutlinePhone.refusal(refusal)
                     }
                 } else {
                     saved = true
+                    // Read in the same turn as the edit, so it is the stamp of what the save left and no later change.
+                    savedStamp = OutlinePhone.stamp(of: field, at: path, in: outline.tree)
                 }
             }
         }
@@ -105,20 +110,29 @@ enum OutlineRemote {
             switch OutlinePhone.plan(act, in: outline.tree, view: ask.view) {
             case .refused(let why):
                 refused = why
-            case .edit(let edit, let scope):
-                let done = await outline.performForSession(edit, fresh: { _ in nil }, allowed: allowed, scope: scope)
-                if let refusal = done.refusal {
-                    refused = OutlinePhone.refusal(refusal)
-                } else {
+            case .edits(let edits, let scope, let caretAtStart):
+                var last = Outline.SessionOutcome()
+                for (index, edit) in edits.enumerated() {
+                    let afterSave = ask.save != nil
+                    last = await outline.performForSession(edit, fresh: { tree in index == 0 ? OutlinePhone.stale(act, in: tree, afterSave: afterSave) : nil },
+                                                           allowed: allowed, scope: scope)
+                    if let refusal = last.refusal {
+                        refused = OutlinePhone.refusal(refusal)
+                        break
+                    }
+                }
+                if refused == nil {
                     acted = true
                     switch act.kind {
                     case .add:
-                        added = done.run.map(\.placements)
-                        caret = done.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
+                        added = last.run.map(\.placements)
+                        caret = last.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
                     case .enter:
-                        caret = done.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
+                        caret = caretAtStart
+                            ? last.run.first.map { PeerOutlineCaret(path: $0.placements, offset: 0) }
+                            : last.caret.map { PeerOutlineCaret(path: $0.path.placements, offset: $0.offset) }
                     case .indent, .outdent, .move:
-                        moved = done.run.first?.placements
+                        moved = last.run.first?.placements
                     case .complete, .delete:
                         break
                     }
@@ -128,6 +142,7 @@ enum OutlineRemote {
 
         var reply = OutlinePhone.listing(of: outline.tree, view: ask.view)
         reply.saved = saved
+        reply.savedStamp = savedStamp
         reply.acted = acted
         if refused != nil { reply.refused = refused }
         reply.caret = caret
