@@ -19,7 +19,7 @@ Everything can be done from the keyboard (Keys, below):
 - ⌘] and ⌘[ zoom in and out.
 - ⌘↩ completes a bullet, and ⇧↩ opens its note.
 - ⌘F filters.
-- ⇧↑ and ⇧↓ select whole bullets, for ⇥, ⇧⇥, the move keys, ⌫, ⌘↩, ⌘C, ⌘X and ⌥⌘C to act on together.
+- ⇧↑ and ⇧↓ (and ⇧-click on another bullet's text, added 2026-10-20) select whole bullets, for ⇥, ⇧⇥, the move keys, ⌫, ⌘↩, ⌘C, ⌘X and ⌥⌘C to act on together.
 - ⌘Z and ⌘⇧Z undo and redo.
 
 With the mouse, clicking a dot zooms into its bullet, a breadcrumb zooms out to it, and a tag filters to it.
@@ -494,3 +494,12 @@ Tickets 08 and 09 build them.
 ## Added later (2026-10-13)
 
 The user asked for the Outline to move into Settings › Experimental, as the Problems board is. It is off by default for every install. Off, its shortcut, `!outline` and `!wf` do nothing, and Panel access refuses its tools and showing it. If it is showing when the switch turns off, it closes. The switch never reads, changes or removes the Outline's file (ADR 0030), so turning it on again shows the same Outline.
+
+## Added later (2026-10-20)
+
+The user asked for shift-click to select a range: "i can easily select multiple items using shift up and down. however i cannot using shift and click." In a bullet's text (not a note, the title or a dot), ⇧-click selects whole bullets by the Selection rules, with the click standing in for the moving end:
+
+- **The anchor** is the fixed end of the bullets already selected, or else the bullet whose text has the caret. With neither, ⇧-click is a plain click.
+- **Within the anchor's own text** with nothing selected, ⇧-click selects text as macOS does, as ⇧↑ and ⇧↓ do away from the edges of a bullet. With bullets selected, ⇧-click in the fixed end's text shrinks the selection to that bullet.
+- **The run** is the siblings that show between the anchor and the clicked bullet. At different levels each end goes up to its ancestor under the nearest parent they share, and the anchor's becomes the fixed end, as climbing does. A bullet clicked above the anchor, or nested under it, selects that one bullet alone.
+- A plain click ends the selection as before. ⇧-click on a dot (which zooms) and on the triangle does what a click does.

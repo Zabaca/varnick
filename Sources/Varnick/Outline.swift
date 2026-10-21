@@ -874,6 +874,29 @@ final class Outline: ObservableObject {
         scroll(to: next.moving)
     }
 
+    /// What ⇧-clicking in the text of the bullet at `path` selects, or nil when the click is the text view's own: a bullet whose text has the
+    /// caret is the anchor, and bullets already selected keep their fixed end. Clicking inside the anchor's own text selects text as usual.
+    func shiftSelection(to path: OutlinePath) -> OutlineSelection? {
+        guard load == .ready else { return nil }
+        if let selection { return tree.selecting(through: path, from: selection.fixed, scope: scope) }
+        guard let view = activeView, view.kind == .row, view.window?.firstResponder === view, view.rowPath != path else { return nil }
+        return tree.selecting(through: path, from: view.rowPath, scope: scope)
+    }
+
+    /// ⇧-click in a bullet's text: `shiftSelection` is applied, as ⇧↑ and ⇧↓ do. False when it is the text view's to handle.
+    func shiftClick(to path: OutlinePath) -> Bool {
+        guard let next = shiftSelection(to: path) else { return false }
+        if selection != nil {
+            selection = next
+            scroll(to: next.moving)
+        } else if let view = activeView {
+            let at = view.selectedRange().location
+            view.setSelectedRange(NSRange(location: at, length: 0))
+            select(next, from: OutlineCaret(path: view.rowPath, offset: at))
+        }
+        return true
+    }
+
     /// A key while bullets are selected. Varnick's shortcuts go on, as does nothing else: any key not listed beeps and changes nothing.
     private func selectionKey(_ event: NSEvent, _ held: OutlineSelection) -> Bool {
         // The Paste shortcut's key is the outline's here; every other shortcut acts as always.
