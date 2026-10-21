@@ -2,7 +2,8 @@
 problem: outline-out-of-reach-from-the-phone
 title: Read a Mac's Outline on its Phone page, add to it and check bullets off
 summary: Option 01's view plus the two edits a phone is used for most. Add puts in new bullets, typed one after another, below a bullet, inside it or at the end of the zoom. Complete checks a bullet off or back on. Both go through the Outline's own edit for callers outside the panel, the one Panel access uses, so each is one step on the Mac's undo stack and the Mac's caret is left alone. The phone never changes or removes anything already written, so it can't overwrite what the user typed on the Mac and needs no check for changes made there. It adds two relay requests, in one protocol bump.
-status: proposed
+status: rejected
+reason: The user chose option 03, full editing, on 2026-10-20 (relayed by the coordinator). Adding and checking off only leaves the phone unable to fix a typo, reword, move, indent or delete, which falls short of the outliner the user asked for. This option's add and complete are part of option 03's spec and are built there.
 ---
 
 ## Solution

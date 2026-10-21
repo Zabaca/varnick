@@ -1,8 +1,8 @@
 ---
 problem: outline-out-of-reach-from-the-phone
 title: Edit a Mac's Outline from its Phone page
-summary: Recommended. Option 01's view, editable as the Outline is on the Mac. Tapping a bullet puts the caret in it. Enter splits the bullet at the caret by the tree's own rule, and ⌫ in an empty bullet deletes it. A row of keys above the keyboard, like the terminal's, indents, outdents, moves, completes, opens the note and deletes. Text is saved when the user leaves the bullet, uses a key, pauses or leaves the page, never letter by letter. Every edit goes through the Outline's edit for callers outside the panel, as Panel access's edits do: one step on the Mac's undo stack, with the Mac's caret respected. A text save is refused if the bullet changed on the Mac since the phone read it, and what the phone typed is kept. Mirrors show, and editing one edits every placement. Placing new mirrors, selecting several bullets and undo stay on the Mac. It adds two relay requests, in one protocol bump.
-status: proposed
+summary: Accepted by the user on 2026-10-20 (relayed by the coordinator). Option 01's view, editable as the Outline is on the Mac. Tapping a bullet puts the caret in it. Enter splits the bullet at the caret by the tree's own rule, and ⌫ in an empty bullet deletes it. A row of keys above the keyboard, like the terminal's, indents, outdents, moves, completes, opens the note and deletes. Text is saved when the user leaves the bullet, uses a key, pauses or leaves the page, never letter by letter. Every edit goes through the Outline's edit for callers outside the panel, as Panel access's edits do: one step on the Mac's undo stack, with the Mac's caret respected. A text save is refused if the bullet changed on the Mac since the phone read it, and what the phone typed is kept. Mirrors show, and editing one edits every placement. Placing new mirrors, selecting several bullets and undo stay on the Mac. It adds two relay requests, in one protocol bump.
+status: accepted
 ---
 
 ## Solution
@@ -63,7 +63,7 @@ As in option 01, zooming, collapsing and Show completed belong to the phone and 
 
 ## Implementation Decisions
 
-Everything in option 01's Implementation Decisions holds. So does option 02's request: add, and complete set to a state rather than toggled. This option adds the following.
+Everything in option 01's Implementation Decisions holds. So does option 02's request: add, and complete set to a state rather than toggled. Options 01 and 02 are rejected, but the parts this option takes from them are part of this spec. This option adds the following.
 
 ### The request
 
@@ -157,7 +157,7 @@ Everything in option 01's Implementation Decisions holds. So does option 02's re
 - Undo and redo on the phone.
 - Joining a bullet onto the row above with ⌫.
 - The filter and tapping a tag, as in option 01.
-- Saving the phone's collapse to the file (Open questions).
+- Saving the phone's collapse to the file (Decided by the user).
 - Editing while the Mac can't be reached, and a queue of edits for later.
 - Dragging bullets.
 
@@ -165,7 +165,17 @@ Everything in option 01's Implementation Decisions holds. So does option 02's re
 
 - **Siblings:** Voice mode on the phone (ADR 0043) for the request, the headless refusal and the page's view; Panel access's `outline_act` (ADR 0031) for the edit, its undo step, its caret rules and its refusal of a field that changed; the terminal's key row for the keys the phone lacks.
 - **Build order:** option 01's read first, then the edits, in tickets of one option merged once, so the protocol is bumped once. A merge of the read alone would take one bump and the edits another.
-- **Open questions, each with the planner's recommendation:**
-  1. **Should the phone's collapse be saved to the file and shown on the Mac,** as WorkFlowy does? Recommended: no. A collapse saved from the phone would be a step on the Mac's undo stack and would change the Mac's view under the user. Each side's collapse stays its own.
-  2. **Placing mirrors from the phone?** Recommended: not in this option. It needs a copy held across views and a second action, for something rarely done on a phone. The phone shows and edits mirrors.
-  3. **Undo on the phone?** Recommended: not in this option. The Mac's one undo stack holds the Mac's typing too, so a phone Undo would need steps marked by who made them. Delete asking first, and ⌘Z at the Mac, cover the costly slips.
+- **The protocol and ADR numbers are the next free ones when this merges.** On 2026-10-20, `phone-cant-mark-a-tab-done`'s option 03 is built on its branch with protocol 33 and ADR 0045, and not yet merged. If it merges first, this option takes protocol 34 and ADR 0046.
+
+## Decided by the user, 2026-10-20
+
+The user chose this option ("03 Full editing (Recommended)"), and options 01 and 02 are rejected. The answers were given through the coordinator's question form:
+
+1. **Full editing from the phone,** as this option describes.
+2. **Privacy: "Yes, allow it."** The Outline's text may reach the listed phone over the tailnet. It is held in the page's memory only, and never cached, logged or pushed. The new ADR amending ADRs 0030, 0031 and 0011, the documents and the in-app wording (Privacy and documents) are part of the build.
+3. **The planner's defaults stand ("Yes, all defaults"):**
+   - **A collapse on the phone is not saved to the Mac.** It stays the phone's own, never a step on the Mac's undo stack, as in option 01.
+   - **No placing mirrors from the phone.** The phone shows mirrors and edits them.
+   - **No undo on the phone.** Delete asks before removing nested bullets, and ⌘Z on the Mac takes back phone edits.
+   - **Listed devices only.** A paired Mac is refused.
+   - **Each Mac's page shows that Mac's own Outline,** and a headless host's page shows none.

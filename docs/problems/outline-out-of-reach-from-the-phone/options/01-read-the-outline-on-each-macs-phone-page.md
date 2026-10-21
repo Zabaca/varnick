@@ -2,7 +2,8 @@
 problem: outline-out-of-reach-from-the-phone
 title: Read a Mac's Outline on its Phone page
 summary: A Mac host's Phone page gets an Outline button beside Voice mode. It opens that Mac's Outline, read-only, with breadcrumbs, notes, completed bullets struck through and mirrors marked. The phone can zoom, collapse and show completed bullets in a view of its own, which is never saved and never changes the Mac's view. The Mac's app lists the rows from its own model with the tree's rules, so the page decides nothing about the tree. A headless host has no Outline and no button. The Outline's text crosses the tailnet to the phone, which changes ADR 0030's "local only". One new relay request means one protocol bump.
-status: proposed
+status: rejected
+reason: The user chose option 03, full editing, on 2026-10-20 (relayed by the coordinator). Reading only leaves the phone unable to add, fix or check off anything, which falls short of the outliner the user asked for. This option's view, its read request and its privacy rules are part of option 03's spec and are built there.
 ---
 
 ## Solution
