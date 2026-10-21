@@ -484,11 +484,29 @@ struct OutlineTree: Codable, Equatable {
         let siblings = rows.filter { $0.parent == parent }
         guard let at = siblings.firstIndex(of: selection.moving) else { return nil }
         let next = at + step
-        if siblings.indices.contains(next) {
-            guard let fixed = siblings.firstIndex(of: selection.fixed) else { return nil }
-            return OutlineSelection(run: Array(siblings[min(fixed, next)...max(fixed, next)]), fixed: selection.fixed, moving: siblings[next])
-        }
+        if siblings.indices.contains(next) { return run(from: selection.fixed, to: siblings[next], among: rows) }
         return rows.contains(parent) ? OutlineSelection(run: [parent], fixed: parent, moving: parent) : nil
+    }
+
+    /// The sibling rows that show from `fixed` through `moving`, which share a parent; nil when either does not show.
+    private func run(from fixed: OutlinePath, to moving: OutlinePath, among rows: [OutlinePath]) -> OutlineSelection? {
+        let siblings = rows.filter { $0.parent == moving.parent }
+        guard let f = siblings.firstIndex(of: fixed), let m = siblings.firstIndex(of: moving) else { return nil }
+        return OutlineSelection(run: Array(siblings[min(f, m)...max(f, m)]), fixed: fixed, moving: moving)
+    }
+
+    /// ⇧-click (option 01, "Added later (2026-10-20)"): the siblings that show from `anchor` to `target`, each end lifted to its ancestor under their
+    /// shared parent. A target the anchor is nested under, or that is nested under the anchor, selects alone. Nil unless both rows show.
+    func selecting(through target: OutlinePath, from anchor: OutlinePath, scope: OutlineScope = OutlineScope()) -> OutlineSelection? {
+        let rows = visibleRows(scope).map(\.path)
+        guard rows.contains(anchor), rows.contains(target) else { return nil }
+        let common = zip(anchor.placements, target.placements).prefix { $0 == $1 }.count
+        if common == target.placements.count || common == anchor.placements.count {
+            let alone = common == target.placements.count ? target : anchor
+            return OutlineSelection(run: [alone], fixed: alone, moving: alone)
+        }
+        let fixed = OutlinePath(placements: Array(anchor.placements[...common])), moving = OutlinePath(placements: Array(target.placements[...common]))
+        return run(from: fixed, to: moving, among: rows)
     }
 
     func note(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.note } }

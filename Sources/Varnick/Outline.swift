@@ -831,6 +831,10 @@ final class Outline: ObservableObject {
     /// were moving, which is where esc puts the caret back.
     private func startSelection(from view: OutlineTextView, at end: Int) {
         guard let started = tree.selecting(view.rowPath, scope: scope) else { return }
+        start(started, from: view, at: end)
+    }
+
+    private func start(_ started: OutlineSelection, from view: OutlineTextView, at end: Int) {
         view.setSelectedRange(NSRange(location: min(max(end, 0), (view.string as NSString).length), length: 0))
         select(started, from: OutlineCaret(path: view.rowPath, offset: view.selectedRange().location))
     }
@@ -870,8 +874,31 @@ final class Outline: ObservableObject {
     /// ⇧↑ and ⇧↓ with bullets selected. At the top level of the zoom the key does nothing.
     private func extendSelection(_ held: OutlineSelection, by step: Int) {
         guard let next = tree.extending(held, by: step, scope: scope) else { return }
+        moveSelection(to: next)
+    }
+
+    private func moveSelection(to next: OutlineSelection) {
         selection = next
         scroll(to: next.moving)
+    }
+
+    /// What ⇧-clicking in the text of the bullet at `path` selects (option 01, "Added later (2026-10-20)"), or nil when the click is the text
+    /// view's own: inside the anchor's text, while an input method composes, or with no anchor.
+    func shiftSelection(to path: OutlinePath) -> OutlineSelection? {
+        guard load == .ready else { return nil }
+        if let selection { return tree.selecting(through: path, from: selection.fixed, scope: scope) }
+        guard let view = activeView, view.kind == .row, view.window?.firstResponder === view, view.rowPath != path,
+              !view.hasMarkedText() else { return nil }
+        return tree.selecting(through: path, from: view.rowPath, scope: scope)
+    }
+
+    /// ⇧-click applies what `shiftSelection` returned, as ⇧↑ and ⇧↓ do.
+    func shiftClick(_ next: OutlineSelection) {
+        if selection != nil {
+            moveSelection(to: next)
+        } else if let view = activeView {
+            start(next, from: view, at: view.movingEnd ?? view.selectedRange().location)
+        }
     }
 
     /// A key while bullets are selected. Varnick's shortcuts go on, as does nothing else: any key not listed beeps and changes nothing.
