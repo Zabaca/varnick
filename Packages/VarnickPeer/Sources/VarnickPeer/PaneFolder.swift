@@ -110,8 +110,10 @@ public enum PaneFolder {
         return earlier.map { folder.appendingPathComponent($0 + ".jsonl").path }
     }
 
-    /// The stop file or a transcript entry older than the turn's date by more than this isn't that turn's: the
-    /// `Stop` entries run together, and the turn file and the transcript's entry are written within moments of each other.
+    /// How far before the date it is held against a file or entry may be dated and still belong to that turn: the stop file
+    /// against the turn file's date, an API error or `turn_duration` entry against it too, and a notification against
+    /// the stop file's (`input.savedAt`). The `Stop` entries run together, and the turn file and the transcript's entries are
+    /// written within moments of each other.
     static let staleWindow: TimeInterval = 5
 
     /// The pane's turn and when it began, corrected from the transcript. Nil without a file or with an

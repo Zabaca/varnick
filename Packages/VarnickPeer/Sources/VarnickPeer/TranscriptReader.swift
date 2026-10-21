@@ -380,7 +380,7 @@ extension TranscriptReader {
         return stop
     }
 
-    /// The kind of API error if the tail's last conversation entry is Claude Code's API-error entry, dated no earlier than
+    /// The kind of API error if the tail's last conversation entry is Claude Code's API-error entry, dated no more than
     /// `PaneFolder.staleWindow` before `since` (the hook writes the turn file just after the entry).
     static func apiFailure(tail: Data, startsMidLine: Bool, since: Date) -> TurnFailure? {
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
@@ -441,9 +441,8 @@ struct RunningTask: Equatable {
     enum Kind: String {
         case shell, subagent, teammate, workflow
 
-        /// A shell or workflow never runs again under its id (a resumed workflow gets a new one), so a notification of
-        /// its end counts whenever it came; a subagent or teammate runs again when sent a message.
-        var endsForGood: Bool { self == .shell || self == .workflow }
+        /// A subagent or teammate runs again when sent a message; a shell or workflow does not (a resumed workflow gets a new id).
+        var neverRunsAgain: Bool { self == .shell || self == .workflow }
     }
 
     var id: String
@@ -462,22 +461,24 @@ extension TranscriptReader {
     private static let endedStatuses: Set<String> = ["completed", "failed", "killed", "stopped"]
 
     /// The Stop input's tasks, less those notified ended in the 64 KB tail; a teammate counts only while it is busy
-    /// (`busyTeammates`), which reads the pane's `earlier` conversations too.
+    /// (`busyTeammates`), which reads the pane's `earlier` conversations too. With no Stop input, workflows come from
+    /// `turn_duration` (`pendingBackground`).
     /// The same tail read gives the API error (`apiFailure`), which counts only with no background work.
     static func endOfWaitingTurn(path: String, since: Date, input: StopInput, earlier: [String]) -> (work: BackgroundWork, failure: TurnFailure?) {
         guard let (tail, startsMidLine) = readTail(path) else { return (BackgroundWork(), nil) }
-        var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, input: input)
+        var (work, teammates) = pendingBackground(tail: tail, startsMidLine: startsMidLine, since: since, input: input)
         if !teammates.isEmpty { work.teammates = busyTeammates(path: path, earlier: earlier, among: teammates) }
         return (work, work.isEmpty ? apiFailure(tail: tail, startsMidLine: startsMidLine, since: since) : nil)
     }
 
     /// The count without teammates, which need the rest of the transcript, and the teammates not notified ended. A shell's
-    /// or workflow's end counts whenever it came (`RunningTask.Kind.endsForGood`); a subagent's only after the input was saved.
-    static func pendingBackground(tail: Data, startsMidLine: Bool, input: StopInput)
+    /// or workflow's end counts whenever it came (`RunningTask.Kind.neverRunsAgain`); a subagent's only after the input was saved.
+    /// With no tasks in the input, only the workflows the last `turn_duration` counts (`workflowsPending`).
+    static func pendingBackground(tail: Data, startsMidLine: Bool, since: Date, input: StopInput)
         -> (work: BackgroundWork, teammates: [RunningTask]) {
-        if input.tasks.isEmpty { return (BackgroundWork(), []) }
         var lines = tail.split(separator: 0x0A, omittingEmptySubsequences: true)
         if startsMidLine, !lines.isEmpty { lines.removeFirst() }
+        if input.tasks.isEmpty { return (BackgroundWork(workflows: workflowsPending(lines: lines, since: since)), []) }
         let dates = dateParser()
         let saved = input.savedAt - PaneFolder.staleWindow
         // The ids of every task a notification says ended (a shell, an agent, a workflow, or a Monitor's stream).
@@ -498,17 +499,41 @@ extension TranscriptReader {
         // names: otherwise it can't be told which was stopped, and showing Running is the cheaper mistake.
         var stopped = Set<String>()
         for (description, count) in Dictionary(stoppedByUser.map { ($0, 1) }, uniquingKeysWith: +) {
-            let named = input.tasks.filter { !$0.kind.endsForGood && $0.description == description }
+            let named = input.tasks.filter { !$0.kind.neverRunsAgain && $0.description == description }
             if named.count <= count { stopped.formUnion(named.map(\.id)) }
         }
         let live = input.tasks.filter { task in
-            task.kind.endsForGood ? !ended.contains(task.id) : !endedSinceSaved.contains(task.id) && !stopped.contains(task.id)
+            task.kind.neverRunsAgain ? !ended.contains(task.id) : !endedSinceSaved.contains(task.id) && !stopped.contains(task.id)
         }
         func count(_ kind: RunningTask.Kind) -> Int { live.filter { $0.kind == kind }.count }
         return (BackgroundWork(agents: count(.subagent), workflows: count(.workflow), shells: count(.shell)), live.filter { $0.kind == .teammate })
     }
 
-/// The descriptions a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped
+    /// The fallback for a turn with no Stop input (an Esc fires no `Stop`, and a workflow goes on running): the last
+    /// `turn_duration`'s `pendingWorkflowCount`, if it is dated no earlier than `PaneFolder.staleWindow` before `since`,
+    /// less the workflows whose end was notified after it (by `<task-id>`, from the summary's English start). Claude Code
+    /// 2.1.295 writes no `turn_duration` once a session has started a named agent, so this covers only sessions that haven't.
+    private static func workflowsPending(lines: [Data], since: Date) -> Int {
+        let dates = dateParser()
+        var ended = Set<String>()
+        for line in lines.reversed() {
+            let isEnd = line.withUnsafeBytes { has($0, "\"subtype\":\"turn_duration\"") }
+            guard isEnd || line.withUnsafeBytes({ has($0, "\"kind\":\"task-notification\"") || has($0, "\"commandMode\":\"task-notification\"") }),
+                  let entry = line.withUnsafeBytes({ object($0) }), entry["isSidechain"] as? Bool != true else { continue }
+            if isEnd {
+                guard entry["type"] as? String == "system", entry["subtype"] as? String == "turn_duration" else { continue }
+                guard let at = (entry["timestamp"] as? String).flatMap(dates.date(from:)), at >= since - PaneFolder.staleWindow else { return 0 }
+                return max(0, (entry["pendingWorkflowCount"] as? Int ?? 0) - ended.count)
+            }
+            guard let text = notificationText(entry), let status = between(text, "<status>", "</status>"), endedStatuses.contains(status),
+                  let id = between(text, "<task-id>", "</task-id>"), let summary = between(text, "<summary>", "</summary>"),
+                  summary.hasPrefix("Dynamic workflow") || summary.hasPrefix("Background workflow") else { continue }
+            ended.insert(id)
+        }
+        return 0
+    }
+
+    /// The descriptions a stop by the user names, as Claude Code words it (2.1.295): `Background agent "…" was stopped
     /// by the user.`, or `N background agents were stopped by the user: "…", "…".` Each is the task's own description,
     /// which Claude Code cut at 50 characters and "..." if it made it from the prompt, so it matches whole.
     private static func stoppedDescriptions(in text: String) -> [String] {
