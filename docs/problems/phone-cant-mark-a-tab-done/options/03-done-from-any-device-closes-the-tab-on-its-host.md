@@ -157,6 +157,6 @@ status: accepted
   - A pane in control on another machine that ends adds its ended card at once. Only a view's pane, or a card's, waits for Recent.
   - The page's Restart acts on the pane shown, and Redraw on the screen shown.
 - **Inferred, not tried:** the bar fits ←, a usable title, the menu button and End at 360 px.
-- **Open decisions, each with the recommendation first. None changes the choice:**
-  - **A Done that can't reach its host.** Recommended: nothing closes and the card says why, since the tab still runs there. Else, keep today's fallback: close the copy here and keep a mark on this Mac only, which would hide a tab that still runs.
-  - **Done on a tab with no Claude pane** (terminals or pages only). Recommended: not offered and refused by the host, as a Mac's Done needs a Claude pane today and the board lists only such tabs. Else, offer it on the phone for every tab.
+- **Decided by the user on 2026-10-20 (relayed by the coordinator when the build began), each taking the recommendation:**
+  - **A Done that can't reach its host:** it refuses and says why. Nothing closes and nothing is marked locally, since the tab still runs there: no "Done on this Mac only" for an open tab. An ended card's Done keeps its local fallback, as above.
+  - **Done on a tab with no Claude pane** (terminals or pages only): not offered, as on the Mac today, and refused by the host if asked.
