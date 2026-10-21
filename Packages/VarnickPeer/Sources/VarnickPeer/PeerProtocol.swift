@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 33
+    public static let version = 34
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -181,6 +181,10 @@ public enum PeerOp: String, Codable, Sendable {
     case voiceStatus
     /// Restarts a Claude pane (`PeerRequest.tab` and `pane`) of a tab the asker controls, in place, resuming it (protocol 32; where-it-breaks, The tab view on the phone).
     case restartPane
+    /// The Outline on a Mac's Phone page (protocol 34, `PeerOutlineAsk`): the rows of the phone's view, and an edit that lists them again. Only a Mac's
+    /// running Varnick answers, and only for a listed device: a paired Mac and a headless host are refused (ADR 0045).
+    case outlineRead
+    case outlineEdit
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -799,6 +803,8 @@ public struct PeerRequest: Codable, Sendable {
     public var automationID: String?
     /// VoiceAudio, VoiceAsk and VoiceStatus (protocol 30).
     public var voice: PeerVoiceAsk?
+    /// OutlineRead and OutlineEdit (protocol 34).
+    public var outline: PeerOutlineAsk?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -877,6 +883,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// VoiceAudio, VoiceAsk and VoiceStatus (protocol 30): the ask's id and, for a status, its events.
     public var voice: PeerVoiceReply?
+
+    /// OutlineRead and OutlineEdit (protocol 34): the phone's rows, and what an edit did.
+    public var outline: PeerOutlineReply?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

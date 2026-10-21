@@ -215,6 +215,8 @@ struct OutlineScope {
     var cache: OutlineFoldCache?
     /// A session's edit (Panel access): every row of the tree, whatever the zoom and the collapsed bullets hide. Only Show completed applies.
     var wholeTree = false
+    /// Show completed for these rows when it is not the tree's own: the phone's (Panel access and the Mac's view use the tree's).
+    var showsCompleted: Bool?
 }
 
 /// A `#word` or `@word` in a bullet's text or note. One rule, used by the text views (colour, click) and the filter (a tag word matches a tag
@@ -395,6 +397,7 @@ struct OutlineTree: Codable, Equatable {
         let base = scope.wholeTree ? [] : effectiveZoom
         let filter = scope.filter
         let filtering = !filter.isEmpty
+        let showsCompleted = scope.showsCompleted ?? self.showsCompleted
         let placements = placementCounts()
         func walk(_ id: String, prefix: [String], onStack: Set<String>, dimmed: Bool) -> [OutlineRow] {
             var rows: [OutlineRow] = []
