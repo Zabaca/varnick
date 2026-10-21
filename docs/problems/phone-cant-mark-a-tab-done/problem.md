@@ -4,7 +4,7 @@ description: Done is how a tab leaves the session board. On a Mac it closes ever
 impact: Finished work stays on the boards. A tab the phone started and then ended becomes an ended card in Stopped on every Mac. A tab started at a Mac and ended from the phone is handed back and keeps running on its host, with its Claude sessions and terminals. Either way the user has to mark it again at a Mac, and on a headless host a handed-back tab runs on with nobody attached.
 severity: low
 evidence: The user's words of 2026-10-20, relayed by the coordinator ("can we allow completion of a tab from the phone"). Code read at 7019dd6 (main).
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-20)

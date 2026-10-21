@@ -185,7 +185,7 @@ Screen. If the phone can't reach the host (Tailscale is off on it, or the host i
 browser's error page; Try again loads the page once the host answers. The app keeps nothing of your sessions on the phone.
 
 A session's screen draws itself again by itself when the phone rotates, the window is resized (split screen, a fold) or you come back to the app. If it
-is still blank or half drawn, **Redraw**, beside End in the session's header, throws the screen away, fits it to the phone and has the host send it again (a
+is still blank or half drawn, **Redraw**, in the menu (☰) beside End in the session's header, throws the screen away, fits it to the phone and has the host send it again (a
 terminal you control attaches again; a screen you are watching opens again). It types nothing and changes nothing about who controls the session.
 
 A tab shows one pane at a time, with a switcher between its panes. While the phone is in control of the tab, the switcher ends in **+** (Add pane), also on a
@@ -196,7 +196,12 @@ sits beside that pane (a file goes where the file tree puts it). A page at an ou
 it; a page at the host's own address and an app are framed. On a headless host Add pane offers Claude and Terminal only. On a tab you left on the Mac there is
 no +: Take over first, which detaches the Mac. Beside + a **×** closes the pane you are looking at (after you confirm), in a tab of more than one pane; to close the only pane, End the tab. The host decides whether the pane was the tab's last, as when you close it on the Mac.
 
-**Restart** sits in the header of a Claude session beside Redraw and End, while the phone is in control of the tab (the same rule as +). It asks first, in the
+**Done**, in the same menu, finishes the whole tab from the phone: it asks first, and then the host closes every pane of the tab (terminals and pages included, the Claude sessions
+stop) and puts it in Completed and Recent, as Done at the Mac would. It works on any tab with a Claude pane, whether the phone is in control of it and whoever started it. If the
+host can't be reached, a box says so and the tab stays as it was. **Resume** in Recent, or ↩ on its Completed card at a Mac, brings it back. At a Mac, Done on a tab that runs on another Mac
+or the headless host works the same way: the host closes it, instead of handing it back still running, and if the host can't be reached nothing happens.
+
+**Restart** sits in the same menu, over a Claude session, while the phone is in control of the tab (the same rule as +). It asks first, in the
 page, then ends that session's Claude and starts it again in the same pane, picking the conversation up where it was, as the Mac's Restart does. The new Claude
 reads the host's settings as they are now, Skip permissions for a session that follows the setting (one started with
 its own choice keeps it). So Restart is how a session gets a setting you changed after it started. The header says Restarting…, then Reconnecting…, and the

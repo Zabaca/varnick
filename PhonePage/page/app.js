@@ -4,6 +4,7 @@
 
 import { element, notListed, postJSON, shortFolder } from "/dom.js";
 import { startInstall } from "/install.js";
+import "/menu.js";
 import { closeNew, openNew } from "/new.js";
 import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";

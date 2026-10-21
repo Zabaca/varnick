@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "./checks";
 import type { RelayResult } from "./home";
 import {
-  agentsOf, closePane, isInsideFolder, openElsewhere, parentWithin, parseSplitDir, parseAgentsFolder, parseCloseBody, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
+  agentsOf, closePane, doneTab, isInsideFolder, openElsewhere, parentWithin, parseSplitDir, parseAgentsFolder, parseCloseBody, parseDoneBody, parseRestartBody, parseResumeBody, parseSplitBody, parseStartBody, promptLimitBytes, referenceDateOffset, reopenTab,
   restartPane, shapeAgents, shapeProjects, splitFiles, splitOffer, splitTab, startSession,
   type Asker,
 } from "./launch";
@@ -927,6 +927,44 @@ describe("closing one pane (an addition to option 05)", () => {
   test("the host's refusal reaches the page in the host's words", async () => {
     const { asker } = fakeRelay({ tabs: listed(), end: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" } });
     expect(await closePane(asker, device, "Mac mini", { tab, pane: first })).toEqual({ status: 502, body: { ok: false, error: "That tab isn't controlled by the machine that asked: take it over" } });
+  });
+});
+
+describe("Done on a tab (protocol 33)", () => {
+  test("the body is the tab, lowercased, and nothing else is read", () => {
+    expect(parseDoneBody({ tab: tab.toUpperCase(), pane: "x", mark: false, by: "someone" })).toEqual({ ok: true, value: tab });
+    for (const bad of [undefined, null, "", "x", `${tab}\n`, 5]) expect(parseDoneBody({ tab: bad })).toMatchObject({ ok: false });
+    expect(parseDoneBody(null)).toMatchObject({ ok: false });
+    expect(parseDoneBody([])).toMatchObject({ ok: false });
+  });
+
+  test("sends one done for the tab as the device, with the mark, and says Done", async () => {
+    const { asker, calls } = fakeRelay({ done: ok({}) });
+    expect(await doneTab(asker, device, tab)).toEqual({ status: 200, body: { ok: true, text: "Done" } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].op).toBe("done");
+    expect(calls[0].by).toBe(device.id);
+    expect(calls[0].fields).toEqual({ tab, mark: true });
+    expect(calls[0].limitMs).toBeGreaterThan(25_000);
+  });
+
+  test("asks nothing about who controls the tab or started it: the host judges", async () => {
+    const { asker, calls } = fakeRelay({ done: ok({}), tabs: ok({ tabs: [{ tab, control: other, panes: [] }] }) });
+    await doneTab(asker, device, tab);
+    expect(calls.map((call) => call.op)).toEqual(["done"]);
+  });
+
+  test("the host's refusal reaches the page in the host's words", async () => {
+    const { asker } = fakeRelay({ done: { ok: false, error: "That tab has no Claude session to mark done" } });
+    expect(await doneTab(asker, device, tab)).toEqual({ status: 502, body: { ok: false, error: "That tab has no Claude session to mark done" } });
+    const down = fakeRelay({ done: { ok: false, error: "Varnick isn't running on Mac mini" } });
+    expect(await doneTab(down.asker, device, tab)).toEqual({ status: 502, body: { ok: false, error: "Varnick isn't running on Mac mini" } });
+  });
+
+  test("a lost answer is not asked again", async () => {
+    const { asker, calls } = fakeRelay({ done: { ok: false, error: "The relay didn't answer in time" } });
+    expect((await doneTab(asker, device, tab)).status).toBe(502);
+    expect(calls).toHaveLength(1);
   });
 });
 

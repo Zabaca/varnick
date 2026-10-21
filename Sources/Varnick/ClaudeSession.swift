@@ -159,7 +159,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
     }
     /// Done on it asks first (`Turn.asksBeforeDone`), and Restart by the same rule; a pane showing a card (`awayNote`) asks for itself.
-    var asksBeforeDone: Bool { started && Turn.asksBeforeDone(turn?.turn, showingCard: awayNote != nil) }
+    var asksBeforeDone: Bool { (started || isOnPeer) && Turn.asksBeforeDone(turn?.turn, showingCard: awayNote != nil, onPeer: isOnPeer) }
     /// Done pressed in the pane (`LauncherModel.requestDone`); also "End it" on its question.
     var onDone: () -> Void = {}
     /// Restart pressed in the pane (`LauncherModel.requestRestart`); also "Restart" on its question.
@@ -1916,6 +1916,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         end()
     }
 
+    /// Ends the pane for another Mac's or device's Done (ADR 0045) with no question. A restored pane still attaching, with a peer in control, would
+    /// otherwise go down `endAfterAskingZmx` and ask on its card after the host had reported success.
+    func endForPeer() {
+        confirmingEnd = false
+        endedByUser = true
+        if clientEnded || !started || (runsInZmx && !isOnPeer && resuming && view.process.shellPid <= 0) { return conclude(nil, killSession: true) }
+        end()
+    }
+
     /// "No" on the card's question.
     func keepSession() {
         confirmingEnd = false
@@ -2213,7 +2222,7 @@ struct HeaderTab: View {
             RenameField(initial: tab.name ?? tab.focused.label, onDone: onRename)
         } else {
             SessionTab(session: tab.focused, name: tab.name, panes: tab.sessions.count, active: active, width: width,
-                       onTap: onTap, onClose: tab.close)
+                       onTap: onTap, onClose: { tab.close() })
         }
     }
 }

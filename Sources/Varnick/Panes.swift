@@ -380,8 +380,6 @@ final class ClaudeTab: ObservableObject {
     /// File tree on the right (⌘⇧F).
     @Published var showsFiles = false
     let files = FileTree()
-    /// When another Mac marked the tab done while it is open here; nil is not marked. A tab of another machine's has its host's.
-    var completedAt: Date?
     /// The conversations it has held, newest first (`TabHistory`); the model keeps it (`LauncherModel.noteHistories`) and it is saved with the tab.
     var history: [HeldConversation] = []
     /// Layout changed (divider moved); the model saves.
@@ -395,12 +393,10 @@ final class ClaudeTab: ObservableObject {
     /// A pane of the tab being dragged to another place in it.
     let paneDrag = PaneDrag()
 
-    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, completedAt: Date? = nil,
-         history: [HeldConversation] = []) {
+    init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, history: [HeldConversation] = []) {
         self.id = id
         self.root = root
         self.name = name
-        self.completedAt = completedAt
         self.history = history
         self.focused = focused ?? root.leaves[0]
         paneDrag.tab = self
@@ -454,7 +450,7 @@ final class ClaudeTab: ObservableObject {
 
     /// The tab as it is saved.
     var saved: SessionStore.SavedTab {
-        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil, done: completedAt,
+        SessionStore.SavedTab(id: id, layout: root.layout, focused: focused.id, name: name, showsFiles: showsFiles ? true : nil,
                               history: history.isEmpty ? nil : history, inControl: inControl && host != nil ? true : nil)
     }
 
@@ -483,11 +479,29 @@ final class ClaudeTab: ObservableObject {
         focus(new)
     }
 
-    /// The tab's ×: ends every pane, as ⌘W would one by one; the last one to go closes the tab.
-    func close() {
+    /// How the tab's panes are ended.
+    enum Closing {
+        /// The tab's ×, or Done on this Mac's own tab: as ⌘W would one by one, and another machine's host is told once (`onEnding`).
+        case byUser
+        /// The host of another machine's tab took a Done (ADR 0045) and closed the sessions itself: it is told nothing more.
+        case hostTookDone
+        /// Another Mac or device asked for a Done of this Mac's tab (ADR 0045): no question, even on a card.
+        case askedByPeer
+    }
+
+    /// Ends every pane; the last one to go closes the tab.
+    func close(_ how: Closing = .byUser) {
         onClosing()
-        onEnding()
-        for session in sessions { session.end() }
+        if how == .byUser { onEnding() }
+        for session in sessions {
+            switch how {
+            case .byUser: session.end()
+            case .hostTookDone:
+                session.endsWithTab = true
+                session.end()
+            case .askedByPeer: session.endForPeer()
+            }
+        }
     }
 
     /// Splits `target`'s pane without moving focus (a file pane stacking under the file column).

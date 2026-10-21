@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 32
+    public static let version = 33
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -120,8 +120,8 @@ public enum PeerOp: String, Codable, Sendable {
     /// second, until the session ends, Take over or Release detaches the reader, or the channel closes.
     /// The relay answers it from zmx alone.
     case watch
-    /// The tabs open on the receiving host, whole (protocol 24): each one's layout and name, who is in control of it, its mark and what
-    /// each of its panes shows, and for a web or app pane at a local address (25) the address it loads at through the host's port proxy. The relay answers it from the saved tabs and zmx alone. It replaces `sessions`, which listed Claude panes.
+    /// The tabs open on the receiving host, whole (protocol 24): each one's layout and name, who is in control of it and what
+    /// each of its panes shows (no mark from protocol 33: an open tab carries none), and for a web or app pane at a local address (25) the address it loads at through the host's port proxy. The relay answers it from the saved tabs and zmx alone. It replaces `sessions`, which listed Claude panes.
     case tabs
     /// The session rows the receiving Mac's history sync has read, for the Mac that searches them
     /// (`since` limits them to those changed), and the tabs that hold their conversations, all of them every time. The relay answers it
@@ -133,8 +133,7 @@ public enum PeerOp: String, Codable, Sendable {
     case pages
     /// The receiving Mac's Recent: its closed tabs, for the other Mac's own. The relay answers it from the saved tabs alone.
     case recent
-    /// Marks a tab done on its host (`PeerRequest.tab`), or with `mark` false takes the mark off, without ending anything. Who may ask and
-    /// who answers: ADR 0032, which carries on ADR 0028's rules by tab.
+    /// Done on a tab of the host (`PeerRequest.tab`), from any listed Mac or device: closes an open tab, marks a closed one (protocol 33, ADR 0045).
     case done
     /// Take over a tab (`PeerRequest.tab`): relabel every Claude and terminal pane of it for the asker, then detach their clients, in that
     /// order. The asker then attaches each pane, which finds the label naming it. The relay answers it from zmx and the host's tabs alone.
@@ -552,21 +551,18 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
     /// The pane's work links, as in `PeerSessionStatus`.
     public var work: PeerWork?
 
-    /// How many seconds ago the host marked the session's tab done, by the host's clock like `turnAge`. Nil: not marked. A device isn't sent it.
-    public var doneAge: Int?
-
     /// The tab the host keeps the session in (ADR 0032): its id, and its name (⌘⇧R) when it has one. A headless host's record is a tab
     /// under its own id unless a `resume` named another. Nil from a build before protocol 21.
     public var tab: String?
     public var tabName: String?
 
     private enum CodingKeys: String, CodingKey {
-        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work, doneAge, tab, tabName
+        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work, tab, tabName
     }
 
     public init(session: String, title: String, folder: String, agent: String? = nil, conversation: String? = nil, control: String? = nil,
                 controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil,
-                doneAge: Int? = nil, tab: String? = nil, tabName: String? = nil) {
+                tab: String? = nil, tabName: String? = nil) {
         self.session = session
         self.title = title
         self.folder = folder
@@ -578,7 +574,6 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
         self.work = work
-        self.doneAge = doneAge
         self.tab = tab
         self.tabName = tabName
     }
@@ -761,7 +756,7 @@ public struct PeerRequest: Codable, Sendable {
     public var start: PeerStart?
     /// A zmx session name, `varnick-<uuid>`: attach, end, screen and watch.
     public var session: String?
-    /// Done: the host's tab to mark, by its id (ADR 0032). Start: the tab to split a pane of (with `pane` and `axis`), which the asker must be
+    /// Done: the host's tab to close or mark, by its id (ADR 0032, 0045). Start: the tab to split a pane of (with `pane` and `axis`), which the asker must be
     /// in control of; nil makes a tab. Take, arrange, file, reopen and end (the whole tab, or with `pane` one pane of it): the tab acted on.
     public var tab: String?
     /// Start: the pane of `tab` to split. File: the file pane to read. A pane's id, a lowercase uuid.
@@ -774,7 +769,7 @@ public struct PeerRequest: Codable, Sendable {
     public var tabName: String?
     /// Arrange (protocol 26): whether the file tree shows beside the panes; nil leaves it as it is.
     public var showsFiles: Bool?
-    /// Done: false takes the mark off. Nil or true marks.
+    /// Done: false takes the mark off a closed tab. Nil or true closes an open tab and marks a closed one.
     public var mark: Bool?
     /// Attach: relabel control to `by` and detach every client first.
     public var take: Bool?

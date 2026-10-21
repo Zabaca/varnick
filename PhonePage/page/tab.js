@@ -8,9 +8,9 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmClose, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession } from "/session.js";
+import { confirmClose, confirmDone, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession, tell } from "/session.js";
 import {
-  choosePane, closeQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, closeQuestion, doneQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +45,11 @@ function setEnd(hidden) {
   $("end").hidden = hidden;
   $("redraw").hidden = true;
   $("restart").hidden = true;
+}
+
+/** Done is in the menu while the tab has a Claude pane, whether or not this phone controls the tab (`offersDone`). */
+function paintDone(t) {
+  $("done").hidden = !(t.data && offersDone(t.data));
 }
 
 /** What Restart acts on over the pane shown, or null when it isn't offered (session.js shows the button with the terminal). */
@@ -258,6 +263,7 @@ async function load(t) {
   const shown = before.find((pane) => pane.id === t.pane);
   t.data = result.tab;
   t.host = result.host || t.host;
+  paintDone(t);
   const now = choosePane(t.data, t.pane);
   const changed = first || !samePanes(before, t.data.panes) || offersAdd(t.data) !== t.add;
   if (changed) renderSwitcher(t);
@@ -297,6 +303,7 @@ function failed(t, error) {
   $("note-text").hidden = false;
   $("note-text").textContent = error;
   setEnd(true);
+  paintDone(t);
   header(t, "");
 }
 
@@ -306,10 +313,11 @@ function failed(t, error) {
  */
 export function openTab({ tab, pane, host, done, take = null }) {
   closeTab();
-  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0, closing: false };
+  const t = { id: tab, pane, host: host || "", done, take, data: null, session: false, closed: false, generation: 0, timer: null, add: false, open: null, openUntil: 0, closing: false, finishing: false };
   current = t;
   $("session").hidden = false;
   $("panes").hidden = true;
+  $("done").hidden = true;
   // Nothing of the session or tab shown before: its card, live screen and terminal are gone from view until a pane is chosen.
   for (const id of ["card", "live", "terminal-view", "note"]) $(id).hidden = true;
   setEnd(true);
@@ -331,6 +339,7 @@ export function closeTab() {
   $("panes").hidden = true;
   $("panes").replaceChildren();
   $("note").hidden = true;
+  $("done").hidden = true;
   hideFrame();
 }
 
@@ -349,9 +358,36 @@ async function endTab(t) {
   }
 }
 
+/**
+ * Done, from the menu: the host closes the whole tab, whoever controls it or started it, every pane ended (protocol 33, ADR 0045). It always asks first, in
+ * the page's own dialog. The host's refusal comes in the alert dialog, since the bar is too narrow for it, and leaves the tab as it was; after Done the page
+ * leaves the tab and Home says so.
+ */
+async function doneShown(t) {
+  if (t.finishing || !t.data || !offersDone(t.data)) return;
+  if (!(await confirmDone(doneQuestion(tabTitle(t.data), t.host))) || t.closed) return;
+  t.finishing = true;
+  $("done").disabled = true;
+  const sub = $("session-sub").textContent;
+  $("session-sub").textContent = "Marking done…";
+  const result = await postJSON("/api/done", { tab: t.id }, "the host didn't answer");
+  t.finishing = false;
+  $("done").disabled = false;
+  if (t.closed) return;
+  if (result.ok) {
+    const done = t.done;
+    closeTab();
+    return done(result.text);
+  }
+  $("session-sub").textContent = sub;
+  await tell(result.error);
+}
+
 // The controls are wired once. In the session view session.js answers them; over a note this does.
 $("back").addEventListener("click", () => { if (current && !current.session) current.done(null); });
 $("end").addEventListener("click", () => { if (current && !current.session && current.data) endTab(current); });
+// Done acts on the whole tab, so it answers over a session too.
+$("done").addEventListener("click", () => { if (current) doneShown(current); });
 $("note-take").addEventListener("click", async () => {
   const t = current;
   if (!t) return;

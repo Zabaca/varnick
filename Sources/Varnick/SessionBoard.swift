@@ -21,9 +21,11 @@ extension Turn {
     /// Claude is at work, or has agents, workflows or shells that are running and will start its next turn by themselves.
     var isRunning: Bool { self == .working || self == .background }
 
-    /// Done on a session in this turn asks first, board card and Claude pane alike: it is mid-turn, unless its
-    /// pane shows a card, which asks for itself.
-    static func asksBeforeDone(_ turn: Turn?, showingCard: Bool) -> Bool { turn?.isRunning == true && !showingCard }
+    /// Done on a session in this turn asks first, board card and Claude pane alike: it is mid-turn, unless its pane shows a card, which asks for
+    /// itself. A session on a paired Mac asks anyway: its host closes the tab (ADR 0045), so no card asks.
+    static func asksBeforeDone(_ turn: Turn?, showingCard: Bool, onPeer: Bool = false) -> Bool {
+        turn?.isRunning == true && (!showingCard || onPeer)
+    }
 
     /// When a turn began that a host said began `ageSeconds` ago in a reply that came at `reply`; counting
     /// from the reply keeps the two Macs' clocks out of it.
@@ -178,9 +180,9 @@ final class SessionBoard: ObservableObject {
         var lines: [Line]
         /// Marked done (the card is in Completed) or closed without Done (an ended card), whatever its sessions' turns were.
         var closed: Standing?
-        /// What the card says of the tab (Still open here, Done on this Mac only); a session's own note is its line's.
+        /// What the card says of the tab (Done on this Mac only, Marking done on …, Still open on …); a session's own note is its line's.
         var note: String?
-        /// A paired Mac's open tab that no tab here shows: opening it shows its card, and Done only marks it.
+        /// A paired Mac's open tab that no tab here shows: opening it shows its card, and Done has its host close it.
         var hasNoPane = false
 
         /// The session the card sits for: the most urgent, the first in layout order among equals.
@@ -200,9 +202,9 @@ final class SessionBoard: ObservableObject {
 
         var inRunningColumn: Bool { closed == nil && lead.isRunning }
 
-        /// Done on it asks first while any session in the tab is mid-turn (`Turn.asksBeforeDone`); one with no pane here only gets marked.
+        /// Done on it asks first while any session in the tab is mid-turn (`Turn.asksBeforeDone`).
         var asksBeforeDone: Bool {
-            closed == nil && !hasNoPane && lines.contains { Turn.asksBeforeDone($0.turn, showingCard: $0.note != nil) }
+            closed == nil && lines.contains { Turn.asksBeforeDone($0.turn, showingCard: $0.note != nil, onPeer: $0.foreign) }
         }
 
         var column: Column {
@@ -423,7 +425,7 @@ final class SessionBoard: ObservableObject {
             record.host.map { id in PeerManager.shared.peers.contains { $0.id == id } } ?? true
         }
         for record in model.ended where paired(record) && !next.contains(where: { $0.id == record.id }) {
-            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: model.reopening[record.id]?.text, model) { next.append(card) }
+            if let card = card(for: record, closed: .ended(at: record.lastUsed), note: model.hostAsk[record.id]?.text, model) { next.append(card) }
         }
         for record in model.completed where paired(record) {
             if let card = card(for: record, closed: .done(at: record.completedAt ?? record.lastUsed), note: model.completedNote(for: record), model) {
@@ -461,12 +463,10 @@ final class SessionBoard: ObservableObject {
         return moved(nil, in: next, .down)
     }
 
-    /// A tab here with a Claude pane. One marked done while open (by another Mac on a tab that runs here, or by the host of one that runs
-    /// there, ADR 0032) sits in Completed, and ↩ shows the tab and takes the mark off.
+    /// A tab here with a Claude pane. A Done on another machine's tab that waits for its host, or was refused, says so in the card's note.
     private func card(for tab: ClaudeTab, _ model: LauncherModel) -> Card? {
         let claude = tab.claudeSessions
         guard !claude.isEmpty else { return nil }
-        let marked = model.doneMark(of: tab)
         let titled = tab.focused.isClaude ? tab.focused : claude[0]
         return Card(id: tab.id,
                     title: tab.name ?? titled.label,
@@ -474,8 +474,7 @@ final class SessionBoard: ObservableObject {
                     hostName: titled.hostName,
                     folder: titled.record.folderName,
                     lines: claude.map(line(for:)),
-                    closed: marked.map { .done(at: $0) },
-                    note: marked == nil ? nil : "Still open here")
+                    note: model.hostAsk[tab.id]?.text)
     }
 
     private func line(for pane: ClaudeSession) -> Card.Line {
@@ -511,6 +510,7 @@ final class SessionBoard: ObservableObject {
                     hostName: tab.peer.name,
                     folder: (first.info.folder as NSString).lastPathComponent,
                     lines: lines,
+                    note: model.hostAsk[tab.id]?.text,
                     hasNoPane: true)
     }
 
@@ -613,8 +613,9 @@ final class SessionBoard: ObservableObject {
         if let selection { done(selection) }
     }
 
-    /// Done on a card closes every pane of its tab (`markDone`), asking first while a session works. A paired Mac's tab with no tab here is
-    /// only marked (`markPeerDone`), an ended card moves to Completed (`markEndedDone`), each without a question.
+    /// Done on a card closes every pane of its tab (`markDone`), asking first while a session works. A paired Mac's tab is closed by its host
+    /// (ADR 0045), with or without a tab here (`markPeerDone`), by the same question. An ended card moves to Completed (`markEndedDone`)
+    /// with none.
     func done(_ id: UUID) {
         guard let card = cards.first(where: { $0.id == id }), card.column != .completed else { return }
         selection = id
@@ -622,16 +623,12 @@ final class SessionBoard: ObservableObject {
             model?.markEndedDone(id)
             return
         }
-        if card.hasNoPane {
-            model?.markPeerDone(id)
-            return
-        }
         if card.asksBeforeDone, confirming != Question(id: id, kind: .done) {
             confirming = Question(id: id, kind: .done)
             return
         }
         confirming = nil
-        model?.markDone(id)
+        if card.hasNoPane { model?.markPeerDone(id) } else { model?.markDone(id) }
     }
 
     func restartSelected() {

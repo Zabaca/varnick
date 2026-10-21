@@ -456,7 +456,8 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   hour per device bound it. While a host has a push subscription, Varnick sets Claude Code's client-presence file so Claude Code skips
   its own Remote Control mobile pushes, and Varnick's decide alone.
 - **A listed device can do most of what a Mac peer can:** list sessions, start one in a project the host lists,
-  take over and type in a terminal. Not the search sync, upgrades or restarts. List only devices you control.
+  take over and type in a terminal, and mark any tab of the host Done, which closes every pane of it (terminals and dev servers
+  included), whoever controls it or started it. Not the search sync, upgrades or restarts. List only devices you control.
 
 **Known weakness: loopback mode.** The server listens either on a Unix socket in a folder only your account can
 enter (socket mode), or on `127.0.0.1:18444` (loopback mode). In loopback mode any process on the Mac, other

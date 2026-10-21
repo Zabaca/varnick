@@ -120,8 +120,14 @@
       <h1 id="session-title">Session</h1>
       <p id="session-sub"></p>
     </div>
-    <button id="redraw" type="button" aria-label="Redraw the screen" hidden>Redraw</button>
-    <button id="restart" type="button" aria-label="Restart the Claude session" hidden>Restart</button>
+    <div class="menu-wrap">
+      <button id="menu" type="button" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-list" hidden>☰</button>
+      <div id="menu-list" class="menu-list" role="menu" aria-label="Menu" hidden>
+        <button id="done" type="button" role="menuitem" hidden>Done</button>
+        <button id="redraw" type="button" role="menuitem" aria-label="Redraw the screen" hidden>Redraw</button>
+        <button id="restart" type="button" role="menuitem" aria-label="Restart the Claude session" hidden>Restart</button>
+      </div>
+    </div>
     <button id="end" type="button">End</button>
   </header>
 

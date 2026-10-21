@@ -2,7 +2,7 @@
 problem: phone-cant-mark-a-tab-done
 title: Done from any device or Mac closes the tab on its host, whoever controls it or started it
 summary: Accepted by the user on 2026-10-20 (relayed by the coordinator). It takes option 02's shape and makes Done global. Any of the user's devices or paired Macs can mark any tab Done. The host then closes the tab as its own Done does, so every pane ends, and the tab goes to Completed and Recent there and on every board. There is no control gate and no origin rule. A `done` request now closes an open tab instead of marking it, and devices may send it. A Mac's Done on another machine's tab becomes the same one request, replacing today's end-then-done that hands the tab back as "Still open here", and the mark on an open tab goes. On the phone the tab view's header bar shows the title, a menu button and End, and Done, Redraw and Restart move into the menu. Protocol 33, with every Mac and the headless host updated together.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -157,6 +157,6 @@ status: accepted
   - A pane in control on another machine that ends adds its ended card at once. Only a view's pane, or a card's, waits for Recent.
   - The page's Restart acts on the pane shown, and Redraw on the screen shown.
 - **Inferred, not tried:** the bar fits ←, a usable title, the menu button and End at 360 px.
-- **Open decisions, each with the recommendation first. None changes the choice:**
-  - **A Done that can't reach its host.** Recommended: nothing closes and the card says why, since the tab still runs there. Else, keep today's fallback: close the copy here and keep a mark on this Mac only, which would hide a tab that still runs.
-  - **Done on a tab with no Claude pane** (terminals or pages only). Recommended: not offered and refused by the host, as a Mac's Done needs a Claude pane today and the board lists only such tabs. Else, offer it on the phone for every tab.
+- **Decided by the user on 2026-10-20 (relayed by the coordinator when the build began), each taking the recommendation:**
+  - **A Done that can't reach its host:** it refuses and says why. Nothing closes and nothing is marked locally, since the tab still runs there: no "Done on this Mac only" for an open tab. An ended card's Done keeps its local fallback, as above.
+  - **Done on a tab with no Claude pane** (terminals or pages only): not offered, as on the Mac today, and refused by the host if asked.
