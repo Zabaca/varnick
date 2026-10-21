@@ -110,8 +110,10 @@ public enum PaneFolder {
         return earlier.map { folder.appendingPathComponent($0 + ".jsonl").path }
     }
 
-    /// A `turn_duration` entry or the stop file older than the turn's date by more than this isn't that turn's: the
-    /// `Stop` entries run together, and the turn file is written just before Claude Code writes the entry.
+    /// How far before the date it is held against a file or entry may be dated and still belong to that turn: the stop file
+    /// against the turn file's date, an API error or `turn_duration` entry against it too, and a notification against
+    /// the stop file's (`input.savedAt`). The `Stop` entries run together, and the turn file and the transcript's entries are
+    /// written within moments of each other.
     static let staleWindow: TimeInterval = 5
 
     /// The pane's turn and when it began, corrected from the transcript. Nil without a file or with an
@@ -165,8 +167,8 @@ public enum PaneFolder {
     }
 
     /// `background_tasks` is the session's tasks still running, each `{id, type, status, description, …}`: `shell` (a
-    /// Monitor too, 2.1.292), `subagent`, `teammate` (an agent started with a name; 2.1.295) and `workflow`, which the
-    /// transcript counts instead. The input's `session_id` must be `conversation`, the transcript's name.
+    /// Monitor too, 2.1.292), `subagent`, `teammate` (an agent started with a name; 2.1.295) and `workflow`. The input's
+    /// `session_id` must be `conversation`, the transcript's name.
     static func runningTasks(in data: Data, conversation: String) -> [RunningTask] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               json["session_id"] as? String == conversation,
