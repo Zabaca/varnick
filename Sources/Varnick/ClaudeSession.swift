@@ -1960,6 +1960,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// The clipboard image written to a file on the host (`~/.varnick/paste`, a week's kept) and its path pasted, which Claude Code
     /// attaches as an image, as cmux does for a terminal running ssh.
     private func pasteOnHost(_ board: NSPasteboard, host: String) {
+        // `record.host` is the peer's id; ssh needs its address.
+        guard let address = PeerManager.shared.peers.first(where: { $0.id == host })?.address else {
+            return showRefusal("Couldn't paste: \(hostName ?? host) isn't paired with this Mac")
+        }
         guard let png = board.data(forType: .png) ?? NSImage(pasteboard: board)?.tiffRepresentation
             .flatMap({ NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }) else {
             return showRefusal("Couldn't paste: the image on the clipboard couldn't be read")
@@ -1967,7 +1971,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let command = #"umask 077; d="$HOME/.varnick/paste"; mkdir -p "$d" && find "$d" -name '*.png' -mtime +7 -exec rm -f {} + ; "#
             + #"f="$d/\#(UUID().uuidString).png"; cat >"$f" && printf '%s' "$f""#
         Task { [weak self] in
-            let result = await SSHRunner.send(png, address: host, command: command)
+            let result = await SSHRunner.send(png, address: address, command: command)
             guard let self, !self.finished else { return }
             let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             guard result.status == 0, path.hasPrefix("/") else {
