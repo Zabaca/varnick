@@ -142,7 +142,7 @@ public enum TranscriptReader {
 
     /// The string, or the text blocks of a list (images left out). A slash command, which the
     /// transcript wraps in tags, reads `/name args`.
-    private static func promptText(_ message: Any?) -> String? {
+    private static func promptText(_ message: Any?, limit: Int = maxPrompt) -> String? {
         let content = (message as? [String: Any])?["content"]
         var text = ""
         if let string = content as? String {
@@ -155,18 +155,18 @@ public enum TranscriptReader {
             text = (name.hasPrefix("/") ? name : "/" + name) + " " + args
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : String(text.prefix(maxPrompt))
+        return text.isEmpty ? nil : String(text.prefix(limit))
     }
 
     /// The text blocks of an assistant entry; nil for a subagent's, for one Claude Code wrote itself (its model is
     /// `<synthetic>`: API errors and the like) and for one with no text, so the reply stays the last text Claude wrote.
-    private static func replyText(_ entry: [String: Any]?) -> String? {
+    private static func replyText(_ entry: [String: Any]?, limit: Int = maxReply) -> String? {
         guard let entry, entry["type"] as? String == "assistant", entry["isSidechain"] as? Bool != true,
               let message = entry["message"] as? [String: Any], message["model"] as? String != "<synthetic>",
               let blocks = message["content"] as? [[String: Any]] else { return nil }
         let text = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
             .replacingOccurrences(of: String(recordSeparator), with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : String(text.prefix(maxReply))
+        return text.isEmpty ? nil : String(text.prefix(limit))
     }
 
     private static func between(_ text: String, _ open: String, _ close: String) -> String? {
@@ -215,6 +215,73 @@ public enum TranscriptReader {
         let raw = Data(line[from ..< i])
         if !raw.contains(0x5C) { return String(decoding: raw, as: UTF8.self) }
         return (try? JSONSerialization.jsonObject(with: Data("\"".utf8) + raw + Data("\"".utf8), options: .fragmentsAllowed)) as? String
+    }
+}
+
+/// One exchange of a conversation as a reader sees it (`TranscriptReader.exchanges`): a typed prompt and everything Claude wrote before the next.
+public struct TranscriptExchange: Equatable, Sendable {
+    public enum Part: Equatable, Sendable {
+        /// One text block Claude wrote.
+        case claude(String)
+        /// A one-line note of an entry that is neither a typed prompt nor Claude's text: a task notification, a teammate's message, an interruption.
+        case marker(String)
+    }
+
+    /// From 1, in the order the index counts typed prompts.
+    public var number: Int
+    /// When the prompt was typed.
+    public var at: Date?
+    public var prompt: String
+    public var parts: [Part]
+
+    public init(number: Int, at: Date?, prompt: String, parts: [Part] = []) {
+        self.number = number
+        self.at = at
+        self.prompt = prompt
+        self.parts = parts
+    }
+}
+
+extension TranscriptReader {
+    /// A conversation as exchanges for a session to read: each typed prompt in full and every text Claude wrote before the next, in order. Tool
+    /// calls and output, thinking, sidechains and synthetic entries are left out; notifications and interruptions are one-line markers.
+    /// An exchange starts at a prompt by `read`'s rule, so the count matches the index.
+    public static func exchanges(_ data: Data) -> [TranscriptExchange] {
+        var found: [TranscriptExchange] = []
+        let dates = dateParser()
+        data.withUnsafeBytes { (all: UnsafeRawBufferPointer) in
+            forEachLine(in: all) { line in
+                // Most user lines are tool results: only those with an origin, or the interrupt's text, are parsed.
+                if has(line, "\"type\":\"user\""), has(line, "\"origin\"") || has(line, "[Request interrupted") {
+                    guard let json = object(line), json["type"] as? String == "user", json["isSidechain"] as? Bool != true else { return }
+                    let kind = (json["origin"] as? [String: Any])?["kind"] as? String
+                    if kind == "human" {
+                        guard let text = promptText(json["message"], limit: .max) else { return }
+                        found.append(TranscriptExchange(number: found.count + 1, at: (json["timestamp"] as? String).flatMap(dates.date(from:)), prompt: text))
+                    } else if !found.isEmpty, let marker = marker(of: json, kind: kind) {
+                        found[found.count - 1].parts.append(.marker(marker))
+                    }
+                } else if !found.isEmpty, has(line, "\"type\":\"assistant\""), has(line, "\"type\":\"text\""),
+                          let text = replyText(object(line), limit: .max) {
+                    found[found.count - 1].parts.append(.claude(text))
+                }
+            }
+        }
+        return found
+    }
+
+    /// The note an entry that is not a typed prompt leaves in a read; nil for the entries that leave none (tool results, Claude Code's context).
+    private static func marker(of entry: [String: Any], kind: String?) -> String? {
+        switch kind {
+        case "task-notification": return "[a background task reported]"
+        case "peer": return "[a message from a teammate]"
+        case "auto-continuation": return "[Claude continued by itself]"
+        case .some: return nil
+        case .none:
+            guard let blocks = (entry["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return nil }
+            let interrupted = blocks.contains { $0["type"] as? String == "text" && ($0["text"] as? String)?.hasPrefix(interruptMarker) == true }
+            return interrupted ? "[the user interrupted]" : nil
+        }
     }
 }
 

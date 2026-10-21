@@ -1,6 +1,7 @@
 import Accelerate
 import Foundation
 import SQLite3
+import VarnickPeer
 
 enum MatchKind { case keyword, semantic, both }
 
@@ -48,8 +49,14 @@ struct SessionFilter: Equatable {
     var folderNames: [String] = []
     /// A spoken request's: the sessions whose first prompt is before the window's end and whose last is after its start.
     var window: DateInterval?
+    /// Only this Mac's own sessions (a paired Mac's have a host). A session's `find` asks for it with "this Mac"; the prompt's words have no form for it.
+    var thisMacOnly = false
 
-    var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil }
+    var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil && !thisMacOnly }
+
+    /// Whether a project or a time chose the sessions, so when the words match none the most recently used fill in (`rankedSessions`). The
+    /// leading `#project` word of the prompt line is not that: it shows only what matched.
+    var choosesSessions: Bool { folder != nil || !folderNames.isEmpty || window != nil }
 }
 
 /// Local SQLite index of Chrome history, bookmarks and Claude sessions: FTS5 for keywords, an in-memory
@@ -71,6 +78,9 @@ final class FavoritesStore {
     private var matrix: [Float] = []
     private var matrixIDs: [Int64] = []
     private var matrixIsSession: [Bool] = []
+    /// Each row of the matrix's exchange position (`SessionExchanges.key`), or -1 for a vector that is not an exchange's: a page's, or a
+    /// session's old single one.
+    private var matrixPositions: [Int32] = []
     private var dataVersion: Int64 = -1
     /// The index's words (porter stems) and how many rows hold each, read when a typo is first looked up after a sync.
     private var vocabulary: [(term: [Unicode.Scalar], docs: Int)]?
@@ -115,6 +125,7 @@ final class FavoritesStore {
             sql += " AND f.host = ?"
             binds.append(host)
         }
+        if filter.thisMacOnly { sql += " AND f.host IS NULL" }
         if !filter.folderNames.isEmpty {
             // The last part of the folder's path, compared lowercased with a project's name (`ProjectIndex`).
             func escape(_ name: String) -> String {
@@ -185,6 +196,7 @@ final class FavoritesStore {
         matrix = []
         matrixIDs = []
         matrixIsSession = []
+        matrixPositions = []
         loadEmbeddings()
     }
 
@@ -221,7 +233,7 @@ final class FavoritesStore {
     }
 
     /// Prepares `sql`, binds `values` as text in order and then `limit` (none: all), and maps each row.
-    private func rows<T>(_ sql: String, _ values: [String], limit: Int?, _ row: (OpaquePointer?) -> T) -> [T] {
+    private func rows<T>(_ sql: String, _ values: [String], limit: Int? = nil, _ row: (OpaquePointer?) -> T) -> [T] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
@@ -280,6 +292,18 @@ final class FavoritesStore {
         return best
     }
 
+    /// For each of these session rows, the position (`SessionExchanges.groups`) and similarity of the exchange nearest the query; none for a row
+    /// with only its old single vector. The ranking above still keeps one entry per session.
+    func bestExchanges(_ query: [Float], rows: Set<Int64>) -> [Int64: (position: Int, similarity: Float)] {
+        guard !rows.isEmpty, let scores = cosines(query) else { return [:] }
+        var best: [Int64: (position: Int, similarity: Float)] = [:]
+        for i in scores.indices where matrixPositions[i] >= 0 && rows.contains(matrixIDs[i]) {
+            if let have = best[matrixIDs[i]], have.similarity >= scores[i] { continue }
+            best[matrixIDs[i]] = (Int(matrixPositions[i]), scores[i])
+        }
+        return best
+    }
+
     /// The query's cosine similarity to every row of the matrix; nil when there is none to compare to.
     private func cosines(_ query: [Float]) -> [Float]? {
         guard hasEmbeddings, query.count == dims else { return nil }
@@ -310,6 +334,52 @@ final class FavoritesStore {
         )
         if sqlite3_column_type(fetchStmt, 8) == SQLITE_TEXT { result.host = Self.text(fetchStmt, 8) }
         return result
+    }
+
+    /// The text an exchange was embedded from (its title and folder lines, then the prompts and replies), by the session's key and position.
+    func exchangeText(sessionKey: String, position: Int) -> String? {
+        rows("SELECT text FROM entries WHERE key = ?", [SessionExchanges.key(session: sessionKey, position: position)]) { Self.text($0, 0) }.first
+    }
+
+    /// The search row of a conversation, this Mac's or a paired Mac's. One row holds each conversation (`favorite_key` is unique).
+    func sessionRow(conversation id: String) -> SearchResult? {
+        // Claude Code writes ids lowercased; the key's own index is used, so only the id as given and lowercased are tried.
+        let found = rows("SELECT id FROM favorites WHERE source = '\(Self.sessionSource)' AND favorite_key IN (?, ?)",
+                         [Self.sessionKeyPrefix + id, Self.sessionKeyPrefix + id.lowercased()]) { sqlite3_column_int64($0, 0) }.first
+        return found.flatMap(fetch)
+    }
+
+    /// The row of a page or bookmark with exactly this address.
+    func pageRow(address: String) -> SearchResult? {
+        let found = rows("SELECT id FROM favorites WHERE source != '\(Self.sessionSource)' AND url = ?", [address]) { sqlite3_column_int64($0, 0) }.first
+        return found.flatMap(fetch)
+    }
+
+    /// What the index keeps of a session's typed text and when: its prompts and Claude's last reply after each (empty where none was kept), and
+    /// the unix seconds of its first and last prompt. Read from this Mac's copy in the row's folder, or the paired Mac's.
+    func sessionTexts(of row: SearchResult) -> (prompts: [String], replies: [String], first: Int64, last: Int64)? {
+        let sql: String, binds: [String]
+        if let host = row.host {
+            sql = "SELECT prompts, replies, first_prompt, last_prompt FROM peer_sessions WHERE peer_id = ? AND session_id = ?"
+            binds = [host, row.sessionID]
+        } else {
+            sql = "SELECT prompts, replies, first_prompt, last_prompt FROM sessions WHERE directory = ? AND session_id = ? ORDER BY modified DESC LIMIT 1"
+            binds = [row.url, row.sessionID]
+        }
+        let separator = String(TranscriptReader.recordSeparator)
+        return rows(sql, binds, limit: nil) { stmt in
+            let prompts = Self.text(stmt, 0)
+            let replies = sqlite3_column_type(stmt, 1) == SQLITE_TEXT ? Self.text(stmt, 1) : ""
+            return (prompts.isEmpty ? [] : prompts.components(separatedBy: separator),
+                    replies.isEmpty ? [] : replies.components(separatedBy: separator),
+                    sqlite3_column_int64(stmt, 2), sqlite3_column_int64(stmt, 3))
+        }.first
+    }
+
+    /// The agents some session was started as, on this Mac or a paired one, sorted.
+    func agentNames() -> [String] {
+        let names = rows("SELECT agent FROM sessions WHERE agent != '' UNION SELECT agent FROM peer_sessions WHERE agent != ''", [], limit: nil) { Self.text($0, 0) }
+        return Array(Set(names)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     /// The rows of this Mac's own sessions with these ids (a paired Mac's copy of one has a host).
@@ -425,6 +495,7 @@ final class FavoritesStore {
             matrix.append(contentsOf: UnsafeBufferPointer(start: floats, count: dims))
             matrixIDs.append(sqlite3_column_int64(stmt, 0))
             matrixIsSession.append(sqlite3_column_int(stmt, 2) != 0)
+            matrixPositions.append(-1)
         }
         loadExchangeEmbeddings()
     }
@@ -435,7 +506,7 @@ final class FavoritesStore {
         guard !embeddingModel.isEmpty else { return }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, """
-            SELECT f.id, e.embedding FROM entries e
+            SELECT f.id, e.embedding, e.key FROM entries e
             JOIN favorites f ON f.favorite_key = \(SessionExchanges.sessionKeySQL("e.key"))
             WHERE \(SessionExchanges.isExchangeKeySQL("e.key")) AND e.embed_model = ?
             """, -1, &stmt, nil) == SQLITE_OK else { return }
@@ -449,6 +520,8 @@ final class FavoritesStore {
             matrix.append(contentsOf: UnsafeBufferPointer(start: blob.bindMemory(to: Float.self, capacity: dims), count: dims))
             matrixIDs.append(sqlite3_column_int64(stmt, 0))
             matrixIsSession.append(true)
+            let key = Self.text(stmt, 2)
+            matrixPositions.append(key.firstIndex(of: Character(SessionExchanges.separator)).flatMap { Int32(key[key.index(after: $0)...]) } ?? -1)
         }
     }
 

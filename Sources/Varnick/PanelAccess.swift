@@ -120,6 +120,8 @@ final class PanelAccess {
     /// How long after a key the user pressed in the panel `show` is refused: they are typing there.
     nonisolated static let typingQuiet: Duration = .seconds(2)
     private var lastKey: ContinuousClock.Instant?
+    /// The address `find_open` last opened in the browser and when: asked again within a few seconds, it is not opened twice.
+    var lastFoundPage: (address: String, at: ContinuousClock.Instant)?
 
     /// The panel's key monitor says a key came in. Only the time is kept, and only for the user's: one `keys` posted (`PanelKeys`, told by the
     /// stamp it gave the event, which survives a re-post) is not.
@@ -244,7 +246,9 @@ final class PanelAccess {
     /// The tools that answer a session whose pane another machine controls, in a tab of this Mac: the two pane tools (option 04 of
     /// `panes-open-only-by-hand-at-a-mac`) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
     /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
-    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read"]
+    /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` adds a pane there, and refuses what would open on this Mac.
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
+                                                 FindMCP.find, FindMCP.sessionRead, FindMCP.open]
 
     /// In order: Varnick starting, the pane, then the tool.
     private func run(_ request: PanelRequest, arrived: ContinuousClock.Instant) async throws -> Answered {
@@ -259,6 +263,13 @@ final class PanelAccess {
             return Answered(text: text, action: kind)
         }
         if request.tool == "keys" { return try await keys(request.args, model, caller: caller, arrived: arrived) }
+        if FindMCP.names.contains(request.tool) {
+            let done = try await finding(request, model, caller: caller)
+            // A search or a read may have waited: the pane can have changed meanwhile. `find_open` checks right before it acts, so a refusal is never
+            // reported after it did.
+            if request.tool != FindMCP.open { _ = try callingPane(request.pane, in: model, allowingControlled: lifted) }
+            return done
+        }
         // A registered view's tools: the router has done everything but the view's own part.
         guard let (type, acts) = PanelViews.find(request.tool) else { throw PanelRefusal.unknownTool(request.tool) }
         let view = type.init(model: model)
@@ -373,13 +384,7 @@ final class PanelAccess {
             act = { model.run(command, clearingQuery: false, focusing: key) }
         }
         // The user's own state comes first: what shows over the view, then their typing.
-        if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
-        if model.askingRestart { throw PanelRefusal.bad("The Restart Varnick card is showing: ask the user to answer it first") }
-        if model.pendingSplit != nil { throw PanelRefusal.bad("The split picker is showing: ask the user to answer it first") }
-        if let list = model.strip.openList { throw PanelRefusal.bad("The \(list.name) is showing: ask the user to answer it first") }
-        if let lastKey, lastKey.duration(to: .now) < Self.typingQuiet {
-            throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds")
-        }
+        try refuseWhileBusy(model)
         if !visible, opensTab || model.showsTerminal {
             throw PanelRefusal.bad("The panel is hidden, and Varnick doesn't swap a terminal's tab under a hidden panel: ask the user to open the panel first")
         }
@@ -388,6 +393,18 @@ final class PanelAccess {
         model.sessionIsChangingView = false
         let showing = Self.showingBlock(of: panelText(model, caller: caller)) ?? "Shown."
         return (showing + (visible ? "" : "\nThe panel is hidden, so this is there when the user opens it."), kind)
+    }
+
+    /// Refuses a call that changes what the panel shows (`show`, `find_open`) while something the user is answering is over the view, or they are
+    /// typing in the panel: Settings, the Restart Varnick card, the split picker, the strip's list, then a key within `typingQuiet`.
+    func refuseWhileBusy(_ model: LauncherModel) throws {
+        if model.showingSettings { throw PanelRefusal.bad("Settings is showing: ask the user to close it first") }
+        if model.askingRestart { throw PanelRefusal.bad("The Restart Varnick card is showing: ask the user to answer it first") }
+        if model.pendingSplit != nil { throw PanelRefusal.bad("The split picker is showing: ask the user to answer it first") }
+        if let list = model.strip.openList { throw PanelRefusal.bad("The \(list.name) is showing: ask the user to answer it first") }
+        if let lastKey, lastKey.duration(to: .now) < Self.typingQuiet {
+            throw PanelRefusal.bad("The user pressed a key in the panel a moment ago and may be typing there: try again in a few seconds")
+        }
     }
 
     /// The "Showing:" line of `panel`'s text with the indented lines under it (a tab's panes), as `panel` gives them: not the line alone.

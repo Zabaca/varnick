@@ -21,3 +21,7 @@ Session search by meaning embeds each **Exchange** of a session, a prompt the us
 
 - A summary written by the text generator, folded into the session's one vector (option 03, rejected): worse than exchanges on short searches and level on descriptive ones, and it needs a language model run over every session, and again as one grows. Its one advantage, less bias toward long sessions, is what option 02 adds on top of this.
 - Averaging a session's best three exchanges instead of taking the best: measured worse, since it dilutes a short session's one matching exchange and gains nothing on long ones.
+
+## Amendment: the store remembers which exchange scored (2026-10-20)
+
+For a session's `find` (option 01 of `sessions-cant-search-sessions`) `FavoritesStore` keeps each exchange vector's position (the number after `#` in its key) beside its row id when it loads them, and `bestExchanges` says which exchange of a session scored best for a query. The ranking is unchanged: `semantic` and `semanticSessions` still keep one entry per session, by its best vector, before fusion, and nothing saved changes. A position counts the merged exchanges of `SessionExchanges.groups`, not typed prompts; `find` turns it into the number of the exchange's first prompt, which is what `session_read` takes.

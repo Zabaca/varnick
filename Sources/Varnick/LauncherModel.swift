@@ -356,7 +356,7 @@ final class LauncherModel: ObservableObject {
     /// Sessions listed under the prompt line.
     static let promptSessionsShown = 5
     /// How much of a message is matched against sessions, which is how much of a session the embedding reads.
-    private static let promptMatchLimit = 1000
+    nonisolated static let promptMatchLimit = 1000
 
     init(store: FavoritesStore, embedder: Embedder, localReranker: LocalReranker, textGenerator: TextGenerator,
          embeddingServer: ModelServerState, textGenerationServer: ModelServerState, claudeCode: ClaudeCodeState) {
@@ -954,19 +954,19 @@ final class LauncherModel: ObservableObject {
             let rows = filter.isEmpty ? [] : store.sessionRows(filter, limit: Self.promptSessionsShown, promoted: promoted)
             return setPromptResults(rows.compactMap { store.fetch($0) }, keepSelection: keepSelection)
         }
-        let keyword = store.keyword(message, limit: RelevanceSearch.candidateLimit, filter: filter)
-        func matches(_ semantic: [(id: Int64, score: Float)]) -> [SearchResult] {
-            search.fuse(keyword: keyword, semantic: semantic, limit: Self.promptSessionsShown,
-                        semanticOnlyFloor: RelevanceSearch.sessionSimilarityFloor, promoted: promoted)
+        // The same ranking a session's `find` and a spoken request use, staged: the keyword matches now, the meaning after the pause.
+        func matches(_ vector: [Float]?) -> [SearchResult] {
+            Array(search.rankedSessions(words: message, filter: filter, vector: vector, limit: Self.promptSessionsShown, fallsBack: false).rows
+                .prefix(Self.promptSessionsShown))
         }
-        setPromptResults(matches([]), keepSelection: keepSelection)
+        setPromptResults(matches(nil), keepSelection: keepSelection)
         guard embedder != nil else { return }
         semanticTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled, let self else { return }
             // A failure is quiet: the keyword matches stay, and nothing about the message is written anywhere.
             guard let (vec, _) = try? await self.embedQuery(message), !Task.isCancelled else { return }
-            self.setPromptResults(matches(self.store.semanticSessions(vec, limit: RelevanceSearch.candidateLimit, filter: filter)), keepSelection: true)
+            self.setPromptResults(matches(vec), keepSelection: true)
         }
     }
 
@@ -1162,7 +1162,10 @@ final class LauncherModel: ObservableObject {
             return
         }
         guard let r = selected else { return }
-        if r.isSession || r.isTab { return openMatch(r) }
+        if r.isSession || r.isTab {
+            openMatch(r)
+            return
+        }
         guard let url = URL(string: r.url) else { return }
         NSWorkspace.shared.open(url)
         if !pinned { onDismiss() }
@@ -1251,7 +1254,10 @@ final class LauncherModel: ObservableObject {
     /// is pending, completes the highlighted suggestion while its word is still being typed (unless the word
     /// already spells it), else starts the session.
     func submitPrompt() {
-        if let session = promptSession { return openMatch(session) }
+        if let session = promptSession {
+            openMatch(session)
+            return
+        }
         guard peerStarting == nil else { return }
         let shown = suggestions
         if let word = leadingWords.words.last, shown.indices.contains(suggestionSelection),
@@ -1923,50 +1929,67 @@ final class LauncherModel: ObservableObject {
     }
 
     /// ↩ on a match, a session or the row of its tab: the tab opens (`openTab`). A session no tab is known for is resumed in a new one-pane
-    /// tab, which holds it from then on.
-    private func openMatch(_ result: SearchResult) {
+    /// tab, which holds it from then on. Says what it did, for a session's `find_open` to report.
+    @discardableResult
+    func openMatch(_ result: SearchResult) -> FoundOpening {
         claudeError = nil
         if result.isTab {
             // The best match of the tab is the one to resume if the tab has gone.
-            if let tab = result.tab { openTab(tab, matching: bestMatch(of: result)) }
+            guard let tab = result.tab else { return .nothing }
+            return openTab(tab, matching: bestMatch(of: result))
         } else if let tab = result.tab {
-            openTab(tab, matching: result)
+            return openTab(tab, matching: result)
         } else {
-            resumeSession(result)
+            return resumeSession(result)
         }
     }
 
     /// The tab that holds a match: shown if it is open here, opened as a paired Mac's if it is open there, else reopened from Completed,
     /// Recent or the ended cards. One with no record left resumes the matching session alone, in a new tab.
-    private func openTab(_ ref: TabRef, matching result: SearchResult?) {
+    private func openTab(_ ref: TabRef, matching result: SearchResult?) -> FoundOpening {
         if let tab = tabs.first(where: { $0.matches(ref) }) {
             activate(tab)
             if let result, let pane = tab.claudeSessions.first(where: { $0.record.conversationID.lowercased() == result.sessionID.lowercased() }) {
                 tab.focus(pane)
             }
-            return
+            return .broughtUp
         }
-        if let host = ref.host, let open = peerListTabs.first(where: { $0.peer.id == host && $0.id == ref.id }) { return openPeerTab(open) }
+        if let host = ref.host, let open = peerListTabs.first(where: { $0.peer.id == host && $0.id == ref.id }) {
+            openPeerTab(open)
+            return .openedOnCards
+        }
         // An ended or Completed copy has the layout the tab closed with; a paired Mac's Recent entry has only what the host listed.
-        if completed.contains(where: { $0.matches(ref) }) { return openCompleted(ref.id) }
-        if ended.contains(where: { $0.matches(ref) }) { return openEnded(ref.id) }
-        if let closed = allRecent.first(where: { $0.matches(ref) }) { return openRecent(closed) }
-        if let result { resumeSession(result) }
+        if completed.contains(where: { $0.matches(ref) }) {
+            openCompleted(ref.id)
+            return .reopened
+        }
+        if ended.contains(where: { $0.matches(ref) }) {
+            openEnded(ref.id)
+            return .reopened
+        }
+        if let closed = allRecent.first(where: { $0.matches(ref) }) {
+            openRecent(closed)
+            return .reopened
+        }
+        if let result { return resumeSession(result) }
+        return .nothing
     }
 
     /// A session no tab opens: switches to the pane that has it, else resumes it in a new tab from a record made from the search row (its
     /// url is the folder). One on a paired Mac is resumed there.
-    private func resumeSession(_ result: SearchResult) {
+    private func resumeSession(_ result: SearchResult) -> FoundOpening {
         let id = result.sessionID
         for tab in tabs {
             if let pane = tab.sessions.first(where: { $0.isClaude && $0.record.conversationID == id }) {
                 activate(tab)
-                return tab.focus(pane)
+                tab.focus(pane)
+                return .broughtUp
             }
         }
         if let host = result.host {
-            return resumeOnPeer(conversation: id, on: host, folder: result.url, title: result.title,
-                                agent: store.agent(ofSession: id, host: host))
+            resumeOnPeer(conversation: id, on: host, folder: result.url, title: result.title,
+                         agent: store.agent(ofSession: id, host: host))
+            return .resumedOnPeer
         }
         var record = Self.newRecord(prompt: "", directory: result.url)
         record.title = result.title
@@ -1975,6 +1998,7 @@ final class LauncherModel: ObservableObject {
         // A run's conversation found in search keeps what a run has: its MCP server lists `notify` alone, and its permissions.
         applyRunFields(to: &record)
         resume(record)
+        return .resumed
     }
 
     /// ⌘⇧T: a tab with a plain shell, in the focused pane's folder (else the Claude folder).

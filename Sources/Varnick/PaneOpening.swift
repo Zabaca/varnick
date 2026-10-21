@@ -42,7 +42,7 @@ extension PanelAccess {
 
     /// The calling pane's tab and session, still a pane of this Mac in a tab a session may work in. The voice session's and a run's tab is hidden:
     /// a pane opened there would be out of sight. `before` is the tab it was in before a wait.
-    private static func callingTab(_ caller: UUID, _ model: LauncherModel, was before: ClaudeTab? = nil) throws -> (ClaudeTab, ClaudeSession) {
+    static func callingTab(_ caller: UUID, _ model: LauncherModel, was before: ClaudeTab? = nil) throws -> (ClaudeTab, ClaudeSession) {
         guard let (tab, session) = CallingPane.find(caller.uuidString, in: model).located, before == nil || before === tab else { throw PanelRefusal.noPane }
         if session.record.isVoice || session.record.isRun || tab.isHiddenRun {
             throw PanelRefusal.bad("This session's tab is hidden, so a pane opened beside it would be out of sight: panes are not opened from it")
@@ -52,7 +52,7 @@ extension PanelAccess {
 
     // MARK: pane_open
 
-    private func open(_ args: PanelArguments, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession, controller: String?) throws -> Answered {
+    func open(_ args: PanelArguments, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession, controller: String?) throws -> Answered {
         guard let kind = OpenedPaneKind(rawValue: (args["kind"] ?? "").trimmingCharacters(in: .whitespaces).lowercased()) else {
             throw PanelRefusal.bad("kind is one of: " + OpenedPaneKind.allCases.map(\.rawValue).joined(separator: ", "))
         }
@@ -184,8 +184,8 @@ extension LauncherModel {
     /// A pane a session opens beside its own: half of the caller's place, with focus left where it was (`ClaudeTab.add`, not `split`). It starts at
     /// once when the tab isn't on screen, else by its view after a turn's grace. With a `controller` a Claude or terminal pane is labelled for it and starts at once.
     func addPane(_ record: SessionRecord, app: CustomApp?, beside caller: ClaudeSession, in tab: ClaudeTab, axis: SplitAxis,
-                 controller: String?) -> ClaudeSession {
-        let session = makeSession(record, resuming: false, query: "")
+                 controller: String?, resuming: Bool = false) -> ClaudeSession {
+        let session = makeSession(record, resuming: resuming, query: "")
         session.customApp = app
         if session.runsInZmx { session.startedFor = controller }
         tab.add(session, beside: caller, axis)

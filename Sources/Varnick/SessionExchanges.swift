@@ -41,11 +41,20 @@ enum SessionExchanges {
     /// A reply a build didn't keep is missing, and empty here. Positions don't move as a session grows: only the last one or two
     /// change, since a short last exchange merges back into the one before until the next prompt arrives.
     static func texts(title: String, folder: String, prompts: [String], replies: [String]) -> [String] {
-        var groups: [[String]] = []
-        var open: [String] = [], openLength = 0
+        groups(prompts: prompts, replies: replies).map { group in
+            let parts = group.flatMap { [prompts[$0], $0 < replies.count ? replies[$0] : ""] }
+            return ([title, folder] + cut(parts.filter { !$0.isEmpty })).joined(separator: "\n")
+        }
+    }
+
+    /// The prompts (by index) each exchange holds, oldest first: a prompt with its reply, merged into the next while together they are shorter
+    /// than `shortLength`, the last merging back into the one before. Exchange `n` of the embedding keys is `groups[n]`.
+    static func groups(prompts: [String], replies: [String]) -> [[Int]] {
+        var groups: [[Int]] = []
+        var open: [Int] = [], openLength = 0
         for (i, prompt) in prompts.enumerated() {
             let reply = i < replies.count ? replies[i] : ""
-            open += [prompt, reply]
+            open.append(i)
             openLength += prompt.count + reply.count
             if openLength >= shortLength {
                 groups.append(open)
@@ -56,7 +65,7 @@ enum SessionExchanges {
         if !open.isEmpty {
             if groups.isEmpty { groups = [open] } else { groups[groups.count - 1] += open }
         }
-        return groups.map { ([title, folder] + cut($0.filter { !$0.isEmpty })).joined(separator: "\n") }
+        return groups
     }
 
     /// A session the sync lists, with its exchanges' texts.

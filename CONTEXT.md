@@ -10,11 +10,11 @@ Called Launchy until 2026-10. Older records keep that name; [ADR 0024](docs/adr/
 
 **History**:
 Pages visited in Chrome, kept in a local archive after Chrome drops them, and searched from the panel.
-A **Peer**'s History is searched with this Mac's, marked with its Mac when only that Mac visited the page.
+A **Peer**'s History is searched with this Mac's, marked with its Mac when only that Mac visited the page. A Claude **Session** in a Varnick pane can search it too, through **Panel access**'s `find`, which sends the rows to Anthropic with that session.
 _Avoid_: Favorite, browsing data, history of a tab (that is its **Tab history**)
 
 **Bookmark**:
-A page saved in Chrome's bookmarks, searched alongside **History** whether or not it was visited. Varnick follows Chrome, so a bookmark deleted there leaves search.
+A page saved in Chrome's bookmarks, searched alongside **History** whether or not it was visited. Varnick follows Chrome, so a bookmark deleted there leaves search. A Claude **Session** in a Varnick pane can find it through **Panel access**'s `find`.
 _Avoid_: Favorite, saved page
 
 **Search term**:
@@ -31,7 +31,7 @@ A page's own summary from its `<head>`, fetched once without cookies, so pages b
 ### Workspace
 
 **Session**:
-One Claude Code conversation: what `/clear` starts fresh and what `/resume` brings back. A pane can move from one session to another without closing, and the **Tab** keeps the ones it has held as its **Tab history**. Search finds sessions, since that is where the text is, and shows each under the tab that holds it. The process zmx keeps for a pane is a "zmx session", never just a session.
+One Claude Code conversation: what `/clear` starts fresh and what `/resume` brings back. A pane can move from one session to another without closing, and the **Tab** keeps the ones it has held as its **Tab history**. Search finds sessions, since that is where the text is, and shows each under the tab that holds it. A session in a Varnick pane can search, read and open other sessions through **Panel access** (`find`, `session_read`, `find_open`). The process zmx keeps for a pane is a "zmx session", never just a session.
 _Avoid_: Conversation, chat
 
 **Exchange**:
@@ -328,5 +328,5 @@ The setting (Settings › Claude, off by default) that gives the Claude **Sessio
 _Avoid_: Computer use, remote control
 
 **Panel access**:
-What gives the Claude **Session**s in Varnick's panes, with no switch (ADR 0031's amendment of 2026-10-17 says which sessions), tools to read what the panel shows, the **Session board**'s cards, the panes' terminal screens and the **Outline**'s bullets, to change what the panel shows, to edit the Outline without asking (each edit one undo step; an edit to the bullet being typed in goes into it as a key does, around the user's caret), and to press keys in the panel through its own key handling while it is up and the user is not typing in it, through Varnick's own model, with no permission. It also gives them `pane_open` and `pane_close`: opening a pane beside their own, and closing the ones they opened.
+What gives the Claude **Session**s in Varnick's panes, with no switch (ADR 0031's amendment of 2026-10-17 says which sessions), tools to read what the panel shows, the **Session board**'s cards, the panes' terminal screens and the **Outline**'s bullets, to change what the panel shows, to edit the Outline without asking (each edit one undo step; an edit to the bullet being typed in goes into it as a key does, around the user's caret), and to press keys in the panel through its own key handling while it is up and the user is not typing in it, through Varnick's own model, with no permission. It also gives them `pane_open` and `pane_close`: opening a pane beside their own, and closing the ones they opened. And `find`, `session_read` and `find_open` (option 01 of `sessions-cant-search-sessions`, ADR 0031's amendment of 2026-10-20): searching the sessions, **History** and **Bookmark**s as the panel's search does, reading a session's prompts and Claude's text (never tool output), and opening what they find as Return does, which sends what they return to Anthropic with the session.
 _Avoid_: Screen access (any app's window, through Accessibility), API, automation (that is the **Automation**)

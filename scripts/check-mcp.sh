@@ -106,6 +106,37 @@ else:
     if schema.get("required"):
         fail("keys requires %s: text, keys or both are enough" % schema.get("required"))
 
+# The find tools (option 01 of sessions-cant-search-sessions): in Panel access's set, right after panel, show and keys, and in no other set. NEVER call one
+# here: with Varnick running, find and session_read would send the user's sessions and history to this process and find_open would open a real tab or page.
+# Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
+find_tools = ["find", "session_read", "find_open"]
+if only_panel[:6] != ["panel", "show", "keys"] + find_tools:
+    fail("--panel lists %s first, not panel, show, keys and the find tools" % only_panel[:6])
+for arguments in ([], ["--screen"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"]):
+    if set(listed(arguments)) & set(find_tools):
+        fail("%s lists a find tool" % arguments)
+found = {t["name"]: t for t in listed(["--panel"], full=True)}
+if all(name in found for name in find_tools):
+    find_schema = found["find"]["inputSchema"]
+    find_properties = find_schema.get("properties", {})
+    if find_schema.get("required"):
+        fail("find requires %s: every argument is optional" % find_schema.get("required"))
+    if set(find_properties) != {"query", "kinds", "project", "mac", "agent", "from", "to", "limit", "pages"}:
+        fail("find takes %s" % sorted(find_properties))
+    if find_properties.get("kinds", {}).get("enum") != ["sessions", "pages", "both"]:
+        fail("find's kinds is %s, not sessions, pages or both" % find_properties.get("kinds"))
+    for name in ("limit", "pages"):
+        if find_properties.get(name, {}).get("type") != "integer":
+            fail("find's %s is %s, not an integer" % (name, find_properties.get(name)))
+    read_schema = found["session_read"]["inputSchema"]
+    if read_schema.get("required") != ["conversation"] or set(read_schema.get("properties", {})) != {"conversation", "around", "after", "last", "exchange", "offset"}:
+        fail("session_read is %s: a required conversation, and around, after, last, exchange and offset" % read_schema)
+    open_schema = found["find_open"]["inputSchema"]
+    if set(open_schema.get("properties", {})) != {"conversation", "address", "place"} or open_schema["properties"]["place"].get("enum") != ["beside", "below"]:
+        fail("find_open is %s: conversation, address and place (beside or below)" % open_schema)
+else:
+    fail("--panel lists %s, not the find tools" % sorted(found))
+
 # The notify tool (option 04 of phone-page-is-only-a-browser-tab): its own set, in every Claude pane. Named alone it lists notify alone; named
 # with the others it comes last; with none named the server still lists the screen tools alone.
 only_notify, screen_notify, all_three = listed(["--notify"]), listed(["--screen", "--notify"]), listed(["--screen", "--panel", "--notify"])
@@ -355,7 +386,8 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
                         (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list"),
                         ([], "pane_open"), ([], "pane_close"), (["--panel"], "pane_open"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
-                        (["--search"], "pane_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify")):
+                        (["--search"], "pane_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
+                        ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))

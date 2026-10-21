@@ -18,6 +18,21 @@ struct PanelRequest: Codable {
 /// A call's arguments as text, whatever the model sent: a number or a boolean as its text, anything else as JSON. Each tool reads its own.
 typealias PanelArguments = [String: String]
 
+extension Dictionary where Key == String, Value == String {
+    /// The argument's text, trimmed; nil when it is missing or blank.
+    func text(_ key: String) -> String? {
+        let value = (self[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// Refuses an argument the tool does not take.
+    func allowOnly(_ known: Set<String>) throws {
+        if let extra = keys.sorted().first(where: { !known.contains($0) }) {
+            throw PanelRefusal.bad("\(extra) is not an argument: the arguments are " + known.sorted().joined(separator: ", "))
+        }
+    }
+}
+
 /// Just the version of a panel request, read before the rest so a server from another launch is told to restart.
 struct PanelRequestHead: Decodable {
     var panel: Int?
@@ -41,7 +56,7 @@ enum PanelMCP {
     /// The tools of the set, as `tools/list` gives them: `panel`, then each registered view's, built from the views' own static specs so a
     /// view joins by adopting the protocol (`PanelViews`) with no change here.
     static var tools: [[String: Any]] {
-        [panel, show, keys] + PanelViews.all.flatMap { view in
+        [panel, show, keys] + FindMCP.tools + PanelViews.all.flatMap { view in
             var list = [tool("\(view.name)_read", view.readSpec)]
             if !view.actionSpecs.isEmpty { list.append(actTool(view.name, view.actionSpecs)) }
             return list

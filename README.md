@@ -86,7 +86,9 @@ Outline's bullets and notes (which are otherwise kept on this Mac, and shown on 
 board, the Outline or a pane. They can also edit your Outline without asking: each edit is one ⌘Z step, and the bullet
 you are typing in goes in as a typed change, around your caret. They can press keys in the panel while it is open and you are not typing in
 it, but never the ones that end, mark done or restart a session, start one, quit or paste. They can also open a pane beside their own and close
-the ones they opened. What they read goes to Anthropic with the session. It needs no permission.
+the ones they opened. They can search your Claude sessions, browsing history and bookmarks as the panel does, read another session's prompts and
+Claude's replies (never tool output), and open what they find as Return does. What they read, history addresses included, goes to Anthropic
+with the session. It needs no permission.
 
 Everything Varnick reads, records and sends, and what it lets others do, is in
 [Privacy and security](docs/privacy-and-security.md).

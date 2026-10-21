@@ -4,7 +4,7 @@ description: The user finds past Claude sessions by typing in the panel, where e
 impact: When the user asks a session to find, read or pick up an earlier session ("the one where we fixed the relay"), the session can only guess at folders and grep raw transcripts on this Mac with its own file tools, without the index, the meaning search, the paired Macs' sessions or the tabs' state that the panel uses. It can't hand back what it found or open it. The user goes back to the panel and does the search by hand, then tells the session what he found.
 severity: mid
 evidence: The user's words of 2026-10-20, relayed by the coordinator (below). Code read at main bddf4ce. The voice session's search tool is option 09 of `listening-never-answers`; Panel access is `sessions-cant-read-or-drive-varnick` and ADR 0031 with its amendments of 2026-10-17; session search is `sessions-not-searchable`, `session-search-sees-only-the-start`, `search-names-sessions-differently` and `launcher-defaults-to-search`.
-status: open
+status: closed
 ---
 
 ## What the user asked (2026-10-20)

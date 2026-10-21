@@ -412,7 +412,7 @@ public struct VoiceSearchArguments: Equatable {
     }
 
     /// A date alone is the start of that day in `zone`; a time with an offset is as written.
-    private static func date(_ text: String, zone: TimeZone = .current) -> Date? {
+    public static func date(_ text: String, zone: TimeZone = .current) -> Date? {
         let full = ISO8601DateFormatter()
         full.formatOptions = [.withInternetDateTime]
         if let date = full.date(from: text) { return date }
