@@ -19,10 +19,10 @@ Everything can be done from the keyboard (Keys, below):
 - ⌘] and ⌘[ zoom in and out.
 - ⌘↩ completes a bullet, and ⇧↩ opens its note.
 - ⌘F filters.
-- ⇧↑ and ⇧↓ (and ⇧-click on another bullet's text, added 2026-10-20) select whole bullets, for ⇥, ⇧⇥, the move keys, ⌫, ⌘↩, ⌘C, ⌘X and ⌥⌘C to act on together.
+- ⇧↑ and ⇧↓, and ⇧-click on another bullet's text, select whole bullets, for ⇥, ⇧⇥, the move keys, ⌫, ⌘↩, ⌘C, ⌘X and ⌥⌘C to act on together.
 - ⌘Z and ⌘⇧Z undo and redo.
 
-With the mouse, clicking a dot zooms into its bullet, a breadcrumb zooms out to it, and a tag filters to it.
+With the mouse, clicking a dot zooms into its bullet, a breadcrumb zooms out to it, and a tag filters to it. ⇧-clicking another bullet's text selects the bullets between (Selection).
 
 The tree is saved in `outline.json` in Varnick's support folder, on this Mac only, half a second after each change, atomically. It is stored as bullets and placements:
 - A bullet's text, note and completion are kept once.
@@ -64,7 +64,7 @@ The rows are SwiftUI. Each row's text and note are edited in a small AppKit text
 16. As the user, I want a file Varnick can't read left alone and shown to me, so that I can repair it instead of losing my outline.
 17. As the user, I want my outline to stay on this Mac, so that private notes go nowhere.
 18. As the user, I want ⌘Z to undo any change, a delete or a move included, so that a slip costs nothing.
-19. As the user, I want ⇧↑ and ⇧↓ to select several whole bullets, so that I can act on a group the way I act on one.
+19. As the user, I want ⇧↑ and ⇧↓, or a ⇧-click on another bullet, to select several whole bullets, so that I can act on a group the way I act on one.
 20. As the user, I want ⇥, ⇧⇥ and the move keys to act on every selected bullet, and ⌫ and ⌘↩ to delete or complete them all, each undone by one ⌘Z, so that reorganising a list takes one key, not one per bullet.
 21. As the user, I want ⌘C and ⌘X to copy and cut selected bullets as indented text, and an indented list I paste to keep its nesting, so that lists move whole between the outline and other apps.
 22. As the user, I want ⌥⌘C and ⌥⌘V to mirror several bullets at once, so that a group can live in a second list too.
@@ -320,11 +320,12 @@ The user's decision of 2026-10-11 (the last section). Whole bullets are selected
 - **Extending and shrinking.** One end stays where the selection started: the fixed end. The other moves.
   - Each further ⇧↑ or ⇧↓ moves that end by one bullet, over the siblings that show. Away from the fixed end it adds one; back toward it, it drops one; past it, the selection grows on the other side.
   - **Climbing to the parent.** When no sibling shows beyond the moving end, the next press that way selects the parent instead: alone, with everything nested under it, and as the new fixed end. The opposite key doesn't climb back down; esc starts again.
+  - **⇧-click** on another bullet's text moves the moving end to it in one step, by the rules in "Added later (2026-10-20)" below.
   - At the top level of the zoom, or of Home, it stops and the key does nothing. The title and the top bullet are never selected.
   - The moving end is scrolled into sight.
 - **How it looks.** Each selected bullet and the rows nested under it have the fill a selected search row has, from the bullet's dot to the right edge, so a selection reads as one block. No caret shows: no text view has the keyboard while bullets are selected, so no input method composes either.
 - **Keys on a selection.** The outline takes every key but Varnick's shortcuts, which act as always (⌘⇧Y, ⌘,, ⌘⇧B, the tab keys, the font keys). The End session, Mark session done and Restart session keys are taken and do nothing, as always.
-  - ⇧↑ and ⇧↓ extend or shrink it.
+  - ⇧↑ and ⇧↓, and ⇧-click on a bullet's text, extend or shrink it.
   - ⇥ nests the run, in order, as the last bullets under the sibling that shows above its first bullet, and opens that sibling. At the first sibling nothing happens. If any bullet would go inside itself (only a mirror can), none moves and the header says so.
   - ⇧⇥ makes the run the next siblings of its parent, in order, right after it. The siblings after the run stay where they were. At the top level of the zoom nothing happens.
   - ⌘⇧↑ and ⌘⇧↓ move the run as one block, in order, past the nearest sibling that shows beyond it. Hidden siblings between selected bullets stay behind. At the first or last sibling nothing happens.
@@ -337,7 +338,7 @@ The user's decision of 2026-10-11 (the last section). Whole bullets are selected
   - ↑ and ← end it with the caret at the start of the first selected bullet's text, and ↓ and → at the end of the last one's.
   - ⌘F, ⌘[ and ⌘⇧C end it, then do what they do.
 - **Typing while bullets are selected** beeps and changes nothing, and the selection stays. So does every other outline key (↩, ⇧↩, ⌘↑, ⌘↓, ⌘], ⌘A). Bullets selected are not text: a typed letter neither replaces them nor goes into one of them.
-- **Clicks** end the selection first, then do what they do: in a bullet's text the caret goes there, a dot zooms, a triangle collapses, a tag filters, and the header's controls act.
+- **Clicks** end the selection first, then do what they do: in a bullet's text the caret goes there (with ⇧ held, the selection is extended instead, "Added later (2026-10-20)" below), a dot zooms, a triangle collapses, a tag filters, and the header's controls act.
 - **It also ends** when the outline closes, Settings opens over it, the panel hides, or a selected bullet stops showing for any other reason (an undo that can't bring it back, an edit made elsewhere). The caret is then where esc would put it, or, with that bullet gone, where the caret goes back to now. A selection is never saved.
 - **Zoom.** A selection is inside the zoom. Zooming in or out ends it.
 - **Filter.** Only bullets that show can be selected. Under a filter, the selected bullets stay in view through the selection's edits until the filter changes, as the caret's bullet does. ⌘F, or a click in the field, ends the selection.
@@ -501,5 +502,5 @@ The user asked for shift-click to select a range: "i can easily select multiple 
 
 - **The anchor** is the fixed end of the bullets already selected, or else the bullet whose text has the caret. With neither, ⇧-click is a plain click.
 - **Within the anchor's own text** with nothing selected, ⇧-click selects text as macOS does, as ⇧↑ and ⇧↓ do away from the edges of a bullet. With bullets selected, ⇧-click in the fixed end's text shrinks the selection to that bullet.
-- **The run** is the siblings that show between the anchor and the clicked bullet. At different levels each end goes up to its ancestor under the nearest parent they share, and the anchor's becomes the fixed end, as climbing does. A bullet clicked above the anchor, or nested under it, selects that one bullet alone.
-- A plain click ends the selection as before. ⇧-click on a dot (which zooms) and on the triangle does what a click does.
+- **The run** is the siblings that show between the anchor and the clicked bullet. At different levels each end goes up to its ancestor under the nearest parent they share, and the anchor's becomes the fixed end, as climbing does. A bullet the anchor is nested under (an ancestor), or one nested under the anchor, selects that one bullet alone; a sibling above the anchor gives a range upward.
+- A plain click ends the selection as before. ⇧-click on a dot (which zooms), on the triangle, or on a tag (which filters) does what a click does. While an input method composes, ⇧-click is a plain click.

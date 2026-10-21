@@ -587,21 +587,27 @@ final class OutlineTextView: NSTextView {
     /// The window makes a view first responder before it sees the mouse-down, so a click on a tag here is refused it: no caret moves in.
     override var acceptsFirstResponder: Bool {
         if let event = NSApp.currentEvent, event.type == .leftMouseDown, event.window === window,
-           tag(at: convert(event.locationInWindow, from: nil)) != nil || shiftSelects(event) { return false }
+           tag(at: convert(event.locationInWindow, from: nil)) != nil || shiftSelection(for: event) != nil { return false }
         return super.acceptsFirstResponder
     }
 
-    /// A ⇧-click in another bullet's text selects the bullets between (`Outline.shiftSelection`); in the bullet with the caret it selects text.
-    private func shiftSelects(_ event: NSEvent) -> Bool {
-        kind == .row && event.modifierFlags.intersection(KeyCombo.relevant) == .shift && outline?.shiftSelection(to: rowPath) != nil
+    /// What a ⇧-click in another bullet's text selects (`Outline.shiftSelection`), worked out once for the event, which both
+    /// `acceptsFirstResponder` and `mouseDown` ask about.
+    private func shiftSelection(for event: NSEvent) -> OutlineSelection? {
+        guard kind == .row, event.modifierFlags.intersection(KeyCombo.relevant) == .shift else { return nil }
+        if let cached = shiftCache, cached.stamp == event.timestamp { return cached.selection }
+        let selection = outline?.shiftSelection(to: rowPath)
+        shiftCache = (event.timestamp, selection)
+        return selection
     }
+    private var shiftCache: (stamp: TimeInterval, selection: OutlineSelection?)?
 
     /// A click on a tag filters by it, and places no caret.
     override func mouseDown(with event: NSEvent) {
         if let tag = tag(at: convert(event.locationInWindow, from: nil)) {
             outline?.toggleTag(tag)
-        } else if shiftSelects(event), outline?.shiftClick(to: rowPath) == true {
-            return
+        } else if let selection = shiftSelection(for: event) {
+            outline?.shiftClick(selection)
         } else {
             super.mouseDown(with: event)
         }

@@ -484,31 +484,29 @@ struct OutlineTree: Codable, Equatable {
         let siblings = rows.filter { $0.parent == parent }
         guard let at = siblings.firstIndex(of: selection.moving) else { return nil }
         let next = at + step
-        if siblings.indices.contains(next) {
-            guard let fixed = siblings.firstIndex(of: selection.fixed) else { return nil }
-            return OutlineSelection(run: Array(siblings[min(fixed, next)...max(fixed, next)]), fixed: selection.fixed, moving: siblings[next])
-        }
+        if siblings.indices.contains(next) { return run(from: selection.fixed, to: siblings[next], among: rows) }
         return rows.contains(parent) ? OutlineSelection(run: [parent], fixed: parent, moving: parent) : nil
     }
 
-    /// ⇧-click: the bullets from `anchor` through `target`, as ⇧↑ and ⇧↓ would leave them. The run is the siblings that show between the two,
-    /// under the nearest parent they share. Where they are at different levels, each end goes up to its ancestor under that parent (the way
-    /// ⇧↑ at the edge selects the parent), and the anchor's becomes the fixed end. A target that is the anchor, above it or nested under it
-    /// selects that one bullet alone, as the keys do on reaching the fixed end. Nil when either is not a row that shows.
+    /// The sibling rows that show from `fixed` through `moving`, which share a parent; nil when either does not show.
+    private func run(from fixed: OutlinePath, to moving: OutlinePath, among rows: [OutlinePath]) -> OutlineSelection? {
+        let siblings = rows.filter { $0.parent == moving.parent }
+        guard let f = siblings.firstIndex(of: fixed), let m = siblings.firstIndex(of: moving) else { return nil }
+        return OutlineSelection(run: Array(siblings[min(f, m)...max(f, m)]), fixed: fixed, moving: moving)
+    }
+
+    /// ⇧-click (option 01, "Added later (2026-10-20)"): the siblings that show from `anchor` to `target`, each end lifted to its ancestor under their
+    /// shared parent. A target the anchor is nested under, or that is nested under the anchor, selects alone. Nil unless both rows show.
     func selecting(through target: OutlinePath, from anchor: OutlinePath, scope: OutlineScope = OutlineScope()) -> OutlineSelection? {
         let rows = visibleRows(scope).map(\.path)
         guard rows.contains(anchor), rows.contains(target) else { return nil }
-        let a = anchor.placements, t = target.placements
-        var shared = 0
-        while shared < min(a.count, t.count), a[shared] == t[shared] { shared += 1 }
-        if shared == t.count || shared == a.count {
-            let alone = shared == t.count ? target : anchor
+        let common = zip(anchor.placements, target.placements).prefix { $0 == $1 }.count
+        if common == target.placements.count || common == anchor.placements.count {
+            let alone = common == target.placements.count ? target : anchor
             return OutlineSelection(run: [alone], fixed: alone, moving: alone)
         }
-        let from = OutlinePath(placements: Array(a[0...shared])), to = OutlinePath(placements: Array(t[0...shared]))
-        let siblings = rows.filter { $0.parent == from.parent }
-        guard let f = siblings.firstIndex(of: from), let m = siblings.firstIndex(of: to) else { return nil }
-        return OutlineSelection(run: Array(siblings[min(f, m)...max(f, m)]), fixed: from, moving: to)
+        let fixed = OutlinePath(placements: Array(anchor.placements[...common])), moving = OutlinePath(placements: Array(target.placements[...common]))
+        return run(from: fixed, to: moving, among: rows)
     }
 
     func note(at path: OutlinePath) -> String? { locate(path).flatMap { bullets[$0.bullet]?.note } }
