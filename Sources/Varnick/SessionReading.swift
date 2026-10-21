@@ -16,6 +16,8 @@ enum SessionReading {
         case around(Int)
         case after(Int)
         case last(Int)
+        /// One exchange from a character of its text on: the rest of one too long for a call.
+        case within(Int, offset: Int)
     }
 
     struct Page: Equatable {
@@ -23,43 +25,53 @@ enum SessionReading {
         var text: String
         /// The numbers shown; nil when none was.
         var shown: ClosedRange<Int>?
-        var total: Int
         /// The exchange to continue after, when some are left.
         var next: Int?
-        /// Whether one exchange was cut to fit the call.
-        var cutExchange = false
+        /// When one exchange was longer than a call: it and the character to continue it from.
+        var resume: Resume?
+    }
+
+    struct Resume: Equatable {
+        var exchange: Int
+        var offset: Int
     }
 
     static func page(_ exchanges: [TranscriptExchange], start: Start, limit: Int = pageLimit, zone: TimeZone = .current) -> Page {
         let total = exchanges.count
         let first: Int
+        var skipped = 0
         switch start {
         case .first: first = 0
         case .around(let number): first = max(0, number - 1 - contextBefore)
         case .after(let number): first = max(0, number)
         case .last(let count): first = max(0, total - count)
+        case .within(let number, let offset): (first, skipped) = (max(0, number - 1), offset)
         }
         guard first < total else {
             return Page(text: total == 0 ? "The conversation has no exchanges." : "Nothing after exchange \(first): the conversation has \(total) exchanges.",
-                        shown: nil, total: total, next: nil)
+                        shown: nil, next: nil)
         }
-        var blocks: [String] = [], used = 0, last = first, cutExchange = false
+        var blocks: [String] = [], used = 0, last = first, resume: Resume?
         for index in first..<total {
             var block = render(exchanges[index], zone: zone)
+            if index == first, skipped > 0 {
+                block = "[continued from character \(skipped)]\n" + String(block.dropFirst(skipped))
+            }
             if used + block.count > limit {
                 guard blocks.isEmpty else { break }
-                // One exchange alone is more than a call holds: its start, and the rest left out.
-                block = String(block.prefix(limit)) + "\n[the rest of this exchange is left out to fit the call]"
-                cutExchange = true
+                // One exchange alone is more than a call holds: its start now, and a call that continues it.
+                let taken = limit - (skipped > 0 ? block.prefix { $0 != "\n" }.count + 1 : 0)
+                block = String(block.prefix(limit))
+                resume = Resume(exchange: exchanges[index].number, offset: skipped + taken)
             }
             blocks.append(block)
             used += block.count
             last = index
         }
         let numbers = exchanges[first].number...exchanges[last].number
-        let head = "Exchanges \(numbers.lowerBound) to \(numbers.upperBound) of \(total)."
-        return Page(text: ([head] + blocks).joined(separator: "\n\n"), shown: numbers, total: total,
-                    next: last + 1 < total ? exchanges[last].number : nil, cutExchange: cutExchange)
+        let head = "Exchanges \(numbers.lowerBound) to \(numbers.upperBound) of \(total)." + (resume == nil ? "" : " The last is cut here to fit the call.")
+        return Page(text: ([head] + blocks).joined(separator: "\n\n"), shown: numbers,
+                    next: resume == nil && last + 1 < total ? exchanges[last].number : nil, resume: resume)
     }
 
     /// A paired Mac's session as exchanges: the prompts it sent, each with Claude's last reply after it (none where it kept none).

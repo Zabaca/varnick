@@ -53,6 +53,10 @@ struct SessionFilter: Equatable {
     var thisMacOnly = false
 
     var isEmpty: Bool { folder == nil && host == nil && agent == nil && folderNames.isEmpty && window == nil && !thisMacOnly }
+
+    /// Whether a project or a time chose the sessions, so the words only rank them (no similarity floor, and the most recently used fill in when
+    /// the words match none). The leading `#project` word of the prompt line is not that: it keeps the floor.
+    var choosesSessions: Bool { folder != nil || !folderNames.isEmpty || window != nil }
 }
 
 /// Local SQLite index of Chrome history, bookmarks and Claude sessions: FTS5 for keywords, an in-memory
@@ -229,7 +233,7 @@ final class FavoritesStore {
     }
 
     /// Prepares `sql`, binds `values` as text in order and then `limit` (none: all), and maps each row.
-    private func rows<T>(_ sql: String, _ values: [String], limit: Int?, _ row: (OpaquePointer?) -> T) -> [T] {
+    private func rows<T>(_ sql: String, _ values: [String], limit: Int? = nil, _ row: (OpaquePointer?) -> T) -> [T] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
@@ -288,9 +292,8 @@ final class FavoritesStore {
         return best
     }
 
-    /// For each of these session rows, the position of the exchange whose vector is nearest the query (`SessionExchanges.groups`), and its
-    /// similarity. A row with no exchange vector yet (only its old single one) has none. The ranking above still keeps one entry per session;
-    /// this only says which exchange gave it.
+    /// For each of these session rows, the position (`SessionExchanges.groups`) and similarity of the exchange nearest the query; none for a row
+    /// with only its old single vector. The ranking above still keeps one entry per session.
     func bestExchanges(_ query: [Float], rows: Set<Int64>) -> [Int64: (position: Int, similarity: Float)] {
         guard !rows.isEmpty, let scores = cosines(query) else { return [:] }
         var best: [Int64: (position: Int, similarity: Float)] = [:]
@@ -335,19 +338,20 @@ final class FavoritesStore {
 
     /// The text an exchange was embedded from (its title and folder lines, then the prompts and replies), by the session's key and position.
     func exchangeText(sessionKey: String, position: Int) -> String? {
-        rows("SELECT text FROM entries WHERE key = ?", [SessionExchanges.key(session: sessionKey, position: position)], limit: 1) { Self.text($0, 0) }.first
+        rows("SELECT text FROM entries WHERE key = ?", [SessionExchanges.key(session: sessionKey, position: position)]) { Self.text($0, 0) }.first
     }
 
     /// The search row of a conversation, this Mac's or a paired Mac's. One row holds each conversation (`favorite_key` is unique).
     func sessionRow(conversation id: String) -> SearchResult? {
-        let found = rows("SELECT id FROM favorites WHERE source = '\(Self.sessionSource)' AND lower(favorite_key) = ?",
-                         [Self.sessionKeyPrefix + id.lowercased()], limit: 1) { sqlite3_column_int64($0, 0) }.first
+        // Claude Code writes ids lowercased; the key's own index is used, so only the id as given and lowercased are tried.
+        let found = rows("SELECT id FROM favorites WHERE source = '\(Self.sessionSource)' AND favorite_key IN (?, ?)",
+                         [Self.sessionKeyPrefix + id, Self.sessionKeyPrefix + id.lowercased()]) { sqlite3_column_int64($0, 0) }.first
         return found.flatMap(fetch)
     }
 
     /// The row of a page or bookmark with exactly this address.
     func pageRow(address: String) -> SearchResult? {
-        let found = rows("SELECT id FROM favorites WHERE source != '\(Self.sessionSource)' AND url = ?", [address], limit: 1) { sqlite3_column_int64($0, 0) }.first
+        let found = rows("SELECT id FROM favorites WHERE source != '\(Self.sessionSource)' AND url = ?", [address]) { sqlite3_column_int64($0, 0) }.first
         return found.flatMap(fetch)
     }
 

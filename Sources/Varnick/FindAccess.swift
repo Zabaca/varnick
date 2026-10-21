@@ -31,15 +31,14 @@ extension PanelAccess {
         let tabs = Dictionary(grouped.filter(\.isSession).map { ($0.id, $0.tab) }, uniquingKeysWith: { first, _ in first })
         let tabNames = Dictionary(grouped.compactMap { row in row.isTab ? row.tab.map { ($0.key, row.title) } : nil }, uniquingKeysWith: { first, _ in first })
         let listing = arguments.query.isEmpty
-        let open = model.tabs.flatMap(\.sessions).filter { $0.isClaude && !$0.isOnPeer }
 
         let sessions = found.sessions.map { row -> FindText.Session in
             var session = FindText.Session(row: row)
-            session.listed = listing
+            session.listed = listing || found.fellBack
             if let ref = tabs[row.id] ?? nil {
                 session.tab = "\"\(tabNames[ref.key] ?? row.title)\" \(model.standingText(of: ref))"
             }
-            if let pane = open.first(where: { $0.record.conversationID.caseInsensitiveCompare(row.sessionID) == .orderedSame }) {
+            if let pane = model.paneOn(row.sessionID) {
                 session.pane = (id(for: pane.id, caller: caller), pane.turn?.turn.rawValue)
             }
             session.mac = row.host.map { PeerManager.shared.name(of: $0) }
@@ -47,11 +46,11 @@ extension PanelAccess {
             let texts = store.sessionTexts(of: row)
             session.first = texts.flatMap { $0.first > 0 ? Date(timeIntervalSince1970: TimeInterval($0.first)) : nil }
             session.last = texts.flatMap { $0.last > 0 ? Date(timeIntervalSince1970: TimeInterval($0.last)) : nil } ?? row.date
-            if !listing { Self.addExcerpt(to: &session, position: found.exchanges[row.id], texts: texts, store: store) }
+            if !session.listed { Self.addExcerpt(to: &session, position: found.exchanges[row.id], texts: texts, store: store) }
             return session
         }
         let pages = found.pages.map { FindText.Page(row: $0, mac: $0.host.map { PeerManager.shared.name(of: $0) }) }
-        let text = FindText.reply(sessions: sessions, pages: pages, meaning: found.meaning, now: Date())
+        let text = FindText.reply(sessions: sessions, pages: pages, meaning: found.meaning, fellBack: found.fellBack, now: Date())
         return Answered(text: text, counts: "\(sessions.count) sessions, \(pages.count) pages")
     }
 
@@ -76,26 +75,24 @@ extension PanelAccess {
     // MARK: session_read
 
     private func sessionRead(_ args: PanelArguments, _ model: LauncherModel, caller: UUID) async throws -> Answered {
-        let known: Set<String> = ["conversation", "around", "after", "last"]
-        if let extra = args.keys.sorted().first(where: { !known.contains($0) }) {
-            throw PanelRefusal.bad("\(extra) is not an argument: the arguments are conversation, around, after and last")
-        }
-        guard let conversation = args["conversation"]?.trimmingCharacters(in: .whitespacesAndNewlines), !conversation.isEmpty else {
-            throw PanelRefusal.bad("conversation is required: a conversation id from find")
-        }
+        try args.allowOnly(["conversation", "around", "after", "last", "exchange", "offset"])
+        guard let conversation = args.text("conversation") else { throw PanelRefusal.bad("conversation is required: a conversation id from find") }
         func number(_ key: String, least: Int) throws -> Int? {
-            guard let given = args[key]?.trimmingCharacters(in: .whitespaces), !given.isEmpty else { return nil }
+            guard let given = args.text(key) else { return nil }
             guard let value = Int(given), value >= least else { throw PanelRefusal.bad("\(key) is a whole number, \(least) or more") }
             return value
         }
         let around = try number("around", least: 1), after = try number("after", least: 0), last = try number("last", least: 1)
+        let exchange = try number("exchange", least: 1), offset = try number("offset", least: 0)
+        if offset != nil, exchange == nil { throw PanelRefusal.bad("offset goes with exchange") }
         let start: SessionReading.Start
-        switch (around, after, last) {
-        case (nil, nil, nil): start = .first
-        case (let n?, nil, nil): start = .around(n)
-        case (nil, let n?, nil): start = .after(n)
-        case (nil, nil, let n?): start = .last(n)
-        default: throw PanelRefusal.bad("Give at most one of around, after and last")
+        switch (around, after, last, exchange) {
+        case (nil, nil, nil, nil): start = .first
+        case (let n?, nil, nil, nil): start = .around(n)
+        case (nil, let n?, nil, nil): start = .after(n)
+        case (nil, nil, let n?, nil): start = .last(n)
+        case (nil, nil, nil, let n?): start = .within(n, offset: offset ?? 0)
+        default: throw PanelRefusal.bad("Give at most one of around, after, last and exchange")
         }
         let store = model.store
         guard let row = store.sessionRow(conversation: conversation) else {
@@ -106,12 +103,12 @@ extension PanelAccess {
         }
 
         var exchanges: [TranscriptExchange]
-        var notes: [String] = []
+        var lead: String?, notes: [String] = []
         if let host = row.host {
             guard let texts = store.sessionTexts(of: row) else { throw PanelRefusal.bad("That session's text is not in the index now") }
             exchanges = SessionReading.exchanges(prompts: texts.prompts, replies: texts.replies)
-            notes.append("This session is on \(PeerManager.shared.name(of: host)). Only what that Mac sends is kept here: every prompt, up to \(TranscriptReader.maxPrompt) characters, "
-                         + "and Claude's last reply after each, up to \(TranscriptReader.maxReply) characters.")
+            lead = "This session is on \(PeerManager.shared.name(of: host)). Only what that Mac sends is kept here: every prompt, up to \(TranscriptReader.maxPrompt) characters, "
+                + "and Claude's last reply after each, up to \(TranscriptReader.maxReply) characters."
         } else {
             let path = TranscriptReader.path(directory: row.url, conversation: row.sessionID)
             let read = await Task.detached { () -> [TranscriptExchange]? in
@@ -120,18 +117,19 @@ extension PanelAccess {
             }.value
             guard let read else { throw PanelRefusal.bad("That session's transcript is no longer on this Mac") }
             exchanges = read
-            if let pane = model.tabs.flatMap(\.sessions).first(where: { $0.isClaude && !$0.isOnPeer && $0.record.conversationID.caseInsensitiveCompare(row.sessionID) == .orderedSame }) {
-                let id = self.id(for: pane.id, caller: caller)
-                notes.append("This session is open in \(id)" + (pane.turn?.turn.isRunning == true ? " and working now" : "") + ": this is its transcript as it stands.")
+            if let pane = model.paneOn(row.sessionID) {
+                notes.append("This session is open in \(id(for: pane.id, caller: caller))" + (pane.turn?.turn.isRunning == true ? " and working now" : "") + ": this is its transcript as it stands.")
             }
         }
 
         let page = SessionReading.page(exchanges, start: start)
-        var lines = ["Session: " + row.title, "Project: \(row.url)" + (row.host.map { " on " + PeerManager.shared.name(of: $0) } ?? " on this Mac"), "Conversation: " + row.sessionID]
+        var lines = (lead.map { [$0] } ?? []) + ["Session: " + row.title, "Project: \(row.url)" + (row.host.map { " on " + PeerManager.shared.name(of: $0) } ?? " on this Mac"),
+                                                  "Conversation: " + row.sessionID]
         lines += notes
         lines.append(page.text)
-        if page.cutExchange, let shown = page.shown { lines.append("Exchange \(shown.upperBound) was cut to fit the call.") }
-        if let next = page.next {
+        if let resume = page.resume {
+            lines.append("More of exchange \(resume.exchange): session_read conversation=\(row.sessionID) exchange=\(resume.exchange) offset=\(resume.offset)")
+        } else if let next = page.next {
             lines.append("More: session_read conversation=\(row.sessionID) after=\(next)")
         } else if page.shown != nil {
             lines.append("End of the conversation.")
@@ -143,22 +141,15 @@ extension PanelAccess {
     // MARK: find_open
 
     private func findOpen(_ args: PanelArguments, _ model: LauncherModel, caller: UUID) async throws -> Answered {
-        let known: Set<String> = ["conversation", "address", "place"]
-        if let extra = args.keys.sorted().first(where: { !known.contains($0) }) {
-            throw PanelRefusal.bad("\(extra) is not an argument: the arguments are conversation, address and place")
-        }
-        func text(_ key: String) -> String? {
-            let value = (args[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        }
+        try args.allowOnly(["conversation", "address", "place"])
         var place: OpenedPanePlace?
-        if let given = text("place") {
+        if let given = args.text("place") {
             guard let found = OpenedPanePlace(rawValue: given.lowercased()) else {
                 throw PanelRefusal.bad("place is one of: " + OpenedPanePlace.allCases.map(\.rawValue).joined(separator: ", "))
             }
             place = found
         }
-        switch (text("conversation"), text("address")) {
+        switch (args.text("conversation"), args.text("address")) {
         case (let conversation?, nil): return try await openSession(conversation, place: place, model, caller: caller)
         case (nil, let address?): return try await openPage(address, place: place, model, caller: caller)
         default: throw PanelRefusal.bad("Give one of conversation or address")
@@ -173,7 +164,7 @@ extension PanelAccess {
         if row.sessionID.caseInsensitiveCompare(ownConversation(of: caller, in: model)) == .orderedSame {
             throw PanelRefusal.bad("That is this session's own conversation")
         }
-        let paneHere = { model.tabs.flatMap(\.sessions).first { $0.isClaude && !$0.isOnPeer && $0.record.conversationID.caseInsensitiveCompare(row.sessionID) == .orderedSame } }
+        let paneHere = { model.paneOn(row.sessionID) }
 
         guard let place else {
             // What Return does, so the refusals are `show`'s: it changes what the panel shows.
@@ -202,19 +193,20 @@ extension PanelAccess {
         if let host = row.host {
             throw PanelRefusal.bad("That session is on \(PeerManager.shared.name(of: host)), where it resumes: open it without place")
         }
+        let (tab, session) = try await placingTab(model, caller: caller)
+        // Checked after the last wait, with nothing awaited before the pane is added, so a conversation is never resumed twice here.
         if let pane = paneHere() {
             throw PanelRefusal.bad("open in \(id(for: pane.id, caller: caller)): use show")
         }
-        let (tab, session) = try await placingTab(model, caller: caller)
         guard FileManager.default.fileExists(atPath: row.url) else { throw PanelRefusal.bad("That session's folder is gone, so it can't be resumed") }
         var record = SessionRecord(id: UUID(), prompt: "", title: row.title, directory: row.url, startedAt: Date(), lastUsed: Date())
         record.openedBy = session.id
         record.agent = store.agent(ofSession: row.sessionID, directory: row.url)
         record.conversation = row.sessionID
-        // A run's conversation keeps what a run has; and permission checks are skipped only while the setting is on and this session was started
-        // skipping them too (where-it-breaks.md, Panel access).
+        // A run's conversation keeps what a run has, and permission checks are skipped only while the setting is on and this session was started
+        // skipping them too (where-it-breaks.md, Panel access): the caller's rule only ever lowers a run's own, which Return keeps.
         model.applyRunFields(to: &record)
-        record.skipPermissions = Settings.shared.skipPermissions && session.record.skippedAtStart == true ? nil : false
+        if record.skipPermissions != false, !(Settings.shared.skipPermissions && session.record.skippedAtStart == true) { record.skipPermissions = false }
         let pane = model.addPane(record, app: nil, beside: session, in: tab, axis: place.axis, controller: nil, resuming: true)
         let shown = SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab."
         return Answered(text: "Resumed beside this pane as \(id(for: pane.id, caller: caller)). It is not focused: focus and the panel are as they were.\(shown)",
@@ -258,5 +250,12 @@ extension PanelAccess {
         }
         if let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
         return (tab, session)
+    }
+}
+
+extension LauncherModel {
+    /// The pane on this Mac that is on this conversation, if any.
+    func paneOn(_ conversation: String) -> ClaudeSession? {
+        tabs.flatMap(\.sessions).first { $0.isClaude && !$0.isOnPeer && $0.record.conversationID.caseInsensitiveCompare(conversation) == .orderedSame }
     }
 }

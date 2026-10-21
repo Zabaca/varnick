@@ -129,8 +129,8 @@ if all(name in found for name in find_tools):
         if find_properties.get(name, {}).get("type") != "integer":
             fail("find's %s is %s, not an integer" % (name, find_properties.get(name)))
     read_schema = found["session_read"]["inputSchema"]
-    if read_schema.get("required") != ["conversation"] or set(read_schema.get("properties", {})) != {"conversation", "around", "after", "last"}:
-        fail("session_read is %s: a required conversation, and around, after and last" % read_schema)
+    if read_schema.get("required") != ["conversation"] or set(read_schema.get("properties", {})) != {"conversation", "around", "after", "last", "exchange", "offset"}:
+        fail("session_read is %s: a required conversation, and around, after, last, exchange and offset" % read_schema)
     open_schema = found["find_open"]["inputSchema"]
     if set(open_schema.get("properties", {})) != {"conversation", "address", "place"} or open_schema["properties"]["place"].get("enum") != ["beside", "below"]:
         fail("find_open is %s: conversation, address and place (beside or below)" % open_schema)

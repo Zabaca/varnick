@@ -954,19 +954,19 @@ final class LauncherModel: ObservableObject {
             let rows = filter.isEmpty ? [] : store.sessionRows(filter, limit: Self.promptSessionsShown, promoted: promoted)
             return setPromptResults(rows.compactMap { store.fetch($0) }, keepSelection: keepSelection)
         }
-        let keyword = store.keyword(message, limit: RelevanceSearch.candidateLimit, filter: filter)
-        func matches(_ semantic: [(id: Int64, score: Float)]) -> [SearchResult] {
-            search.fuse(keyword: keyword, semantic: semantic, limit: Self.promptSessionsShown,
-                        semanticOnlyFloor: RelevanceSearch.sessionSimilarityFloor, promoted: promoted)
+        // The same ranking a session's `find` and a spoken request use, staged: the keyword matches now, the meaning after the pause.
+        func matches(_ vector: [Float]?) -> [SearchResult] {
+            Array(search.rankedSessions(words: message, filter: filter, vector: vector, limit: Self.promptSessionsShown, choosing: false).rows
+                .prefix(Self.promptSessionsShown))
         }
-        setPromptResults(matches([]), keepSelection: keepSelection)
+        setPromptResults(matches(nil), keepSelection: keepSelection)
         guard embedder != nil else { return }
         semanticTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled, let self else { return }
             // A failure is quiet: the keyword matches stay, and nothing about the message is written anywhere.
             guard let (vec, _) = try? await self.embedQuery(message), !Task.isCancelled else { return }
-            self.setPromptResults(matches(self.store.semanticSessions(vec, limit: RelevanceSearch.candidateLimit, filter: filter)), keepSelection: true)
+            self.setPromptResults(matches(vec), keepSelection: true)
         }
     }
 

@@ -243,10 +243,9 @@ public struct TranscriptExchange: Equatable, Sendable {
 }
 
 extension TranscriptReader {
-    /// A conversation as exchanges, for a session to read: each typed prompt in full and every text block Claude wrote before the next one, in order.
-    /// Tool calls, tool results, thinking, sidechains and Claude Code's own synthetic entries are left out. A task notification, a teammate's message,
-    /// an automatic continuation and an interruption are one-line markers. A prompt is an exchange's start by the index's own rule (`read`), so the
-    /// numbers match the positions search keeps.
+    /// A conversation as exchanges for a session to read: each typed prompt in full and every text Claude wrote before the next, in order. Tool
+    /// calls and output, thinking, sidechains and synthetic entries are left out; notifications and interruptions are one-line markers.
+    /// An exchange starts at a prompt by `read`'s rule, so the count matches the index.
     public static func exchanges(_ data: Data) -> [TranscriptExchange] {
         var found: [TranscriptExchange] = []
         let dates = dateParser()

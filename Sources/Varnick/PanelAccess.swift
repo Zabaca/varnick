@@ -265,8 +265,9 @@ final class PanelAccess {
         if request.tool == "keys" { return try await keys(request.args, model, caller: caller, arrived: arrived) }
         if FindMCP.names.contains(request.tool) {
             let done = try await finding(request, model, caller: caller)
-            // A search or a read may have waited: the pane can have changed meanwhile.
-            _ = try callingPane(request.pane, in: model, allowingControlled: lifted)
+            // A search or a read may have waited: the pane can have changed meanwhile. `find_open` checks right before it acts, so a refusal is never
+            // reported after it did.
+            if request.tool != FindMCP.open { _ = try callingPane(request.pane, in: model, allowingControlled: lifted) }
             return done
         }
         // A registered view's tools: the router has done everything but the view's own part.

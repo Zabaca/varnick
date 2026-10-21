@@ -88,7 +88,7 @@ struct RelevanceSearch {
             // A failure costs the meaning pass only: the keyword matches stay.
             try Task.checkCancellation()
         }
-        var found = rankedSessions(words: words, filter: filter, vector: vector, limit: limit)
+        var found = rankedSessions(words: words, filter: filter, vector: vector, limit: limit, choosing: filter.choosesSessions).rows
         if let boost {
             var window = filter
             window.window = boost
@@ -98,23 +98,16 @@ struct RelevanceSearch {
         return Array(found.prefix(limit))
     }
 
-    /// The sessions `filter` keeps ranked for `words` (not empty) as the panel ranks a project's sessions: keyword matches and the words' meaning
-    /// (`vector`, when an embedder answered) fused, this Mac's open conversations first, and the similarity floor unless a project or a window chose
-    /// the sessions. The spoken request and a session's `find` share it. `limit` only matters for the fallback: when the words match none of the
-    /// sessions a project or a window chose, its most recently used come first. The candidates come back (`candidateLimit`) for the caller to cut.
-    func rankedSessions(words: String, filter: SessionFilter, vector: [Float]?, limit: Int) -> [SearchResult] {
+    /// The sessions `filter` keeps ranked for `words`: keyword and meaning (`vector`) fused, this Mac's open ones first, cut by the caller. The
+    /// prompt line, the spoken request and `find` share it. `choosing` (a project or time chose them): no floor, else the latest fill in (`fellBack`).
+    func rankedSessions(words: String, filter: SessionFilter, vector: [Float]?, limit: Int, choosing: Bool) -> (rows: [SearchResult], fellBack: Bool) {
         let keyword = store.keyword(words, limit: Self.candidateLimit, filter: filter)
-        // A named project or a filtering window chose these sessions: the words only rank them, with no similarity floor, and when
-        // they match none the most recently used come first.
-        let selecting = !filter.folderNames.isEmpty || filter.window != nil || filter.folder != nil
         let semantic = vector.map { store.semanticSessions($0, limit: Self.candidateLimit, filter: filter) } ?? []
-        var found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
-                         semanticOnlyFloor: selecting ? -1 : Self.sessionSimilarityFloor,
+        let found = fuse(keyword: keyword, semantic: semantic, limit: Self.candidateLimit,
+                         semanticOnlyFloor: choosing ? -1 : Self.sessionSimilarityFloor,
                          promoted: store.rowIDs(ofSessions: openHere()))
-        if found.isEmpty, selecting {
-            found = store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }
-        }
-        return found
+        guard found.isEmpty, choosing else { return (found, false) }
+        return (store.sessionRows(filter, limit: limit, promoted: []).compactMap { store.fetch($0) }, true)
     }
 
     /// Why `words` get no judge.

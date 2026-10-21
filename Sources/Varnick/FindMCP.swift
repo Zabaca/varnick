@@ -56,14 +56,16 @@ enum FindMCP {
             + "Claude wrote before the next prompt. Never tool calls, tool output or thinking, so file contents and command output a session read are not in it "
             + "(this session's own file tools can still read the raw transcript on this Mac). Any session in the index may be read, found by `find` or not, except "
             + "this session's own. A call gives about \(SessionReading.pageLimit) characters (one prompt or reply is cut at \(SessionReading.blockLimit)) and ends with the "
-            + "call that continues it. Give at most one of `around` (an exchange number, as `find` gives it: the read starts two exchanges before it), `after` (continue after "
-            + "this exchange number) and `last` (the most recent N exchanges); with none it starts at the first. A session on another Mac gives what that Mac sent: "
+            + "call that continues it, including the rest of one exchange that is too long for a call (`exchange` and `offset`). Give at most one of `around` (an exchange number, as `find` gives it: the read starts two exchanges before it), `after` (continue after "
+            + "this exchange number), `last` (the most recent N exchanges) and `exchange`; with none it starts at the first. A session on another Mac gives what that Mac sent: "
             + "every prompt, and Claude's last reply after each, cut at 1,000 characters. What it reads goes to Anthropic with this session. It only reads.",
         properties: [
             "conversation": ["type": "string", "description": "The session's conversation id, from `find`."],
             "around": ["type": "integer", "minimum": 1, "description": "Start two exchanges before this exchange number."],
             "after": ["type": "integer", "minimum": 0, "description": "Continue after this exchange number."],
             "last": ["type": "integer", "minimum": 1, "description": "Read the most recent this many exchanges."],
+            "exchange": ["type": "integer", "minimum": 1, "description": "Read this exchange from `offset` on: how a call continues an exchange too long for one call."],
+            "offset": ["type": "integer", "minimum": 0, "description": "With `exchange`: the character of the exchange's text to start at. The continuing call names it."],
         ], required: ["conversation"])
 
     private static let openTool = tool(open,
@@ -110,21 +112,15 @@ struct FindArguments: Equatable {
     /// `peers` are the paired Macs and `agents` the agents some indexed session ran as, which `mac` and `agent` must name. Throws what the session
     /// can act on.
     static func parse(_ args: PanelArguments, now: Date, peers: [Mac], agents: [String]) throws -> FindArguments {
-        if let extra = args.keys.sorted().first(where: { !known.contains($0) }) {
-            throw PanelRefusal.bad("\(extra) is not an argument: the arguments are " + known.sorted().joined(separator: ", "))
-        }
-        func text(_ key: String) -> String? {
-            let value = (args[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        }
-        let query = text("query") ?? ""
+        try args.allowOnly(known)
+        let query = args.text("query") ?? ""
         guard query.count <= FindMCP.queryLimit else { throw PanelRefusal.bad("query is at most \(FindMCP.queryLimit) characters") }
 
         var filter = SessionFilter()
-        if let project = text("project") {
+        if let project = args.text("project") {
             if project.hasPrefix("/") { filter.folder = project.withoutTrailingSlash } else { filter.folderNames = [project.lowercased()] }
         }
-        if let mac = text("mac") {
+        if let mac = args.text("mac") {
             if Peer.handle(mac) == Peer.handle("this Mac") {
                 filter.thisMacOnly = true
             } else if let found = peers.first(where: { Peer.handle($0.name) == Peer.handle(mac) }) {
@@ -134,7 +130,7 @@ struct FindArguments: Equatable {
                 throw PanelRefusal.bad("No such Mac. These are: " + names.joined(separator: ", "))
             }
         }
-        if let agent = text("agent") {
+        if let agent = args.text("agent") {
             guard let found = agents.first(where: { $0.caseInsensitiveCompare(agent) == .orderedSame }) else {
                 throw PanelRefusal.bad("No session has run as that agent. " + (agents.isEmpty ? "None has run as any." : "These have: " + agents.joined(separator: ", ")))
             }
@@ -142,7 +138,7 @@ struct FindArguments: Equatable {
         }
         var from: Date?, to: Date?
         for key in ["from", "to"] {
-            guard let value = text(key) else { continue }
+            guard let value = args.text(key) else { continue }
             guard var date = VoiceSearchArguments.date(value) else {
                 throw PanelRefusal.bad("\(key) must be an ISO 8601 time such as 2026-10-15 or 2026-10-15T09:00:00-07:00")
             }
@@ -158,7 +154,7 @@ struct FindArguments: Equatable {
 
         let narrowed = filter.folder != nil || !filter.folderNames.isEmpty || filter.host != nil || filter.thisMacOnly || filter.agent != nil || filter.window != nil
         var kinds = Kinds.both
-        switch text("kinds")?.lowercased() {
+        switch args.text("kinds")?.lowercased() {
         case nil: kinds = narrowed || query.isEmpty ? .sessions : .both
         case "sessions": kinds = .sessions
         case "pages": kinds = .pages
@@ -169,7 +165,7 @@ struct FindArguments: Equatable {
         if kinds == .pages, narrowed { throw PanelRefusal.bad("project, mac, agent, from and to narrow sessions only: leave them out to search pages") }
 
         func count(_ key: String, default value: Int, max: Int) throws -> Int {
-            guard let given = text(key) else { return value }
+            guard let given = args.text(key) else { return value }
             guard let number = Int(given), (1...max).contains(number) else { throw PanelRefusal.bad("\(key) is a whole number from 1 to \(max)") }
             return number
         }

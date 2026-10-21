@@ -18,7 +18,7 @@ enum FindText {
         var excerpt: String?
         /// The exchange the excerpt is from, which `session_read` takes as `around`.
         var exchange: Int?
-        /// Listed by recency with no words to match: there is nothing to say of how it matched.
+        /// Listed by recency, not matched (no words, or none matched): there is nothing to say of how it matched.
         var listed = false
     }
 
@@ -37,20 +37,21 @@ enum FindText {
     static let excerptLimit = 300
     static let descriptionLimit = 300
 
-    static func reply(sessions: [Session], pages: [Page], meaning: Meaning, now: Date, calendar: Calendar = .current) -> String {
+    static func reply(sessions: [Session], pages: [Page], meaning: Meaning, fellBack: Bool = false, now: Date, calendar: Calendar = .current) -> String {
         var lines: [String] = []
-        if sessions.isEmpty, pages.isEmpty {
-            lines.append("Nothing matched.")
-        } else {
-            let parts = [sessions.isEmpty ? nil : "\(sessions.count) session\(sessions.count == 1 ? "" : "s")",
-                         pages.isEmpty ? nil : "\(pages.count) page\(pages.count == 1 ? "" : "s")"].compactMap { $0 }
-            lines.append(parts.joined(separator: " and ") + ", best first.")
+        var first = "Nothing matched."
+        if !sessions.isEmpty || !pages.isEmpty {
+            let counts = [sessions.isEmpty ? nil : "\(sessions.count) session\(sessions.count == 1 ? "" : "s")"
+                          + (fellBack ? " (none matched the words: the most recently used in that project or time)" : ""),
+                          pages.isEmpty ? nil : "\(pages.count) page\(pages.count == 1 ? "" : "s")"].compactMap { $0 }
+            first = counts.joined(separator: " and ") + (fellBack && pages.isEmpty ? "." : ", best first.")
         }
         switch meaning {
-        case .noEmbedder: lines.append("Search by meaning is not available (no embedding model or server), so these are keyword matches only.")
-        case .failed: lines.append("Search by meaning failed just now, so these are keyword matches only.")
+        case .noEmbedder: first += " Search by meaning is not available (no embedding model or server), so these are keyword matches only."
+        case .failed: first += " Search by meaning failed just now, so these are keyword matches only."
         case .used, .notAsked: break
         }
+        lines.append(first)
         if !sessions.isEmpty {
             lines.append("")
             lines.append("Sessions:")
@@ -137,7 +138,7 @@ enum FindText {
         case (nil, nil): return nil
         case (let first?, nil): return "first " + when(first, now: now, calendar: calendar)
         case (nil, let last?): return "last " + when(last, now: now, calendar: calendar)
-        case (let first?, let last?): return "first \(SessionReading.stamp(first)), last " + when(last, now: now, calendar: calendar)
+        case (let first?, let last?): return "first " + when(first, now: now, calendar: calendar) + ", last " + when(last, now: now, calendar: calendar)
         }
     }
 
