@@ -89,7 +89,7 @@ packages, pinned exactly in `TextHelper/package.json` and installed from `TextHe
 | Package | Version | Licence | Read from |
 |---|---|---|---|
 | `@zabaca/agent` | 0.2.0 | MIT (its `package.json`; the package carries no licence file) | `package.json` of the installed package |
-| `@anthropic-ai/claude-agent-sdk` | 0.3.291 | "© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance." Its `package.json` says "SEE LICENSE IN README.md". **To be read by the maintainer before the first release that ships it** (ADR 0029) | `LICENSE.md` of the installed package |
+| `@anthropic-ai/claude-agent-sdk` | 0.3.291 | "© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance." Its `package.json` says "SEE LICENSE IN README.md". Read by the maintainer on 2026-10-21, before the first release that ships it (ADR 0029) | `LICENSE.md` of the installed package |
 
 The SDK's `sdk.mjs` is a bundled file that holds code from other projects with no licence banners; what they are and
 their terms were not verified. The reminders filter that ships beside `agent.js` (`Contents/Resources/mods/reminders`)
