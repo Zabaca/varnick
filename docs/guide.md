@@ -460,8 +460,13 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   at a time: a slot that falls due while the last run still works or waits on you is skipped. Keep sessions running must be on.
 - **Permissions follow Settings › Claude's Skip permissions,** as a prompt you type does, unless the automation says Ask (its allowed
   tools run, anything else waits for you with Needs you), Allowed tools only (anything not allowed is refused with no dialog, and
-  Claude goes on or ends) or Skip. A run never gets Screen access, Panel access or pane tools, but like every pane it has Varnick's
+  Claude goes on or ends) or Skip. A run never gets Screen access, Panel access or pane tools (one exception, below), but like every pane it has Varnick's
   macOS permissions, so a shell command it may run can reach the screen: see [privacy and security](privacy-and-security.md#automations-act-while-you-are-away).
+- **A run can file a bullet in your Outline, if you let it.** Put `mcp__varnick__outline_append` in the automation's allowed tools and its run lists one
+  more tool, `outline_append`: a heading, a line of text and an optional note, added as the last bullet under the top-level bullet of that name (made if
+  there is none). It can't read, change or delete anything in your Outline, and it is refused while the Outline is off. A daily recap, for one, can keep each
+  day's table under a "Daily recap" heading. What it writes shows like your own bullets, on this Mac and on its Phone page, and ⌘Z takes it back: see
+  [privacy and security](privacy-and-security.md#automations-act-while-you-are-away).
 - **A run is ended, with its conversation kept,** when it works past the automation's limit (an hour unless you change it), after 24
   hours waiting on you, or 10 minutes after it finished if you haven't opened it. Each run draws on your Claude subscription.
 - **A headless host keeps its own.** Settings › Automations has a section for each paired headless host: make an automation there
@@ -488,7 +493,7 @@ that has neither runs without). `Varnick --problems` prints the board's columns 
 
 **Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
 the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
-does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
+does not list the Outline, and Claude sessions' Outline tools stay listed but refuse (so does an automation's `outline_append`; see Automations). Its shortcut keeps its binding while hidden,
 and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
 

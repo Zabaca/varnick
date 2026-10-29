@@ -198,6 +198,16 @@ expect("skip never goes with dontAsk", !arguments(skip: true, dontAsk: true).con
 expect("skip is the existing flag", arguments(skip: true).contains("--dangerously-skip-permissions"))
 expect("the prompt stays the last operand after --", strict.suffix(2) == ["--", "Say hello"], "\(strict.suffix(2))")
 
+// `outline_append`: an automation's allowed tools name it by its exact rule, and its arguments' limits (the edit is `--outline-check`'s).
+expect("outline_append is named by mcp__varnick__outline_append alone", OutlineAppendTool.qualifiedName == "mcp__varnick__outline_append"
+       && OutlineAppendTool.isNamed(in: ["Bash", "mcp__varnick__outline_append"]) && !OutlineAppendTool.isNamed(in: ["mcp__varnick", "mcp__varnick__*", "mcp__varnick__notify"]))
+expect("outline_append takes 1 to 80, 1 to 300, one line each, and a note of 20,000 bytes",
+       OutlineAppendTool.entry(heading: "Daily recap", text: "Done", note: nil).entry != nil
+       && OutlineAppendTool.entry(heading: String(repeating: "x", count: 81), text: "t", note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "h", text: String(repeating: "x", count: 301), note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "h", text: "a\nb", note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "h", text: "t", note: String(repeating: "x", count: 20_001)).entry == nil)
+
 // MARK: The file
 
 // A throwaway folder: nothing here touches the support folder.

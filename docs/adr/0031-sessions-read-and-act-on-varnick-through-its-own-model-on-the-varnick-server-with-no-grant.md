@@ -101,7 +101,7 @@ Panel access began as read and show: nothing a session called added or closed a 
 At the user's word ("this doesn't need to be a toggle"), **Panel access** and **Sessions can open panes** are no longer settings. This is the one statement of which sessions get which sets (`ClaudeSession.launchClaude` is its code; everything else points here):
 
 - **Every Claude session in a Varnick pane** gets the `--panel` set and the `--panes` set, with `notify`, as `notify` always was.
-- **A run of an automation** lists `notify` alone. **A Task step** lists `notify` and, while its folder holds the step's schema, `task_result`.
+- **A run of an automation** lists `notify` alone, and `outline_append` too when its allowed tools name it (ADR 0040's amendment of 2026-10-29: write-only, no panel tool). **A Task step** lists `notify` and, while its folder holds the step's schema, `task_result`.
 - **The voice session** gets Panel access's tools but not `pane_open` and `pane_close` (still an open question in option 01 of `panes-open-only-by-hand-at-a-mac`).
 - **A headless host's session** lists `notify` alone.
 - **Screen access is the one switch left.** It needs a macOS permission and reads the screen, and the user did not name it.

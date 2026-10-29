@@ -1,4 +1,5 @@
 import Foundation
+import VarnickPeer
 
 /// `Varnick --outline-check <file> [<out>]`: reads an outline file through the one reader and prints whether it loads or why not, its version, its
 /// counts and what the rules repaired. With `<out>` it writes the tree there through the one writer and reads that back, to check that the counts
@@ -526,6 +527,79 @@ enum OutlineCheck {
         }
     }
 
+    /// `outline_append` (ADR 0040's amendment of 2026-10-29), on a small tree of its own: the limits on its arguments, the allowed-tools rule, and the one
+    /// edit it makes, which leaves everything else in the tree as it was. Prints yes or NO, never a bullet's text.
+    private static func appendCheck() {
+        func ok(_ value: Bool) -> String { value ? "yes" : "NO" }
+        func entry(_ heading: String?, _ text: String?, _ note: String? = nil) -> (entry: OutlineAppendTool.Entry?, problems: [String]) {
+            OutlineAppendTool.entry(heading: heading, text: text, note: note)
+        }
+        let longest = String(repeating: "é", count: 80)
+        print("append check: a heading of 1 and of 80 characters, a text of 1 and of 300 are taken: "
+              + ok(entry("h", "t").entry != nil && entry(longest, String(repeating: "x", count: 300)).entry != nil))
+        print("append check: an empty, blank, 81-character or multi-line heading is refused: "
+              + ok(entry("", "t").entry == nil && entry("  \n ", "t").entry == nil && entry(String(repeating: "x", count: 81), "t").entry == nil
+                   && entry("a\nb", "t").entry == nil && entry("a\u{2028}b", "t").entry == nil && entry(nil, "t").entry == nil))
+        print("append check: an empty, 301-character, multi-line or tabbed text is refused: "
+              + ok(entry("h", "").entry == nil && entry("h", String(repeating: "x", count: 301)).entry == nil && entry("h", "a\nb").entry == nil
+                   && entry("h", "a\tb").entry == nil && entry("h", nil).entry == nil))
+        let limit = OutlineAppendTool.noteByteLimit
+        print("append check: a note of \(limit) bytes is taken and of \(limit + 1) refused, counted in bytes (a 2-byte letter): "
+              + ok(entry("h", "t", String(repeating: "x", count: limit)).entry != nil && entry("h", "t", String(repeating: "x", count: limit + 1)).entry == nil
+                   && entry("h", "t", String(repeating: "é", count: limit / 2)).entry != nil && entry("h", "t", String(repeating: "é", count: limit / 2 + 1)).entry == nil))
+        print("append check: a note keeps its line breaks, refuses a tab, and empty is none: "
+              + ok(entry("h", "t", "a\nb").entry?.note == "a\nb" && entry("h", "t", "a\tb").entry == nil && entry("h", "t", "").entry?.note == nil))
+        print("append check: every problem is named at once: \(ok(entry("", "", "a\tb").problems.count == 3))")
+        print("append check: the heading and text are trimmed: " + ok(entry("  Daily recap \n", " done ").entry == .init(heading: "Daily recap", text: "done", note: nil)))
+        let name = OutlineAppendTool.qualifiedName
+        print("append check: only the exact rule names the tool (\(name)): "
+              + ok(OutlineAppendTool.isNamed(in: ["Bash", name]) && !OutlineAppendTool.isNamed(in: ["mcp__varnick", "mcp__varnick__*", "mcp__varnick__notify", name + "x", "outline_append"])))
+
+        let at = Date(timeIntervalSince1970: 0)
+        func bullet(_ text: String, _ children: [(String, String)] = []) -> OutlineBullet {
+            OutlineBullet(text: text, created: at, changed: at, children: children.map { OutlinePlacement(id: $0.0, bullet: $0.1) })
+        }
+        // Home: Daily recap (old), Notes (Daily recap nested in it), Daily recap (a second one), daily recap (lower case).
+        var tree = OutlineTree(root: "r", bullets: [
+            "r": bullet("", [("p1", "recap"), ("p2", "notes"), ("p3", "recap2"), ("p4", "lower")]), "recap": bullet("Daily recap", [("c1", "old")]), "old": bullet("old"),
+            "notes": bullet("Notes", [("n1", "nested")]), "nested": bullet("Daily recap"), "recap2": bullet("Daily recap"), "lower": bullet("daily recap"),
+        ])
+        tree.zoom = ["p2"]
+        func apply(_ entry: OutlineAppendTool.Entry, to start: OutlineTree) -> (tree: OutlineTree, plan: (edit: OutlineEdit, heading: OutlinePath?))? {
+            let plan = OutlineAppending.plan(entry, in: start)
+            guard case .applied(let next, _, _) = start.applying(plan.edit, now: at, scope: OutlineScope()) else { return nil }
+            return (next, plan)
+        }
+        let recap = OutlineAppendTool.Entry(heading: "Daily recap", text: "Oct 29", note: "table")
+        if let made = apply(recap, to: tree) {
+            let children = made.tree.bullets["recap"]?.children ?? []
+            let added = children.last.flatMap { made.tree.bullets[$0.bullet] }
+            print("append check: under an existing heading it becomes the last child, with its note, and the first of two headings is used: "
+                  + ok(made.plan.heading == OutlinePath(placements: ["p1"]) && children.count == 2 && children.first?.bullet == "old" && added?.text == "Oct 29"
+                       && added?.note == "table" && made.tree.bullets["recap2"]?.children.isEmpty == true))
+            let others = tree.bullets.filter { !["r", "recap"].contains($0.key) }
+            print("append check: nothing else in the tree changed, the user's zoom included: "
+                  + ok(others.allSatisfy { made.tree.bullets[$0.key] == $0.value } && made.tree.bullets[tree.root]?.children == tree.bullets[tree.root]?.children
+                       && made.tree.zoom == tree.zoom && made.tree.bullets.count == tree.bullets.count + 1))
+        } else {
+            print("append check: the edit under an existing heading was refused")
+        }
+        let fresh = OutlineAppendTool.Entry(heading: "Weekly recap", text: "Week 44", note: nil)
+        if let made = apply(fresh, to: tree) {
+            let top = made.tree.bullets[made.tree.root]?.children ?? []
+            let heading = top.last.flatMap { made.tree.bullets[$0.bullet] }
+            let child = heading?.children.first.flatMap { made.tree.bullets[$0.bullet] }
+            print("append check: with no such heading it is made at the end of the top level with the bullet under it, in one edit: "
+                  + ok(made.plan.heading == nil && top.count == 5 && heading?.text == "Weekly recap" && heading?.children.count == 1 && child?.text == "Week 44"
+                       && made.tree.bullets.count == tree.bullets.count + 2))
+        } else {
+            print("append check: the edit with no such heading was refused")
+        }
+        print("append check: the heading matches exactly, at the top level only: "
+              + ok(OutlineAppending.headingPath("Daily recap", in: tree) == OutlinePath(placements: ["p1"]) && OutlineAppending.headingPath("Daily Recap", in: tree) == nil
+                   && OutlineAppending.headingPath("Weekly recap", in: tree) == nil && OutlineAppending.headingPath("Notes", in: tree) == OutlinePath(placements: ["p2"])))
+    }
+
     static func run(_ arguments: [String]) -> Int32 {
         let paths = arguments.filter { !$0.hasPrefix("--") }
         guard let file = paths.first else {
@@ -556,6 +630,7 @@ enum OutlineCheck {
         clipboardCheck(tree)
         readCheck(tree)
         actCheck(tree)
+        appendCheck()
         OutlinePhoneCheck.run(tree)
         guard paths.count > 1 else { return 0 }
         let out = URL(fileURLWithPath: paths[1])

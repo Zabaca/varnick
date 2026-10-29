@@ -729,7 +729,7 @@ struct SettingsView: View {
                             Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
-                            Text("Every Claude session can make, edit and switch automations, which then run unattended on their cadence. See Anthropic, through Automations in docs/privacy-and-security.md.")
+                            Text("Every Claude session can make, edit and switch automations, which then run unattended on their cadence, and an automation you allow it can file a bullet in your Outline. See Anthropic, through Automations in docs/privacy-and-security.md.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
                             SettingRow(title: "Keep sessions running",
