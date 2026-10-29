@@ -207,6 +207,13 @@ expect("outline_append takes 1 to 80, 1 to 300, one line each, and a note of 20,
        && OutlineAppendTool.entry(heading: "h", text: String(repeating: "x", count: 301), note: nil).entry == nil
        && OutlineAppendTool.entry(heading: "h", text: "a\nb", note: nil).entry == nil
        && OutlineAppendTool.entry(heading: "h", text: "t", note: String(repeating: "x", count: 20_001)).entry == nil)
+expect("outline_append caps bytes as well as characters, and a line break can't hide behind a combining mark",
+       OutlineAppendTool.entry(heading: "a" + String(repeating: "\u{0301}", count: 100_000), text: "t", note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "h", text: "a" + String(repeating: "\u{0301}", count: 100_000), note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: String(repeating: "\u{1F600}", count: 80), text: String(repeating: "\u{1F600}", count: 300), note: nil).entry != nil
+       && OutlineAppendTool.entry(heading: "h", text: "a\u{2028}\u{0301}b", note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "a\u{2029}b", text: "t", note: nil).entry == nil
+       && OutlineAppendTool.entry(heading: "h", text: "a\u{85}b", note: nil).entry == nil)
 
 // MARK: The file
 

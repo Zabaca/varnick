@@ -573,12 +573,17 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   A headless host has no screen and no macOS grants, so an automation kept there reaches only what its account can; it suits one that allows broad shell use, and with permission checks skipped every command a run tries is allowed, as the host's own user, with nobody there to answer. A run there follows the host's own Skip permissions unless the automation says otherwise.
 - **A run can file a bullet in your Outline if you name the tool, and read nothing of it.** An automation whose allowed tools hold
   `mcp__varnick__outline_append` gives its run `outline_append(heading, text, note?)`: it adds one last bullet under the top-level bullet of that
-  name, made at the end if absent (a heading of 1 to 80 characters, a text of 1 to 300, a note of up to 20,000 bytes). It answers only the new bullet's
-  id and whether the heading was made, so no bullet, note or heading of yours goes to Anthropic through it. The bullets it writes are stored in your
+  name, made at the end if absent (a heading of 1 to 80 characters and 320 bytes, a text of 1 to 300 and 1,200 bytes, a note of up to 20,000 bytes). It reads
+  nothing of your Outline and its answer carries no text of it, only the new bullet's id and whether the heading was made. That one bit does tell the
+  run, so Anthropic, whether a top-level bullet of a name it guessed exists (and a refusal says if it is marked done); nothing else of your Outline
+  goes to Anthropic through it. The bullets it writes are stored in your
   outline file on this Mac like any other, shown on a listed device's Phone page (ADR 0046), and one ⌘Z takes one back. A run that read something
   hostile can be steered into writing text of the attacker's choosing there; the bounds limit its size, not its words. It is refused while the
   Outline is off or its file can't be read (ADR 0030), and a Task step, the voice session and a headless host's run never have it (ADR 0040's
-  amendment of 2026-10-29).
+  amendment of 2026-10-29). **A Claude session you start can save an automation whose allowed tools name this rule** (`automation_create` and
+  `automation_edit` take `allowed_tools`), which makes a recurring, unattended writer to your Outline with no approval step of Varnick's; the mark on the
+  automation names the rules the session set and stays until you open its editor, switch it or press Seen. Taking the rule out stops future runs
+  only (ADR 0040's amendment).
 - **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
   a session you leave unattended with the same permissions.
 - **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no

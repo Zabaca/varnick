@@ -38,6 +38,13 @@ enum OutlineAppending {
         tree.bullets[tree.root]?.children.first { tree.bullets[$0.bullet]?.text == heading }.map { OutlinePath(placements: [$0.id]) }
     }
 
+    /// Why the heading can't be filed under, or nil: its bullet is marked done, so the row would be hidden while Show completed is off. Nothing is
+    /// made in its place, so there is never a second heading of the same name.
+    static func headingProblem(_ heading: String, in tree: OutlineTree) -> String? {
+        guard let path = headingPath(heading, in: tree), let id = tree.bulletID(at: path), tree.bullets[id]?.completed != nil else { return nil }
+        return "the heading is marked done; open it or pick another heading"
+    }
+
     /// The one edit that files the entry: a new last child of the heading's bullet, or, with no such heading, the heading made at the end of the top
     /// level with the entry already under it. `heading` is the path found, nil when the edit makes it.
     static func plan(_ entry: OutlineAppendTool.Entry, in tree: OutlineTree) -> (edit: OutlineEdit, heading: OutlinePath?) {
@@ -132,17 +139,21 @@ final class OutlineAppendAccess {
         guard let entry = checked.entry else { throw OutlineAppendRefusal.refused(checked.problems) }
         let outline: Outline
         do { outline = try await OutlinePanelView(model: model).ready() } catch let refusal as PanelRefusal { throw OutlineAppendRefusal.outline(refusal) }
+        if let why = OutlineAppending.headingProblem(entry.heading, in: outline.tree) { throw OutlineAppendRefusal.notAdded(why) }
         let plan = OutlineAppending.plan(entry, in: outline.tree)
         let id = caller.id
         // Asked again right before the edit, after its waits: the heading must still be where it was found (or still absent), and the run still be one.
         let done = await outline.performForSession(plan.edit, fresh: { tree in
-            OutlineAppending.headingPath(entry.heading, in: tree) == plan.heading ? nil : "the Outline changed while the call waited: try again"
+            OutlineAppending.headingPath(entry.heading, in: tree) == plan.heading && OutlineAppending.headingProblem(entry.heading, in: tree) == nil
+                ? nil : "the Outline changed while the call waited: try again"
         }, allowed: { !Task.isCancelled && Settings.shared.outlineOn && model.tabs.lazy.flatMap(\.sessions).contains { $0.id == id && Self.isAutomationRun($0) } })
         if let refusal = done.refusal { throw OutlineAppendRefusal.notAdded(refusal.reason) }
         let tree = outline.tree
-        guard done.changed, let heading = plan.heading ?? done.run.first, let parent = tree.bulletID(at: heading),
-              let added = tree.bullets[parent]?.children.last else { throw OutlineAppendRefusal.notAdded("nothing changed") }
-        return "Added bullet \(added.bullet) as the last under the heading, which "
+        // The insert returns where it put its top-level bullet: the new child, or the new heading, whose only child is the new bullet.
+        guard done.changed, let top = done.run.first,
+              let added = plan.heading != nil ? tree.bulletID(at: top) : tree.bullets[tree.bulletID(at: top) ?? ""]?.children.first?.bullet
+        else { throw OutlineAppendRefusal.notAdded("nothing changed") }
+        return "Added bullet \(added) as the last under the heading, which "
             + (plan.heading == nil ? "was made at the end of the top level." : "was already there.")
     }
 

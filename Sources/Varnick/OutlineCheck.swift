@@ -543,6 +543,16 @@ enum OutlineCheck {
         print("append check: an empty, 301-character, multi-line or tabbed text is refused: "
               + ok(entry("h", "").entry == nil && entry("h", String(repeating: "x", count: 301)).entry == nil && entry("h", "a\nb").entry == nil
                    && entry("h", "a\tb").entry == nil && entry("h", nil).entry == nil))
+        let marks = "a" + String(repeating: "\u{0301}", count: 100_000)
+        print("append check: bytes are capped as well as characters (heading \(OutlineAppendTool.headingByteLimit), text \(OutlineAppendTool.textByteLimit)): a letter with 100,000 "
+              + "combining marks is one character and is refused in a heading, a text and a note-sized text: "
+              + ok(marks.count == 1 && entry(marks, "t").entry == nil && entry("h", marks).entry == nil)
+              + "; 80 four-byte characters (320 bytes) and 300 (1,200 bytes) are taken: "
+              + ok(entry(String(repeating: "\u{1F600}", count: 80), String(repeating: "\u{1F600}", count: 300)).entry != nil)
+              + "; a heading or text within its characters but over its bytes (combining marks) is refused: "
+              + ok(entry("a" + String(repeating: "\u{0301}", count: 400), "t").entry == nil && entry("h", "a" + String(repeating: "\u{0301}", count: 600)).entry == nil))
+        print("append check: U+2028, U+2029, U+0085, vertical tab and form feed are line breaks in a heading or text, even with a combining mark after: "
+              + ok(["\u{2028}", "\u{2029}", "\u{85}", "\u{0B}", "\u{0C}", "\r\n"].allSatisfy { entry("a" + $0 + "\u{0301}b", "t").entry == nil && entry("h", "a" + $0 + "\u{0301}b").entry == nil }))
         let limit = OutlineAppendTool.noteByteLimit
         print("append check: a note of \(limit) bytes is taken and of \(limit + 1) refused, counted in bytes (a 2-byte letter): "
               + ok(entry("h", "t", String(repeating: "x", count: limit)).entry != nil && entry("h", "t", String(repeating: "x", count: limit + 1)).entry == nil
@@ -565,10 +575,10 @@ enum OutlineCheck {
             "notes": bullet("Notes", [("n1", "nested")]), "nested": bullet("Daily recap"), "recap2": bullet("Daily recap"), "lower": bullet("daily recap"),
         ])
         tree.zoom = ["p2"]
-        func apply(_ entry: OutlineAppendTool.Entry, to start: OutlineTree) -> (tree: OutlineTree, plan: (edit: OutlineEdit, heading: OutlinePath?))? {
+        func apply(_ entry: OutlineAppendTool.Entry, to start: OutlineTree) -> (tree: OutlineTree, plan: (edit: OutlineEdit, heading: OutlinePath?), run: [OutlinePath])? {
             let plan = OutlineAppending.plan(entry, in: start)
-            guard case .applied(let next, _, _) = start.applying(plan.edit, now: at, scope: OutlineScope()) else { return nil }
-            return (next, plan)
+            guard case .applied(let next, _, let run) = start.applying(plan.edit, now: at, scope: OutlineScope()) else { return nil }
+            return (next, plan, run)
         }
         let recap = OutlineAppendTool.Entry(heading: "Daily recap", text: "Oct 29", note: "table")
         if let made = apply(recap, to: tree) {
@@ -578,6 +588,8 @@ enum OutlineCheck {
                   + ok(made.plan.heading == OutlinePath(placements: ["p1"]) && children.count == 2 && children.first?.bullet == "old" && added?.text == "Oct 29"
                        && added?.note == "table" && made.tree.bullets["recap2"]?.children.isEmpty == true))
             let others = tree.bullets.filter { !["r", "recap"].contains($0.key) }
+            print("append check: the edit's result names the new bullet (under an existing heading): "
+                  + ok(made.run.count == 1 && made.run.first.flatMap { made.tree.text(at: $0) } == "Oct 29"))
             print("append check: nothing else in the tree changed, the user's zoom included: "
                   + ok(others.allSatisfy { made.tree.bullets[$0.key] == $0.value } && made.tree.bullets[tree.root]?.children == tree.bullets[tree.root]?.children
                        && made.tree.zoom == tree.zoom && made.tree.bullets.count == tree.bullets.count + 1))
@@ -589,12 +601,20 @@ enum OutlineCheck {
             let top = made.tree.bullets[made.tree.root]?.children ?? []
             let heading = top.last.flatMap { made.tree.bullets[$0.bullet] }
             let child = heading?.children.first.flatMap { made.tree.bullets[$0.bullet] }
+            print("append check: the edit's result names the new heading, whose only child is the new bullet: "
+                  + ok(made.run.count == 1 && made.run.first.flatMap { made.tree.text(at: $0) } == "Weekly recap"
+                       && made.run.first.flatMap({ made.tree.bulletID(at: $0) }).flatMap({ made.tree.bullets[$0]?.children.first?.bullet }).flatMap({ made.tree.bullets[$0]?.text }) == "Week 44"))
             print("append check: with no such heading it is made at the end of the top level with the bullet under it, in one edit: "
                   + ok(made.plan.heading == nil && top.count == 5 && heading?.text == "Weekly recap" && heading?.children.count == 1 && child?.text == "Week 44"
                        && made.tree.bullets.count == tree.bullets.count + 2))
         } else {
             print("append check: the edit with no such heading was refused")
         }
+        var done = tree
+        done.bullets["recap"]?.completed = at
+        print("append check: a heading marked done is refused, one not marked done is not, and no heading is made in its place: "
+              + ok(OutlineAppending.headingProblem("Daily recap", in: done) != nil && OutlineAppending.headingProblem("Daily recap", in: tree) == nil
+                   && OutlineAppending.headingProblem("Weekly recap", in: done) == nil && OutlineAppending.headingPath("Daily recap", in: done) == OutlinePath(placements: ["p1"])))
         print("append check: the heading matches exactly, at the top level only: "
               + ok(OutlineAppending.headingPath("Daily recap", in: tree) == OutlinePath(placements: ["p1"]) && OutlineAppending.headingPath("Daily Recap", in: tree) == nil
                    && OutlineAppending.headingPath("Weekly recap", in: tree) == nil && OutlineAppending.headingPath("Notes", in: tree) == OutlinePath(placements: ["p2"])))
