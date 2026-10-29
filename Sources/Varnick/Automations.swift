@@ -275,9 +275,14 @@ extension LauncherModel {
     var automationFilesProblem: String? { automations.problem ?? taskRuns.problem }
 
     /// Hands the model to the runner once the saved tabs are restored (`applicationDidFinishLaunching`, after `cleanUpAfterLastRun`): a hidden run
-    /// tab that no Run names is released, then the first check, which catches a missed slot up once.
+    /// tab that no Run names is released, then the first check, which catches a missed slot up once. The first launch after the Automations switch
+    /// was retired starts every automation's clock from now, as turning the switch on did: nothing before it is caught up.
     func startAutomations() {
         releaseUnnamedRuns()
+        if Settings.shared.automationsWereOff {
+            let now = Date()
+            for automation in automations.automations { automations.update(automation.id) { $0.lastSlot = now } }
+        }
         HostAutomationStore.shared.model = self
         automationRunner.start(model: self)
     }

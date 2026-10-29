@@ -220,6 +220,8 @@ final class Settings: ObservableObject {
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
+    /// This launch found the retired Automations switch stored off. Read once by `startAutomations`; never stored.
+    let automationsWereOff: Bool
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -433,6 +435,8 @@ final class Settings: ObservableObject {
         defaults.removeObject(forKey: "panelAccess")
         defaults.removeObject(forKey: "sessionsOpenPanes")
         // The retired Automations switch (read by builds up to 2026-10-29): dropped, and not carried over (ADR 0040's amendment of that date).
+        // Stored off, its automations restart their clocks at this launch (`startAutomations`); stored on, or never stored, they keep theirs.
+        automationsWereOff = defaults.object(forKey: "automationsOn") as? Bool == false
         defaults.removeObject(forKey: "automationsOn")
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
@@ -723,6 +727,9 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                            Text("Every Claude session can make, edit and switch automations, which then run unattended on their cadence. See Anthropic, through Automations in docs/privacy-and-security.md.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
                             SettingRow(title: "Keep sessions running",

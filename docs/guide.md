@@ -439,7 +439,7 @@ run when you pick it, and shown in a pane. It needs [Bun](https://bun.sh) on zsh
 ## Automations
 
 Automations run a Claude prompt for you on a cadence, without opening anything. They are always on: Settings has an **Automations**
-page, and an automation fires once you save it (each has its own on and off switch). An
+page, and a saved automation fires on its cadence from its first slot (each has its own on and off switch). An
 automation is a name, a prompt (sent to Claude as written, as the first message), a folder (a project, or Home), an
 optional agent (of that folder: Home has only your own, in `~/.claude/agents`, so to use a repo's agent choose that repo), a time and its permissions. Pick the time from the presets: every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12
 hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now** tries one before you leave it to the clock.

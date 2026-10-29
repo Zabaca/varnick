@@ -574,7 +574,7 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   a session you leave unattended with the same permissions.
 - **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no
   switch (it had one, off by default, until 2026-10-29; ADR 0040's amendment), so saving an automation is the only consent a run has: it fires on its cadence
-  once it is saved, whoever saved it. Every Claude session started or restarted afterwards can list, make, edit and turn on or off your automations through Varnick's tools
+  from its first slot, whoever saved it. Every Claude session started or restarted afterwards can list, make, edit and turn on or off your automations through Varnick's tools
   (not a run's own session, and not behind Panel access). Claude Code asks you before each call unless Skip permissions is on, which is its own check. What a
   session writes becomes a prompt that runs on a cadence while you are away, so a session that reads something hostile can be steered
   into making one. A session may follow Skip permissions as a prompt you type does, choose Ask or Allowed tools only, and switch an
