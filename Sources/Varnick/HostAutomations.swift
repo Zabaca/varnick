@@ -87,7 +87,7 @@ final class HostAutomationStore: ObservableObject {
     @Published var editing: Editing?
     /// What Run now answered, by automation.
     @Published private(set) var notes: [UUID: String] = [:]
-    /// The hosts' listings' tabs that are runs nobody opened, by host: kept out of the lists while Automations is on, and held here for their views and for
+    /// The hosts' listings' tabs that are runs nobody opened, by host: kept out of the lists, and held here for their views and for
     /// opening a going run on another Mac.
     private(set) var runTabs: [String: [PeerTab]] = [:]
     /// How many unseen views of a host's runs this Mac holds at once. Each is an ssh channel on the connection the panes share, and sshd allows ten
@@ -239,25 +239,20 @@ final class HostAutomationStore: ObservableObject {
 // MARK: The model's side
 
 extension LauncherModel {
-    /// A host's listing without its run tabs while Automations is on (the session list, the board's cards, the remembered tabs and the marks read what is
-    /// left), with the run tabs set aside in the store; with the switch off every tab is an ordinary tab, so nothing runs out of sight.
+    /// A host's listing without its run tabs (the session list, the board's cards, the remembered tabs and the marks read what is left), with the
+    /// run tabs set aside in the store.
     func listingWithoutRuns(_ found: [PeerTab]?, for host: String) -> [PeerTab]? {
         guard let found else {
             HostAutomationStore.shared.take(runTabs: [], from: host)
             return nil
         }
-        guard Settings.shared.automationsOn else {
-            HostAutomationStore.shared.take(runTabs: [], from: host)
-            return found
-        }
         HostAutomationStore.shared.take(runTabs: found.filter { $0.run != nil }, from: host)
         return found.filter { $0.run == nil }
     }
 
-    /// At the minute check and after a wake, while Automations is on: each headless host is asked for its tabs, which adopts the runs it started for
+    /// At the minute check and after a wake: each headless host is asked for its tabs, which adopts the runs it started for
     /// this Mac (`adoptHostRuns`, from `updatePeerTabs`). `only` asks one host at once, after a Run now.
     func followHostRuns(only host: String? = nil) {
-        guard Settings.shared.automationsOn else { return }
         for peer in HostAutomationStore.shared.askableHosts where host == nil || peer.id == host {
             let id = peer.id
             Task { [weak self] in
@@ -273,7 +268,7 @@ extension LauncherModel {
     /// session this Mac controls there does. A tab here that was a run's and that the host no longer marks (taken over elsewhere, or released) is an
     /// ordinary tab from now on.
     func adoptHostRuns(_ found: [PeerTab], on host: String) {
-        guard Settings.shared.automationsOn, let peer = PeerManager.shared.peers.first(where: { $0.id == host }), peer.info?.headless == true else { return }
+        guard let peer = PeerManager.shared.peers.first(where: { $0.id == host }), peer.info?.headless == true else { return }
         var changed = false
         for listing in found {
             guard let id = UUID(uuidString: listing.tab) else { continue }

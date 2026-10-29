@@ -11,7 +11,6 @@ import VarnickPeer
 enum AutomationRefusal: Error {
     case unreadable
     case versionDiffers
-    case off
     case starting
     case noPane
     /// The call came from an automation's own run, whose session never has these tools: a request named it by its pane's id anyway.
@@ -30,7 +29,6 @@ enum AutomationRefusal: Error {
         switch self {
         case .unreadable: "Varnick couldn't read the request"
         case .versionDiffers: ScreenRefusal.restartThisSession
-        case .off: "Automations is off in Varnick's Settings › Experimental"
         case .starting: "Varnick is still starting"
         case .noPane: "No Claude session in Varnick's panes on this Mac has this pane id"
         case .fromRun: "An automation's own run, and a Task's, may not make, change or list automations"
@@ -46,7 +44,6 @@ enum AutomationRefusal: Error {
         switch self {
         case .unreadable: "unreadable"
         case .versionDiffers: "version"
-        case .off: "off"
         case .starting: "starting"
         case .noPane: "no pane"
         case .fromRun: "from a run"
@@ -87,9 +84,8 @@ final class AutomationAccess {
         return PeerJSON.line(reply)
     }
 
-    /// In order: the switch, Varnick starting, the pane (a Claude pane on this Mac, not a run's), the file being readable, then the tool.
+    /// In order: Varnick starting, the pane (a Claude pane on this Mac, not a run's), the file being readable, then the tool.
     private func run(_ request: AutomationRequest) throws -> String {
-        guard Settings.shared.automationsOn else { throw AutomationRefusal.off }
         guard let model = PeerManager.shared.model else { throw AutomationRefusal.starting }
         let caller = try callingPane(request.pane, in: model)
         guard !caller.record.isRun else { throw AutomationRefusal.fromRun }

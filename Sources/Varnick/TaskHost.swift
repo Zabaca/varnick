@@ -84,8 +84,7 @@ final class TaskHost {
         advance(id, .stop(reason: reason))
     }
 
-    /// Tasks is turned off: every Run that goes is stopped, and with `releasing` the hidden tabs of Runs nobody opened become ordinary tabs, as
-    /// Automations off does for runs.
+    /// Tasks is turned off: every Run that goes is stopped, and with `releasing` the hidden tabs of Runs nobody opened become ordinary tabs.
     func stopAll(releasing: Bool) {
         guard let model else { return }
         for run in model.taskRuns.runs where run.trigger.automation == nil && run.trigger.parent == nil && run.state.isGoing { stopRun(run.id, reason: "Stopped: Tasks was turned off") }

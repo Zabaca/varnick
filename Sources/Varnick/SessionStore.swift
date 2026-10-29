@@ -72,7 +72,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var automation: UUID?
 
     /// A run nobody has opened: its tab is kept out of the strip, the session list, the board, Recent and search until the user opens it, from the
-    /// board's Runs tab or a notice. Cleared when the tab is shown, taken over, or Automations is turned off (`ClaudeTab.isHiddenRun`).
+    /// board's Runs tab or a notice. Cleared when the tab is shown, or taken over (`ClaudeTab.isHiddenRun`).
     var runUnopened: Bool?
 
     /// The Task's Run whose step this pane is (option 01 of `work-cant-be-saved-or-chained`, slice 2a), for the whole life of the record. Like

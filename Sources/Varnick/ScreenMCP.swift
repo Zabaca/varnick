@@ -236,8 +236,8 @@ enum ScreenMCP {
         static let panel = Sets(rawValue: 2)
         /// `notify` (option 04 of `phone-page-is-only-a-browser-tab`): in every Claude pane, whatever Screen access says.
         static let notify = Sets(rawValue: 4)
-        /// The automation tools (option 01 of `prompts-cant-run-on-a-schedule`, slice 3): in every Claude pane started while Automations is on, a run's
-        /// excepted, and behind no switch of their own.
+        /// The automation tools (option 01 of `prompts-cant-run-on-a-schedule`, slice 3): in every Claude pane, a run's excepted, and behind no
+        /// switch of their own.
         static let automations = Sets(rawValue: 8)
         /// The task tools (option 01 of `work-cant-be-saved-or-chained`, slice 2a): in every Claude pane started while Tasks is on, a run's excepted.
         static let tasks = Sets(rawValue: 16)

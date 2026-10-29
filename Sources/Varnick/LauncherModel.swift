@@ -37,12 +37,11 @@ final class LauncherModel: ObservableObject {
             strip.watch(tabs)
         }
     }
-    /// This Mac's automations, their Runs (a file of its own, option 01 of `work-cant-be-saved-or-chained`), the runner that fires them
-    /// (`startAutomations`), and the switch's watch (option 01 of `prompts-cant-run-on-a-schedule`).
+    /// This Mac's automations, their Runs (a file of its own, option 01 of `work-cant-be-saved-or-chained`) and the runner that fires them
+    /// (`startAutomations`).
     let automations = AutomationStore()
     let taskRuns = TaskRunStore()
     let automationRunner = AutomationRunner()
-    var automationSwitch: AnyCancellable?
     /// The tabs a person sees: `tabs` less the runs of automations nobody has opened (`ClaudeTab.isHiddenRun`). Every list of tabs for the eye
     /// reads this: the strip, the projects column, the session list and its selection, the board's cards, the keys' rows. Lookups, saving, the
     /// launch sweep, the notifier and the host's listing read `tabs`.
@@ -1815,7 +1814,7 @@ final class LauncherModel: ObservableObject {
     func updatePeerTabs(_ found: [PeerTab]?, for id: String, sentAt: Date = Date()) {
         // An answer to an ask sent before the one already taken in is older news, whichever came back first.
         if found != nil, let taken = peerOpenSessionsSentAt[id], sentAt < taken { return }
-        // The lists read the host's tabs less the runs nobody opened (while Automations is on); this Mac's views of its own runs read them whole.
+        // The lists read the host's tabs less the runs nobody opened; this Mac's views of its own runs read them whole.
         let listed = listingWithoutRuns(found, for: id)
         if peerTabs[id] != listed { peerTabs[id] = listed }
         updatePeerOpenSessions(listed?.flatMap(\.openSessions), for: id, sentAt: sentAt)
