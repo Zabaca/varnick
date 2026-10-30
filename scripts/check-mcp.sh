@@ -173,8 +173,8 @@ long_title = called({"title": "x" * 200, "body": "y" * 500})
 if long_title.get("isError") is not False or "title was cut to 80" not in long_title["content"][0]["text"] or "body was cut to 300" not in long_title["content"][0]["text"]:
     fail("a notify call with long text did not say what it cut: %s" % long_title)
 
-# The automation tools (option 01 of prompts-cant-run-on-a-schedule, slice 3): their own set, named by the app only while Automations is on and never
-# for an automation's run. Named alone it lists the four; with the others it comes after Panel access's and before notify; with none named the
+# The automation tools (option 01 of prompts-cant-run-on-a-schedule, slice 3): their own set, named by the app for every pane but an automation's
+# run. Named alone it lists the four; with the others it comes after Panel access's and before notify; with none named the
 # server still lists the screen tools alone. NEVER call one of these tools here: with Varnick running, the call reaches it and makes a real
 # automation. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
 automation_tools = ["automations_list", "automation_create", "automation_edit", "automation_switch"]

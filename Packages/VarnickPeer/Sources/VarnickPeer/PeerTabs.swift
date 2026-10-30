@@ -311,7 +311,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
     public var panes: [PeerPane]
     /// The file tree shows as a column beside the panes (protocol 26). Nil: it doesn't, or the host has none.
     public var showsFiles: Bool?
-    /// The tab is a run nobody opened (protocol 29): the Macs drop it from their lists while their Automations switch is on, and the Phone page lists
+    /// The tab is a run nobody opened (protocol 29): the Macs drop it from their lists, and the Phone page lists
     /// it under Runs. Nil: an ordinary tab.
     public var run: PeerRunMark?
 

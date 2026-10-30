@@ -61,7 +61,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
-  Phone page, the Problems board, the Outline, Tasks and Automations (Experimental, below).
+  Phone page, the Problems board, the Outline and Tasks (Experimental, below); Automations are always on (below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -436,27 +436,10 @@ run when you pick it, and shown in a pane. It needs [Bun](https://bun.sh) on zsh
 - **Rights.** An app runs with your rights, and its panes have Varnick's macOS permissions. The catalog is
   reviewed but not sandboxed: see [privacy and security](privacy-and-security.md#custom-apps).
 
-## Experimental
+## Automations
 
-Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
-
-**Problems board** is for a project that plans its work in `docs/problems/` the way Varnick's own repository
-does (problems, options, the `/work` skill and the planner and builder agents, which live in that
-repository's `.claude/`). On, the session board has a Problems tab beside Sessions (`!problems`, and Tab switches
-between them) that reads your projects and Home (a `docs/problems/` in Home shows too, its cards marked Home), and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
-or option it works on. Off, the board shows Sessions only, `!problems` is not listed, and sessions started
-after that get none of those hooks; sessions already running keep the hooks they started with. Links already
-recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
-for them, and a headless host decides with `scripts/install-peer.sh <user@host> --problems` or `--no-problems` (a host
-that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
-
-**Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
-the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
-does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
-and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
-what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
-
-**Automations** run a Claude prompt for you on a cadence, without opening anything. On, Settings gets an **Automations** page. An
+Automations run a Claude prompt for you on a cadence, without opening anything. They are always on: Settings has an **Automations**
+page, and a saved automation fires on its cadence from its first slot (each has its own on and off switch). An
 automation is a name, a prompt (sent to Claude as written, as the first message), a folder (a project, or Home), an
 optional agent (of that folder: Home has only your own, in `~/.claude/agents`, so to use a repo's agent choose that repo), a time and its permissions. Pick the time from the presets: every 15 or 30 minutes, every 1, 2, 3, 4, 6 or 12
 hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now** tries one before you leave it to the clock.
@@ -465,7 +448,7 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   bar menu. It tells you as any session does: Done, Needs you, an error, or a message if the prompt asks for one ("…and notify me
   with the count"). Open while it works and you watch it live; open after it ended and its conversation is resumed in a new tab.
   The Runs tab also lists the slots that did not run and why: skipped, missed, couldn't start.
-- **Claude sessions can manage them.** With Automations on, every Claude session you start (or restart) lists four Varnick
+- **Claude sessions can manage them.** Every Claude session you start (or restart) lists four Varnick
   tools: list, make, edit and turn on or off an automation, so "run this every weekday morning in this repo" works. There is no
   approval step of Varnick's: with Skip permissions off, Claude Code asks before each call. A session can't set Skip, edit
   an automation you set to Skip (it can switch it), delete one or run one now, and a run's own session never has the tools.
@@ -486,10 +469,28 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   timer that its installer adds once (`scripts/install-peer.sh <user@host> --automations`; the section says when the timer isn't running). The Mac
   that last saved it holds each run and raises its notices; the Runs tab lists the host's runs beside this Mac's, and the phone lists runs nobody has
   opened under **Runs**. A host runs the Claude prompt only ("On this site" needs a Mac), and a Claude session's tools manage this Mac's automations only.
-  Each Mac's Automations switch is its own: a host fires on whatever it says, and turning it off here only shows this Mac's views of those runs as ordinary tabs.
-- Turning the switch off stops every run from starting and shows the tabs of runs you haven't opened as ordinary tabs. The
-  automations are kept in `automations.json` in Varnick's support folder (each is a cadence and the Task it runs, for now always the
-  built-in Claude prompt), and what became of each run in `runs.json` beside it.
+- **Where they are kept:** the automations are in `automations.json` in Varnick's support folder (each is a cadence and the Task it runs,
+  for now always the built-in Claude prompt), and what became of each run in `runs.json` beside it.
+
+## Experimental
+
+Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
+
+**Problems board** is for a project that plans its work in `docs/problems/` the way Varnick's own repository
+does (problems, options, the `/work` skill and the planner and builder agents, which live in that
+repository's `.claude/`). On, the session board has a Problems tab beside Sessions (`!problems`, and Tab switches
+between them) that reads your projects and Home (a `docs/problems/` in Home shows too, its cards marked Home), and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
+or option it works on. Off, the board shows Sessions only, `!problems` is not listed, and sessions started
+after that get none of those hooks; sessions already running keep the hooks they started with. Links already
+recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
+for them, and a headless host decides with `scripts/install-peer.sh <user@host> --problems` or `--no-problems` (a host
+that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
+
+**Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
+the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
+does not list the Outline, and Claude sessions' Outline tools stay listed but refuse. Its shortcut keeps its binding while hidden,
+and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
+what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
 
 **Tasks** hands Varnick something to do on a website: find a fact ("how much is delivery to Canada"), or fill in forms ("create an
 account for Robin Vale"). On, `!task` and the split picker's Website tile open a **Website pane**, a browser of Varnick's own. It has none

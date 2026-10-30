@@ -229,9 +229,9 @@ final class AutomationRunner {
         }
     }
 
-    /// Tends the runs that exist, then fires what is due. Off while Automations is off, and while either file (the automations or the runs) can't be read.
+    /// Tends the runs that exist, then fires what is due. Off while either file (the automations or the runs) can't be read.
     func check(now: Date = Date()) {
-        guard let model, Settings.shared.automationsOn else { return }
+        guard let model else { return }
         model.followHostRuns()
         let store = model.automations, runs = model.taskRuns
         guard model.automationFilesProblem == nil else { return }
@@ -274,38 +274,24 @@ extension LauncherModel {
     /// deletes asks this, so Settings and the tools agree.
     var automationFilesProblem: String? { automations.problem ?? taskRuns.problem }
 
-    /// Hands the model to the runner once the saved tabs are restored (`applicationDidFinishLaunching`, after `cleanUpAfterLastRun`): runs left
-    /// unopened by a build with Automations off are released, and so is a hidden run tab that no Run names, then the first check, which catches a
-    /// missed slot up once.
+    /// Hands the model to the runner once the saved tabs are restored (`applicationDidFinishLaunching`, after `cleanUpAfterLastRun`): a hidden run
+    /// tab that no Run names is released, then the first check, which catches a missed slot up once. The first launch after the Automations switch
+    /// was retired starts every automation's clock from now, as turning the switch on did: nothing before it is caught up.
     func startAutomations() {
-        if !Settings.shared.automationsOn, taskRuns.problem == nil { releaseRuns() }
         releaseUnnamedRuns()
-        automationSwitch = Settings.shared.$automationsOn.removeDuplicates().dropFirst().sink { [weak self] on in
-            // The publisher sends before the value is stored, so the check reads it from the next turn of the run loop.
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if on {
-                    // Switched on: nothing before now is caught up, only what happens after.
-                    let now = Date()
-                    for automation in self.automations.automations { self.automations.update(automation.id) { $0.lastSlot = now } }
-                    self.automationRunner.check()
-                } else {
-                    self.releaseRuns()
-                }
-                self.strip.refresh()
-                self.objectWillChange.send()
-            }
+        if Settings.shared.automationsWereOff {
+            let now = Date()
+            for automation in automations.automations { automations.update(automation.id) { $0.lastSlot = now } }
         }
         HostAutomationStore.shared.model = self
         automationRunner.start(model: self)
     }
 
-    /// Every run tab not yet opened becomes an ordinary tab: when Automations is turned off (nothing runs out of sight with the switch off), and
-    /// when an automation is deleted (`deleteAutomation`). An automation's own switch releases nothing: its unopened runs stay hidden and are
-    /// still ended by their limits.
-    func releaseRuns(of automation: UUID? = nil) {
-        // A Task's Run tab is the Tasks switch's to release, never the Automations switch's.
-        releaseHiddenRuns { pane in pane.record.taskRun == nil && !pane.record.isVoice && (automation == nil || pane.record.automation == automation) }
+    /// An automation's run tabs not yet opened become ordinary tabs when it is deleted (`deleteAutomation`). An automation's own switch releases
+    /// nothing: its unopened runs stay hidden and are still ended by their limits.
+    func releaseRuns(of automation: UUID) {
+        // A Task's Run tab is the Tasks switch's to release.
+        releaseHiddenRuns { pane in pane.record.taskRun == nil && !pane.record.isVoice && pane.record.automation == automation }
     }
 
     /// At launch, before the first check: a hidden run tab that no Run names becomes an ordinary tab. That covers an automations file of version 1,
@@ -358,7 +344,6 @@ extension LauncherModel {
 
     /// Why a run can't be started by hand now, nil when it can.
     func runNowRefusal(of id: UUID) -> String? {
-        guard Settings.shared.automationsOn else { return "Automations is off" }
         if let problem = automationFilesProblem { return problem }
         guard let automation = automations.automation(id) else { return "That automation is gone" }
         tendRuns(of: id)

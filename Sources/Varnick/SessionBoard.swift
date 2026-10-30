@@ -66,7 +66,7 @@ extension BackgroundWork {
 /// The session board (ADR 0010): this Mac's Claude panes and the paired Macs' open sessions in three columns
 /// by turn, and the sessions marked done. Opened by ⌘⇧B and `!kanban` through `LauncherModel.showBoard`, which shows it in place of the panel's content like Settings.
 /// Beside Sessions it has a Problems tab (`ProblemsBoard`, `!problems`) while the Problems board switch (Settings › Experimental) is on, and a
-/// Runs tab (`RunsBoard`) while Automations is on; Sessions alone without them. ⌘⇧B opens whichever was shown last.
+/// Runs tab (`RunsBoard`) always. ⌘⇧B opens whichever was shown last.
 @MainActor
 final class SessionBoard: ObservableObject {
     enum Tab { case sessions, problems, runs }
@@ -283,9 +283,6 @@ final class SessionBoard: ObservableObject {
     let problems = ProblemsBoard()
     /// The Runs tab: every run of every automation, newest first.
     let runs = RunsBoard()
-    private var runsSwitch: AnyCancellable?
-    /// Tasks keeps the Runs tab too (their Runs are listed there), so the tab goes only when both switches are off.
-    private var tasksSwitch: AnyCancellable?
     /// Turning the switch off while Problems shows (Settings opens over the board) puts the board back on Sessions. The publisher sends
     /// before the value is stored, so this reads the value it is sent.
     private var problemsSwitch: AnyCancellable?
@@ -294,20 +291,12 @@ final class SessionBoard: ObservableObject {
         problemsSwitch = Settings.shared.$problemsBoard.removeDuplicates().sink { [weak self] on in
             if !on { self?.show(.sessions) }
         }
-        runsSwitch = Settings.shared.$automationsOn.removeDuplicates().sink { [weak self] on in
-            if !on, !Settings.shared.tasksOn, self?.tab == .runs { self?.show(.sessions) }
-        }
-        tasksSwitch = Settings.shared.$tasksOn.removeDuplicates().sink { [weak self] on in
-            if !on, !Settings.shared.automationsOn, self?.tab == .runs { self?.show(.sessions) }
-        }
     }
 
     /// Whether the board has a Problems tab, and the key that switches to it.
     var hasProblems: Bool { Settings.shared.problemsBoard }
-    /// Whether it has a Runs tab (Automations or Tasks is on).
-    var hasRuns: Bool { Settings.shared.automationsOn || Settings.shared.tasksOn }
     /// The tabs there are, in the order Tab goes through them.
-    var availableTabs: [Tab] { [.sessions] + (hasProblems ? [.problems] : []) + (hasRuns ? [.runs] : []) }
+    var availableTabs: [Tab] { [.sessions] + (hasProblems ? [.problems] : []) + [.runs] }
 
     weak var model: LauncherModel? {
         didSet {
@@ -385,7 +374,7 @@ final class SessionBoard: ObservableObject {
     /// Tab, ⇧Tab and `!problems`. Problems reads its files only while it shows; the cards keep their tick on both tabs, and returning to
     /// Sessions asks the paired Macs again.
     func show(_ requested: Tab) {
-        let next = (requested == .problems && !hasProblems) || (requested == .runs && !hasRuns) ? Tab.sessions : requested
+        let next = requested == .problems && !hasProblems ? Tab.sessions : requested
         guard next != tab else { return }
         tab = next
         confirming = nil
@@ -712,7 +701,7 @@ struct SessionBoardView: View {
                 Image(systemName: "rectangle.split.3x1").foregroundStyle(.secondary)
                 tabButton("Sessions", .sessions)
                 if board.hasProblems { tabButton("Problems", .problems) }
-                if board.hasRuns { tabButton("Runs", .runs) }
+                tabButton("Runs", .runs)
                 Spacer()
                 OpenHint(problems: board.problems, onProblems: board.tab == .problems)
                 if board.tab == .sessions {

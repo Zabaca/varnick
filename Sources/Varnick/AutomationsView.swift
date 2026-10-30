@@ -1,7 +1,7 @@
 import SwiftUI
 import VarnickPeer
 
-/// Settings › Automations (option 01 of `prompts-cant-run-on-a-schedule`, slice 1: this Mac). Only while Automations is on in Settings › Experimental.
+/// Settings › Automations (option 01 of `prompts-cant-run-on-a-schedule`, slice 1: this Mac).
 /// The list of this Mac's automations with each one's switch, next run, last outcome and Run now, and an editor for the fields.
 struct AutomationsSettingsView: View {
     @ObservedObject var store: AutomationStore
@@ -109,7 +109,7 @@ struct AutomationsSettingsView: View {
                 }
                 Spacer(minLength: 12)
                 Button("Run now") { notes[automation.id] = model.runNow(automation.id) }
-                    .disabled(blocked || !settings.automationsOn)
+                    .disabled(blocked)
                 Button("Edit") {
                     editingIsNew = false
                     // Opening the editor is seeing the mark.

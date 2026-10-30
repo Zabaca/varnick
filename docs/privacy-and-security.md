@@ -219,7 +219,7 @@ Experimental › **Tasks**, off by default) is carried out by Varnick in steps, 
 
 ### Anthropic, through Automations
 
-An automation (Settings › Experimental › **Automations**, off by default) starts a Claude session on a cadence, with the prompt you
+An automation (Settings › **Automations**, which every install has) starts a Claude session on a cadence, with the prompt you
 saved. It is a session like one you type: its prompt, what Claude reads and the transcript go to Anthropic on your plan, and are
 kept in Claude Code's own folders on this Mac. Nothing else leaves because of it. A run never gets Screen access's or Panel access's
 tools, so what those send is not sent. Each run is at least one model turn and counts toward your plan's usage limits; nothing
@@ -230,7 +230,7 @@ phone; a run's tab is listed to them marked as a run nobody opened, which other 
 
 An automation kept on a headless host (Settings › Automations, a section for each) is saved on that host over ssh, from any Mac it lists: its name, prompt, folder, cadence and permissions are in `automations.json` there, and what became of its runs in `runs.json`, both owner-only in the relay's state folder, and the prompt goes to Anthropic from that host with the session. The host fires it from a systemd timer that runs its relay once a minute (added with the installer's `--automations`); nothing else is resident.
 
-With Automations on, a Claude session you start can also list, make, edit and switch automations (below). A session that lists
+A Claude session you start can also list, make, edit and switch automations (below). A session that lists
 them sends every automation's name, prompt, folder and cadence to Anthropic with the rest of that session, as anything else it reads
 in the conversation; the tools send nothing else, and the list never leaves this Mac but through that session.
 
@@ -560,7 +560,7 @@ any other folder. How is in `docs/agents/where-it-breaks.md`.
 
 ### Automations act while you are away
 
-An automation (Settings › Experimental › Automations) starts Claude sessions with nobody there to answer a dialog. Which tools it
+An automation (Settings › Automations) starts Claude sessions with nobody there to answer a dialog. Which tools it
 may use without asking is yours to set per automation: by default it follows Skip permissions, as a prompt you type does, and an
 install that predates that setting has it on, so such a run runs any command, edit and fetch without asking, in its folder and as your
 account. The choices that narrow it are Ask (a command that is not allowed waits for you, and Needs you is raised) and Allowed tools only
@@ -572,9 +572,10 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   A headless host has no screen and no macOS grants, so an automation kept there reaches only what its account can; it suits one that allows broad shell use, and with permission checks skipped every command a run tries is allowed, as the host's own user, with nobody there to answer. A run there follows the host's own Skip permissions unless the automation says otherwise.
 - **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
   a session you leave unattended with the same permissions.
-- **A session can set up unattended runs, with no approval step of Varnick's.** With Automations on, every Claude session started or
-  restarted afterwards can list, make, edit and turn on or off your automations through Varnick's tools (not a run's own session,
-  and not behind Panel access). Claude Code asks you before each call unless Skip permissions is on, which is its own check. What a
+- **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no
+  switch (it had one, off by default, until 2026-10-29; ADR 0040's amendment), so saving an automation is the only consent a run has: it fires on its cadence
+  from its first slot, whoever saved it. Every Claude session started or restarted afterwards can list, make, edit and turn on or off your automations through Varnick's tools
+  (not a run's own session, and not behind Panel access). Claude Code asks you before each call unless Skip permissions is on, which is its own check. What a
   session writes becomes a prompt that runs on a cadence while you are away, so a session that reads something hostile can be steered
   into making one. A session may follow Skip permissions as a prompt you type does, choose Ask or Allowed tools only, and switch an
   automation you set to Skip. It can't set Skip, edit an automation set to Skip, delete one or run one now, **but it can grant a run tool

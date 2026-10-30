@@ -220,6 +220,8 @@ final class Settings: ObservableObject {
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
+    /// This launch found the retired Automations switch stored off. Read once by `startAutomations`; never stored.
+    let automationsWereOff: Bool
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
     /// started after it changes; use `Zmx.isEnabled` to act on it, since the binary may be missing.
     @Published var keepSessionsRunning: Bool { didSet { defaults.set(keepSessionsRunning, forKey: Self.keepSessionsRunningKey) } }
@@ -239,11 +241,6 @@ final class Settings: ObservableObject {
     /// off means no command, no tile, and a running task stops at its next step.
     @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
     static let tasksOnKey = "tasksOn"
-    /// Experimental (Settings › Experimental): Automations, prompts that run on a cadence as Claude sessions kept out of sight (option 01 of
-    /// `prompts-cant-run-on-a-schedule`), Settings › Automations and the board's Runs tab. Off by default, for every install; off means nothing
-    /// fires and every run tab not yet opened shows as an ordinary tab. The file is kept either way.
-    @Published var automationsOn: Bool { didSet { defaults.set(automationsOn, forKey: Self.automationsOnKey) } }
-    static let automationsOnKey = "automationsOn"
     /// Experimental: "Answer with Varnick's own steps (Jev)", off by default and absent reads off. Off, the voice session answers Hey Varnick; on, the
     /// older pipeline does and the voice session is off. It replaced `voiceSessionOn`, never read now: ADR 0042's amendment says why.
     @Published var ownStepsOn: Bool { didSet { defaults.set(ownStepsOn, forKey: Self.ownStepsOnKey) } }
@@ -431,13 +428,16 @@ final class Settings: ObservableObject {
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
         tasksOn = defaults.bool(forKey: Self.tasksOnKey)
-        automationsOn = defaults.bool(forKey: Self.automationsOnKey)
         ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
         // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
         defaults.removeObject(forKey: "voiceSessionOn")
         // The retired Panel access and Sessions can open panes switches (read by builds up to 2026-10-17): dropped, and not carried over (ClaudeSession.launchClaude says who gets the sets now).
         defaults.removeObject(forKey: "panelAccess")
         defaults.removeObject(forKey: "sessionsOpenPanes")
+        // The retired Automations switch (read by builds up to 2026-10-29): dropped, and not carried over (ADR 0040's amendment of that date).
+        // Stored off, its automations restart their clocks at this launch (`startAutomations`); stored on, or never stored, they keep theirs.
+        automationsWereOff = defaults.object(forKey: "automationsOn") as? Bool == false
+        defaults.removeObject(forKey: "automationsOn")
         projectFolders = defaults.stringArray(forKey: "projectFolders") ?? Self.defaultProjectFolders
         fontSize = defaults.object(forKey: "terminalFontSize") as? Double ?? Self.defaultFontSize
         tabOverflow = defaults.string(forKey: "tabOverflow").flatMap(TabOverflow.init) ?? .shrink
@@ -672,7 +672,7 @@ struct SettingsView: View {
 
     private var section: SettingsSection {
         let chosen = SettingsSection(rawValue: sectionID) ?? .claude
-        return (chosen == .automations && !settings.automationsOn) || (chosen == .tasks && !settings.tasksOn) ? .claude : chosen
+        return chosen == .tasks && !settings.tasksOn ? .claude : chosen
     }
 
     var body: some View {
@@ -727,6 +727,9 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
+                                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                            Text("Every Claude session can make, edit and switch automations, which then run unattended on their cadence. See Anthropic, through Automations in docs/privacy-and-security.md.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
                             SettingRow(title: "Keep sessions running",
@@ -1043,10 +1046,6 @@ struct SettingsView: View {
                                        detail: "!task's On this site, or the split picker's Website tile, opens a browser of Varnick's own, without your logins, where you say what to do on a site and Varnick does it step by step; !task also starts saved Tasks (JSON files in .varnick/tasks) as Runs on the board. You type passwords and card numbers yourself, every form submit but a search waits for your Allow, and a click, a key or Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) pauses or ends it. Sessions you start can list and start Tasks, steps go to TypeSafe or Claude on your plan (see Anthropic, through Tasks in docs/privacy-and-security.md), and turning it off stops every Run.") {
                                 Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                            SettingRow(title: "Automations",
-                                       detail: "Starts your prompts as Claude sessions on a cadence, out of sight, while Varnick runs on this Mac: Settings › Automations makes them and the board's Runs tab shows each run. Runs draw on your Claude plan, follow Skip permissions unless the automation says otherwise and can reach the screen through Varnick's permissions (SECURITY.md); sessions you start can make and edit automations, but not set Skip, delete or run one. Needs Keep sessions running; a headless host fires its own automations whatever this says.") {
-                                Toggle("", isOn: $settings.automationsOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
                             SettingRow(title: "Answer with Varnick's own steps (Jev)",
                                        detail: "Hey Varnick answers with Varnick's own steps instead of the Claude Code voice session: it searches your history, bookmarks and sessions, answers out loud and opens nothing. Your words, your projects and the top results go to TypeSafe when the relevance filter is on TypeSafe with a key, to Anthropic to write the answer (and to judge the results without TypeSafe) when Text generation is on Claude Code, and spoken answers to ElevenLabs if you chose its voice. With the filter On this Mac nothing goes to TypeSafe and results are judged here; see docs/privacy-and-security.md.") {
                                 if settings.ownStepsOn, !settings.heyVarnick {
@@ -1112,7 +1111,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(spacing: 2) {
-            ForEach(SettingsSection.allCases.filter { ($0 != .automations || settings.automationsOn) && ($0 != .tasks || settings.tasksOn) }) { item in
+            ForEach(SettingsSection.allCases.filter { $0 != .tasks || settings.tasksOn }) { item in
                 let selected = item == section
                 Button { sectionID = item.rawValue } label: {
                     HStack(spacing: 8) {
