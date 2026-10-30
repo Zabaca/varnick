@@ -23,6 +23,7 @@ Each meaning lives in one place; everywhere else points to it. Agents in `.claud
 - Build and run through the `Makefile` (`make build`, `make run`): it also codesigns and fetches the prebuilt `mlx.metallib` that plain `swift build` lacks.
 - Restarts are the user's call unless they ask for one. Restart with `make run` (builds first) or `scripts/restart.sh`: both start Varnick through launchd, so it holds its own macOS permissions rather than the terminal's (`docs/agents/where-it-breaks.md`, Signing). Claude sessions survive a restart and reconnect while Keep sessions running is on; with it off, they end.
 - No test target yet: verification is `make build`, then checking by hand after a restart.
+- The user is never a blocker in a merge. When the `reviewer` agent's verdict on a change is merge and `make build` and the `make check-*` targets are clean on the merged result, merge it into `main`, push `main` to `origin` and delete the merged branch and its worktree without asking. Hold, and say why, when the review holds. Still the user's word: restarts (above), force pushes, releases, and anything that spends money. Delete only branches and worktrees you made or that your merge made redundant, never another session's.
 
 ## Coding standards
 
