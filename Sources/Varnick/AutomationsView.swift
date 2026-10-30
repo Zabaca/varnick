@@ -55,7 +55,7 @@ struct AutomationsSettingsView: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Each automation is a prompt this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, out of sight until you open it from the board's Runs tab or a notice; a slot missed by under 12 hours runs at the next wake or launch. Each run draws on your Claude plan, and one run of an automation goes at a time. Sessions can list, make, edit and switch these, and a mark shows what they did until you open, switch or press Seen; only you can delete one, run one now or set Skip.")
+            Text("Each automation is a prompt this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, out of sight until you open it from the board's Runs tab or a notice; a slot missed by under 12 hours runs at the next wake or launch. Each run draws on your Claude plan, and one run of an automation goes at a time. Sessions can list, make, edit and switch these, and your listed phones can also run and delete them; a mark shows what they did until you open, switch or press Seen, and only you here can set Skip.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
             if let problem = store.problem {

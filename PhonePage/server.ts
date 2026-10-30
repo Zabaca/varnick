@@ -18,7 +18,7 @@ import { Watches, type WatchData } from "./watcher";
 import { loopbackNote, shapeHome, shapeTab, unlistedPage } from "./home";
 import { hostLinks, hostNodes, parseNodeNames, type HostLink } from "./hosts";
 import { agentsOf, closePane, doneTab, parseAgentsFolder, parseCloseBody, parseDoneBody, parseRestartBody, parseResumeBody, parseSplitBody, parseSplitDir, parseStartBody, reopenTab, restartPane, shapeProjects, splitFiles, splitOffer, splitTab, startSession } from "./launch";
-import { clean, Relay, Slots } from "./relay";
+import { clean, launchTimeoutMs, Relay, Slots } from "./relay";
 import { uuidPattern } from "./json";
 import { decideOpen, endText, isSessionName, parseEndBody, parseTabBody } from "./terminal";
 import { certificateFiles, PortProxy, type CertificateResult, type ProxyWorld } from "./portproxy";
@@ -27,6 +27,7 @@ import { appTitleTag, appTitleToken, iconFiles, isWorkerFetch, manifestFor, page
 import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFile, type Push } from "./pushserver";
 import { Shared } from "./pushwatch";
 import { editFields, parseEditBody, parseReadBody, readFields, shapeListing, type EditAsk, type ReadAsk } from "./outline";
+import { actFields, listFields, parseActBody, shapeListing as shapeAutomations, type ActBody } from "./automations";
 import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
@@ -262,6 +263,8 @@ async function main(): Promise<void> {
     "/voice-worklet.js": { file: "page/voice-worklet.js", type: js },
     "/outline.js": { file: "page/outline.js", type: js },
     "/outlinerules.js": { file: "page/outlinerules.js", type: js },
+    "/automations.js": { file: "page/automations.js", type: js },
+    "/automationsrules.js": { file: "page/automationsrules.js", type: js },
   };
 
   const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
@@ -382,7 +385,7 @@ async function main(): Promise<void> {
     if (refused) return plain(refused.status, refused.reason);
     if (request.method === "POST") {
       if (path !== "/api/end" && path !== "/api/start" && path !== "/api/split" && path !== "/api/close" && path !== "/api/restart" && path !== "/api/done" && path !== "/api/resume" && path !== "/api/take" && !pushPaths.includes(path)
-        && path !== "/api/voice/audio" && path !== "/api/voice/ask" && path !== "/api/outline/read" && path !== "/api/outline/edit") return plain(404, "Not found");
+        && path !== "/api/voice/audio" && path !== "/api/voice/ask" && path !== "/api/outline/read" && path !== "/api/outline/edit" && path !== "/api/automations/act") return plain(404, "Not found");
       let body: unknown;
       try { body = await request.json(); } catch { return plain(400, "Not JSON"); }
       if (pushPaths.includes(path)) {
@@ -405,6 +408,15 @@ async function main(): Promise<void> {
         if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
         const fields = reading ? readFields(parsed.value as ReadAsk) : editFields(parsed.value as EditAsk);
         const answered = shapeListing(await outlineRelay.ask(reading ? "outlineRead" : "outlineEdit", device.id, fields));
+        return json(answered.body, answered.status);
+      }
+      // A Mac's automations (automations.ts): switch one, run it now, make or change one, delete one. A Mac host answers; a headless host's relay refuses.
+      if (path === "/api/automations/act") {
+        const parsed = parseActBody(body);
+        if (!parsed.ok) return json({ ok: false, error: parsed.error }, 400);
+        // A run now starts a session on the Mac, which can take a few seconds (the host waits up to 25).
+        server.timeout(request, 60);
+        const answered = shapeAutomations(await relay.ask("phoneAutomations", device.id, actFields(parsed.value as ActBody), launchTimeoutMs));
         return json(answered.body, answered.status);
       }
       if (path === "/api/end") {
@@ -514,6 +526,10 @@ async function main(): Promise<void> {
       // The host reads the file the pane has, inside the tab's folders, and caps its size: the path is never the page's.
       const read = await relay.ask("file", device.id, ids);
       return read.ok && typeof read.reply.text === "string" ? json({ ok: true, text: read.reply.text }) : json({ ok: false, error: read.ok ? "The host sent no text" : read.error }, 502);
+    }
+    if (path === "/api/automations" && request.method === "GET") {
+      const answered = shapeAutomations(await relay.ask("phoneAutomations", device.id, listFields()));
+      return json(answered.body, answered.status);
     }
     if (path === "/api/projects" && request.method === "GET") {
       const projects = shapeProjects(await relay.ask("projects", device.id));

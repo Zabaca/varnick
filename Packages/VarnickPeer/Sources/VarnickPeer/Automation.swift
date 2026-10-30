@@ -92,14 +92,18 @@ public struct Automation: Codable, Identifiable, Equatable {
 public struct AutomationMark: Codable, Equatable {
     /// "Made", "Edited: prompt, cadence", "Turned on", "Turned off".
     public var what: String
-    /// The title of the session that did it.
+    /// The title of the session that did it, or the device's name.
     public var by: String
     public var at: Date
+    /// `phone` when the change came from the Phone page and `by` is the device's name; nil for a Claude session, whose title `by` is. Optional and left out
+    /// when nil, so a session's mark is written as it was.
+    public var via: String?
 
-    public init(what: String, by: String, at: Date) {
+    public init(what: String, by: String, at: Date, via: String? = nil) {
         self.what = what
         self.by = by
         self.at = at
+        self.via = via
     }
 }
 

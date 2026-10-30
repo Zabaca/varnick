@@ -414,6 +414,16 @@ With Settings › Experimental › Outline on at a Mac, that Mac's Phone page (S
 - **An automation you allowed can add bullets too,** without reading yours (Automations act while you are away, below).
 - **Turn the Outline off, or the page, to stop it.** With the Outline off the Mac refuses every request in the Outline's words, and nothing is read or changed. List only devices you control.
 
+### Your automations, on the Phone page
+
+A Mac's Phone page (Settings › Serve the phone page) has an **Automations** button that lists that Mac's automations and lets a listed device change them (ADR 0040's amendment of 2026-10-29). It is the same tailnet door as the rest of the page, to a device you listed on that Mac:
+
+- **A prompt you type on the phone becomes a recurring, unattended run on the Mac.** The phone sends the name, the prompt, the folder, the agent, the cadence, the working limit, the permissions and the allowed tool rules over the tailnet to that Mac's relay, and the Mac saves them in `automations.json` like any other. The list the phone reads back holds every automation's prompt, so those prompts are on the phone while the view shows; the page keeps none of it in its storage, and the server's log line is the method, the path, the status, the device and the time.
+- **The phone can make a run that does more than a typed prompt does.** A device could already start a session with any prompt in any folder of the Mac, which follows the Mac's Skip permissions setting with you there to answer. An automation has no one to answer, and the phone can write its allowed tool rules (a broad one such as `Bash` is nearly Skip for the shell), as a Claude session can (above). **The phone cannot set Skip permissions** on an automation, and cannot edit one the Mac has set to Skip (it can switch it and run it).
+- **Whoever holds a listed device can do it.** Remove a lost phone in Settings › Peers and it can't, at once. Each change the phone makes is marked on the Mac with the device's name until you open the editor, switch it or press Seen, and the Runs tab shows what it ran.
+- **Delete drops the run list.** The phone asks first, in the page; the Mac then deletes the automation and its Runs, and a run still going stays as an ordinary tab.
+- **A headless host has none of this:** its relay refuses the request, and its automations are edited from a Mac's Settings.
+
 ## What can act as you
 
 ### Custom apps
@@ -584,6 +594,7 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   `automation_edit` take `allowed_tools`), which makes a recurring, unattended writer to your Outline with no approval step of Varnick's; the mark on the
   automation names the rules the session set and stays until you open its editor, switch it or press Seen. Taking the rule out stops future runs
   only (ADR 0040's amendment).
+- **A listed device can make and edit automations too,** from the Phone page, but not set Skip (Your automations, on the Phone page, above).
 - **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
   a session you leave unattended with the same permissions.
 - **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no

@@ -36,6 +36,8 @@ extension HeadlessPeerHost {
         case .voiceAudio, .voiceAsk, .voiceStatus: return .reply(.failure("\(name) is a headless host: Voice mode needs a Mac"))
         // The Outline is a Mac app's file and model (ADR 0030): a headless host has none.
         case .outlineRead, .outlineEdit: return .reply(.failure("\(name) is a headless host: the Outline needs a Mac"))
+        // A headless host's automations are edited from a Mac's Settings (protocol 29), never from a device.
+        case .phoneAutomations: return .reply(.failure("\(name) is a headless host: its automations are edited from a Mac's Settings"))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }

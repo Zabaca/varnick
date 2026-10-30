@@ -12,6 +12,12 @@ public enum PeerProtocol {
     /// and for no other.
     public static func answersAnyVersion(_ op: PeerOp) -> Bool { op == .upgrade || op == .restart }
 
+    /// The requests a listed device is refused, whatever else it may ask: the search sync's `rows` and `pages`, `arrange`, the five automation requests a Mac
+    /// sends a headless host, and the two frozen maintenance requests (ADR 0011). Every other request is a device's to send, and `PeerRelay` lets it.
+    public static func isMacsOnly(_ op: PeerOp) -> Bool {
+        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || answersAnyVersion(op)
+    }
+
     /// The five requests a headless host answers about its automations (protocol 29), for a listed Mac only.
     public static func isAutomationRequest(_ op: PeerOp) -> Bool {
         op == .automations || op == .saveAutomation || op == .deleteAutomation || op == .runAutomation || op == .runOpened
@@ -93,7 +99,7 @@ public struct PresenceFile: Codable, Equatable, Sendable {
     }
 }
 
-public enum PeerOp: String, Codable, Sendable {
+public enum PeerOp: String, Codable, Sendable, CaseIterable {
     case hello
     /// Start a session on the receiving Mac, or start one again with `--resume`; its running Varnick
     /// does it.
@@ -185,6 +191,9 @@ public enum PeerOp: String, Codable, Sendable {
     /// ask; a paired Mac and a headless host are refused (ADR 0046).
     case outlineRead
     case outlineEdit
+    /// A Mac's automations on its Phone page (`PeerPhoneAutomationAsk`; ADR 0040's amendment of 2026-10-29): list, switch, run now, save and delete. A listed device
+    /// may ask; a paired Mac and a headless host are refused. No protocol bump: only a host's own page server sends it.
+    case phoneAutomations
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -805,6 +814,8 @@ public struct PeerRequest: Codable, Sendable {
     public var voice: PeerVoiceAsk?
     /// OutlineRead and OutlineEdit (protocol 34).
     public var outline: PeerOutlineAsk?
+    /// PhoneAutomations: what the phone asks of the Mac's automations.
+    public var phoneAutomation: PeerPhoneAutomationAsk?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -886,6 +897,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// OutlineRead and OutlineEdit (protocol 34): the phone's rows, and what an edit did.
     public var outline: PeerOutlineReply?
+
+    /// PhoneAutomations: the Mac's automations after the ask.
+    public var phoneAutomations: PeerPhoneAutomationReply?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

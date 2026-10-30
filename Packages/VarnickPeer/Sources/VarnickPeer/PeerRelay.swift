@@ -85,8 +85,9 @@ public enum PeerRelay {
         var ownPageServer = false
         if op != .hello {
             let peer = host.lists(head.by)
-            let macsOnly = op == .rows || op == .pages || op == .arrange || PeerProtocol.isAutomationRequest(op)
-                || PeerProtocol.answersAnyVersion(op)
+            // A device is refused the five automation requests of protocol 29 (a Mac's, for a headless host) and may send `phoneAutomations`, which is not among
+            // them: a device gets exactly that one automation request.
+            let macsOnly = PeerProtocol.isMacsOnly(op)
             if !peer, !macsOnly, host.listsDevice(head.by) {
                 device = head.by
             } else if !peer, op == .tabs || op == .hosts, Zmx.sameID(head.by, host.ownID) {
@@ -97,6 +98,10 @@ public enum PeerRelay {
                 ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
+            // A Mac's automations go to and come from a listed device alone, on this one request: the five a Mac sends a headless host stay a Mac's.
+            if PeerProtocol.isDeviceOnly(op), device == nil || ownPageServer {
+                return finish(.failure("\(host.name) shows its automations to a listed device only"))
+            }
             // The Outline's text goes to a listed device alone (ADR 0046).
             if PeerProtocol.isOutlineRequest(op), device == nil || ownPageServer {
                 return finish(.failure("\(host.name) shows its Outline to a listed device only"))
@@ -106,7 +111,7 @@ public enum PeerRelay {
         case .hello:
             return finish(host.hello(line: line))
         case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps, .automations, .saveAutomation, .deleteAutomation, .runAutomation,
-             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit:
+             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)

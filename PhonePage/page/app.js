@@ -5,6 +5,8 @@
 import { element, notListed, postJSON, shortFolder } from "/dom.js";
 import { startInstall } from "/install.js";
 import "/menu.js";
+import { closeAutomations, openAutomations } from "/automations.js";
+import { automationsHash, parseAutomationsHash } from "/automationsrules.js";
 import { closeNew, openNew } from "/new.js";
 import { closeOutline, openOutline } from "/outline.js";
 import { parseOutlineHash } from "/outlinerules.js";
@@ -49,7 +51,7 @@ function row(title, folder, agent, session) {
 }
 
 /** An open tab's row: a link that opens it, with what it holds and who is in control. */
-function tabRow(tab) {
+function tabRow(tab, linkAutomation = false) {
   const first = tab.panes.find((pane) => pane.kind === "claude") ?? tab.panes[0];
   const item = element("li");
   const link = element("a", "row-link");
@@ -66,6 +68,12 @@ function tabRow(tab) {
   link.append(meta);
   if (tab.text) link.append(element("div", tab.mine ? "control mine" : "control", tab.text));
   item.append(link);
+  // A run nobody opened: its automation is one tap away, to switch it off or read what it was asked (the host sends its id only from a Mac).
+  if (linkAutomation && tab.automation) {
+    const automation = element("a", "auto-link", "Its automation");
+    automation.href = automationsHash(tab.automation);
+    item.append(automation);
+  }
   return item;
 }
 
@@ -91,6 +99,8 @@ function show(home) {
   $("voice-mode").hidden = home.host.headless === true;
   // The Outline is a Mac app's file and model: a headless host has none. A Mac with the Outline switched off says so in the view.
   $("outline-open").hidden = home.host.headless === true;
+  // Automations are a Mac's files, edited through its running app: a headless host's are edited from a Mac's Settings.
+  $("automations-open").hidden = home.host.headless === true;
   titles.clear();
   fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
     for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
@@ -102,7 +112,7 @@ function show(home) {
   if (runs.length > 0) {
     fill($("runs"), home.runs, "", (tab) => {
       for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
-      return tabRow(tab);
+      return tabRow(tab, true);
     });
   } else {
     $("runs").replaceChildren();
@@ -247,7 +257,7 @@ function goHome(text) {
   route();
 }
 
-/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, `#voice` is Voice mode, `#outline` the Outline (`#outline=<ids>` zoomed into a bullet), anything else the home. */
+/** The address says which view: `#t=<tab>` is a tab, `#s=<session>` a session, `#new` is New session, `#voice` is Voice mode, `#outline` the Outline (`#outline=<ids>` zoomed into a bullet), `#automations` the Mac's automations (`=<id>` one, `=<id>/edit` its form, `=new` a new one), anything else the home. */
 function route() {
   const tabMatch = parseTabHash(location.hash);
   const match = sessionHash.exec(location.hash);
@@ -257,13 +267,15 @@ function route() {
   takeOnce = null;
   // Each view closes the others; the one that opens sets the body's class.
   const outlineMatch = parseOutlineHash(location.hash);
-  const views = { tab: tabMatch !== null, session: match !== null, new: location.hash === "#new", voice: location.hash === "#voice", outline: outlineMatch !== null };
+  const automationsMatch = parseAutomationsHash(location.hash);
+  const views = { tab: tabMatch !== null, session: match !== null, new: location.hash === "#new", voice: location.hash === "#voice", outline: outlineMatch !== null, automations: automationsMatch !== null };
   if (!views.new) closeNew();
   if (!views.voice) closeVoice();
   if (!views.outline) closeOutline();
+  if (!views.automations) closeAutomations();
   if (!views.session) closeSession();
   if (!views.tab) closeTab();
-  document.body.classList.remove("in-new", "in-voice", "in-outline");
+  document.body.classList.remove("in-new", "in-voice", "in-outline", "in-automations");
   if (tabMatch) {
     $("home").hidden = true;
     document.body.classList.add("in-session");
@@ -295,6 +307,12 @@ function route() {
     document.body.classList.add("in-outline");
     document.title = hostName ? `Outline · ${hostName}` : "Outline · Phone page";
     openOutline({ host: hostName, zoom: outlineMatch.zoom, done: goHome });
+  } else if (views.automations) {
+    $("home").hidden = true;
+    document.body.classList.remove("in-session");
+    document.body.classList.add("in-automations");
+    document.title = hostName ? `Automations · ${hostName}` : "Automations · Phone page";
+    openAutomations({ host: hostName, target: automationsMatch, done: goHome });
   } else {
     document.body.classList.remove("in-session");
     $("home").hidden = false;
@@ -307,7 +325,7 @@ function route() {
 // The session and New session fill the screen, and the keyboard can scroll the page under them as it opens (Chrome brings the
 // focused box into view before it resizes the page): the page never scrolls back, so the header stays off the top. They
 // take the visible height and go back to the top whenever it changes. Not while pinched in, which also shrinks it.
-const fullScreen = () => ["in-session", "in-new", "in-outline"].some((name) => document.body.classList.contains(name));
+const fullScreen = () => ["in-session", "in-new", "in-outline", "in-automations"].some((name) => document.body.classList.contains(name));
 function fitViewport() {
   const viewport = window.visualViewport;
   if (!viewport || viewport.scale > 1.01) return;
