@@ -61,10 +61,13 @@ final class AutomationStore: ObservableObject {
         return write(rollingBackTo: rollingBack ? before : nil)
     }
 
-    func remove(_ id: UUID) {
-        guard problem == nil, automations.contains(where: { $0.id == id }) else { return }
+    /// Removes an automation. A write that fails puts it back and answers false (`rollingBack` is always on: nothing is left in memory that the file lacks).
+    @discardableResult
+    func remove(_ id: UUID) -> Bool {
+        guard problem == nil, automations.contains(where: { $0.id == id }) else { return false }
+        let before = automations
         automations.removeAll { $0.id == id }
-        write()
+        return write(rollingBackTo: before)
     }
 
     /// Changes one automation in place and writes it when it differs; `rollingBack` as for `save`.
@@ -174,10 +177,11 @@ final class TaskRunStore: ObservableObject {
     }
 
     /// Drops an automation's Runs with it.
-    func removeRuns(of automation: UUID) {
-        guard problem == nil, list.runs.contains(where: { $0.trigger.automation == automation }) else { return }
+    @discardableResult
+    func removeRuns(of automation: UUID) -> Bool {
+        guard problem == nil, list.runs.contains(where: { $0.trigger.automation == automation }) else { return true }
         list.runs.removeAll { $0.trigger.automation == automation }
-        write()
+        return write()
     }
 
     /// The last write failed, so the file is behind the list.
@@ -321,11 +325,16 @@ extension LauncherModel {
     }
 
     /// Deletes an automation. Its runs that are going stay as ordinary tabs, opened, since nothing would tend them any more; its Runs are gone with it.
-    func deleteAutomation(_ id: UUID) {
-        guard automationFilesProblem == nil else { return }
+    /// The automation goes first, and a write that fails leaves everything as it was and says why (the Settings button shows the store's own line beside the
+    /// list; the Phone page is told). Nil when it went.
+    @discardableResult
+    func deleteAutomation(_ id: UUID) -> String? {
+        if let problem = automationFilesProblem { return problem }
+        guard automations.automation(id) != nil else { return "That automation is gone" }
+        guard automations.remove(id) else { return (automations.writeError ?? "The automation could not be deleted") + " Nothing was changed." }
         releaseRuns(of: id)
-        automations.remove(id)
         taskRuns.removeRuns(of: id)
+        return nil
     }
 
     /// The run tab is shown: it is an ordinary tab from now on (`activate`), and the run list says it was opened. An opened run is never ended by a check.

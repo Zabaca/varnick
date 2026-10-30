@@ -82,6 +82,60 @@ describe("the form", () => {
     expect(draftOf(row).allowedTools).toBe("WebSearch\nBash(git status)");
   });
 
+  describe("an edit", () => {
+    const opened = row;
+    const body = (change: (draft: any) => void) => {
+      const draft = draftOf(opened) as any;
+      change(draft);
+      return saveBody(uuid, draft, opened);
+    };
+
+    test("sends nothing when nothing differs from what the form opened with", () => {
+      expect(saveBody(uuid, draftOf(opened), opened)).toBeNull();
+      // A name's edge spaces, the same rules in another order and a limit typed as text are not changes.
+      expect(body((draft) => { draft.name = "  Daily recap "; draft.workingLimit = "30"; draft.allowedTools = "WebSearch\n\n Bash(git status) \n"; })).toBeNull();
+    });
+
+    test("sends only the field that changed, so the rest is never put back over a change made elsewhere", () => {
+      expect(body((draft) => { draft.prompt = "A new prompt"; })).toEqual({ kind: "save", id: uuid, fields: { prompt: "A new prompt" } });
+      expect(body((draft) => { draft.name = "Renamed"; })).toEqual({ kind: "save", id: uuid, fields: { name: "Renamed" } });
+      expect(body((draft) => { draft.cadence = { kind: "daily", hour: 8, minute: 15 }; })).toEqual({ kind: "save", id: uuid, fields: { cadence: { kind: "daily", hour: 8, minute: 15 } } });
+      expect(body((draft) => { draft.workingLimit = 45; })).toEqual({ kind: "save", id: uuid, fields: { working_limit_minutes: 45 } });
+      expect(body((draft) => { draft.allowedTools = "WebSearch"; })).toEqual({ kind: "save", id: uuid, fields: { allowed_tools: ["WebSearch"] } });
+      expect(body((draft) => { draft.permissions = "varnick_setting"; })).toEqual({ kind: "save", id: uuid, fields: { permissions: "varnick_setting" } });
+    });
+
+    test("sends enabled only when the toggle was changed", () => {
+      expect(body((draft) => { draft.prompt = "x"; })!.fields).not.toHaveProperty("enabled");
+      expect(body((draft) => { draft.enabled = false; })).toEqual({ kind: "save", id: uuid, fields: { enabled: false } });
+      const off = { ...opened, enabled: false };
+      const draft = draftOf(off) as any;
+      draft.name = "Renamed";
+      expect(saveBody(uuid, draft, off)).toEqual({ kind: "save", id: uuid, fields: { name: "Renamed" } });
+    });
+
+    test("a changed folder is sent as the folder, Home as null, and a changed agent with it", () => {
+      expect(body((draft) => { draft.folder = "/Users/me/Projects/y"; draft.agent = null; })).toEqual({ kind: "save", id: uuid, fields: { folder: "/Users/me/Projects/y", agent: null } });
+      expect(body((draft) => { draft.folder = null; draft.agent = null; })).toEqual({ kind: "save", id: uuid, fields: { folder: null, agent: null } });
+      // An automation in Home that is saved untouched sends no folder at all, whatever the Mac stores for Home.
+      const home = { ...opened, folder: null, agent: null };
+      expect(saveBody(uuid, draftOf(home), home)).toBeNull();
+      const draft = draftOf(home) as any;
+      draft.prompt = "x";
+      expect(saveBody(uuid, draft, home)!.fields).not.toHaveProperty("folder");
+    });
+
+    test("what is sent is what the server takes", () => {
+      const sent = body((draft) => { draft.prompt = "x"; draft.enabled = false; draft.folder = null; draft.agent = null; })!;
+      expect(parseFields(sent.fields).ok).toBe(true);
+    });
+  });
+
+  test("a new automation sends every field, enabled included", () => {
+    const sent = saveBody(null, { ...blankDraft(), name: "A", prompt: "B" });
+    expect(Object.keys(sent!.fields).sort()).toEqual(["agent", "allowed_tools", "cadence", "enabled", "folder", "name", "permissions", "prompt", "working_limit_minutes"]);
+  });
+
   test("a save sends the tools' field names, and what the server takes is what the page sends", () => {
     const body = saveBody(uuid, { ...draftOf(row), folder: null, agent: null });
     expect(body).toEqual({

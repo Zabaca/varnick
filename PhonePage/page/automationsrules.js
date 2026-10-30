@@ -94,23 +94,42 @@ export function draftProblems(draft) {
   return problems;
 }
 
-/** The body of a save: the fields in the names the Mac's session tools take, as JSON values. Home is `folder: null` and no agent is `agent: null`. */
-export function saveBody(id, draft) {
-  return {
-    kind: "save",
-    ...(id ? { id } : {}),
-    fields: {
-      name: draft.name.trim(),
-      prompt: draft.prompt,
-      folder: draft.folder,
-      agent: draft.agent,
-      cadence: draft.cadence,
-      permissions: draft.permissions,
-      allowed_tools: rulesOf(draft.allowedTools),
-      working_limit_minutes: Number(draft.workingLimit),
-      enabled: draft.enabled,
-    },
+const sameCadence = (a, b) => ["kind", "every", "weekday", "hour", "minute"].every((key) => a[key] === b[key]);
+const sameRules = (a, b) => a.length === b.length && a.every((rule, index) => rule === b[index]);
+
+/**
+ * The body of a save: the fields in the names the Mac's session tools take, as JSON values. Home is `folder: null` and no agent is `agent: null`. A new
+ * automation (no `original`) sends every field. An edit sends only the fields the user changed from the automation as the form opened it, and `enabled` only
+ * if the toggle was changed, as a session's `automation_edit` names only what it changes: a field left alone is never put back over a change made at the Mac
+ * or by a session since. Null when nothing differs, so nothing is sent.
+ */
+export function saveBody(id, draft, original = null) {
+  const all = {
+    name: draft.name.trim(),
+    prompt: draft.prompt,
+    folder: draft.folder,
+    agent: draft.agent,
+    cadence: draft.cadence,
+    permissions: draft.permissions,
+    allowed_tools: rulesOf(draft.allowedTools),
+    working_limit_minutes: Number(draft.workingLimit),
+    enabled: draft.enabled,
   };
+  if (!id || original === null) return { kind: "save", ...(id ? { id } : {}), fields: all };
+  const was = draftOf(original);
+  const same = {
+    name: all.name === was.name.trim(),
+    prompt: all.prompt === was.prompt,
+    folder: all.folder === was.folder,
+    agent: all.agent === was.agent,
+    cadence: sameCadence(all.cadence, was.cadence),
+    permissions: all.permissions === was.permissions,
+    allowed_tools: sameRules(all.allowed_tools, rulesOf(was.allowedTools)),
+    working_limit_minutes: all.working_limit_minutes === Number(was.workingLimit),
+    enabled: all.enabled === was.enabled,
+  };
+  const fields = Object.fromEntries(Object.entries(all).filter(([name]) => !same[name]));
+  return Object.keys(fields).length === 0 ? null : { kind: "save", id, fields };
 }
 
 /** "9:00 AM" style time of a cadence in the phone's own locale. */

@@ -292,6 +292,8 @@ function updateFormFields(s) {
 function startForm(s, automation) {
   s.draft = automation ? draftOf(automation) : blankDraft();
   s.editingID = automation?.id ?? null;
+  // What the form opened with: an edit sends only what differs from it.
+  s.original = automation ? structuredClone(automation) : null;
   s.query = "";
   s.agents = [];
   s.agentsError = null;
@@ -306,7 +308,15 @@ async function save(s) {
   const problems = draftProblems(s.draft);
   if (problems.length > 0) return setStatus(problems.join("\n"), true);
   const id = s.editingID;
-  const result = await act(s, saveBody(id, s.draft));
+  const body = saveBody(id, s.draft, s.original);
+  if (body === null) {
+    // Nothing differs from what the form opened with: nothing is sent, and the Mac's copy is untouched.
+    s.keepStatus = true;
+    setStatus("No changes.");
+    location.hash = automationsHash(id).slice(1);
+    return;
+  }
+  const result = await act(s, body);
   if (!result?.ok || result.refused?.length) return;
   // Saved: its page, with what the Mac said.
   s.keepStatus = true;
@@ -354,7 +364,7 @@ function render(s) {
 export function openAutomations({ host, target, done }) {
   const s = current ?? (current = {
     closed: false, keepStatus: false, items: [], loaded: false, loadError: null, problem: null, skip: false, zone: "", busy: false, confirmingDelete: null,
-    draft: blankDraft(), editingID: null, formKey: null, query: "", projects: [], projectsLoaded: false, projectsError: null, agents: [], agentsFor: null, agentsError: null,
+    draft: blankDraft(), editingID: null, original: null, formKey: null, query: "", projects: [], projectsLoaded: false, projectsError: null, agents: [], agentsFor: null, agentsError: null,
   });
   s.target = target;
   s.done = done;

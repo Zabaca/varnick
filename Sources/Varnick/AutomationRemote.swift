@@ -50,6 +50,12 @@ enum AutomationRemote {
                 // The phone's Home is no folder at all: the Mac's Home folder, which an automation with none runs in.
                 if fields["folder"]?.trimmingCharacters(in: .whitespaces).isEmpty == true { fields["folder"] = HomeFolder.path }
                 if let id = ask.id {
+                    // An automation already in Home (no folder, an empty one or Home's path) is not changed by being told it is in Home.
+                    if let current = ask.id.flatMap(UUID.init(uuidString:)).flatMap({ model.automations.automation($0) }),
+                       fields["folder"] == HomeFolder.path, [nil, "", HomeFolder.path].contains(current.folder) {
+                        fields["folder"] = nil
+                    }
+                    if fields.isEmpty { throw AutomationRefusal.refused(["There was nothing to change"]) }
                     fields["id"] = id
                     let done = try access.change(fields, model, author: author)
                     reply.note = done.edited == nil ? "\"\(done.current.name)\" already has those values" : "Saved \"\(done.edited?.automation.name ?? done.current.name)\""
@@ -60,8 +66,12 @@ enum AutomationRemote {
                 }
             case .delete:
                 guard let id = ask.id.flatMap(UUID.init(uuidString:)), let automation = model.automations.automation(id) else { throw AutomationRefusal.unknownID }
-                model.deleteAutomation(id)
-                reply.note = "Deleted \"\(automation.name)\" and its run list"
+                if let refusal = model.deleteAutomation(id) {
+                    outcome = "refused"
+                    reply.refused = [refusal]
+                } else {
+                    reply.note = "Deleted \"\(automation.name)\" and its run list"
+                }
             }
         } catch let refusal as AutomationRefusal {
             outcome = refusal.logKind
