@@ -140,10 +140,20 @@ describe("runs", () => {
     expect((home([{ tab: tabA, panes: [pane(paneA)] }]).runs as { rows: any[] }).rows).toEqual([]);
   });
 
-  test("a run is shaped as any tab is, and its automation's id goes no further", () => {
+  test("a run is shaped as any tab is, and a headless host's automation id goes no further", () => {
     const [row] = (home([runTab]).runs as { rows: any[] }).rows;
     expect(row.panes[0]).toMatchObject({ id: paneB, session: `varnick-${paneB}`, title: "Morning summary" });
+    expect(row.automation).toBeNull();
     expect(JSON.stringify(home([runTab]))).not.toContain("11111111-0000-4000-8000-000000000001");
+  });
+
+  test("a Mac's page carries the automation's id, for the link to it, and none for a run with no automation", () => {
+    const macHome = (list: Record<string, unknown>[]) =>
+      shapeHome({ host: { name: "Mac mini", headless: false }, loopback: false, device, tabs: ok({ tabs: list }), recent: ok({ recent: [] }), hosts: [] });
+    expect((macHome([runTab]).runs as { rows: any[] }).rows[0].automation).toBe("11111111-0000-4000-8000-000000000001");
+    expect((macHome([{ ...runTab, run: {} }]).runs as { rows: any[] }).rows[0].automation).toBeNull();
+    expect((macHome([{ ...runTab, run: { automation: "not an id" } }]).runs as { rows: any[] }).rows[0].automation).toBeNull();
+    expect((macHome([{ tab: tabA, panes: [pane(paneA)] }]).tabs as { rows: any[] }).rows[0].automation).toBeNull();
   });
 
   test("a host that can't be read has no runs to show either", () => {

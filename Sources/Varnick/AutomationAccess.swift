@@ -101,17 +101,19 @@ final class AutomationAccess {
 
     // MARK: The tools
 
+    /// Who made a change, for the mark: a session (its title) or the phone (the device's name, `via` phone), and the folder a new automation with none given
+    /// gets. The tools and the Phone page's requests share the checks and the writes below; only the mark and the sentence differ.
+    struct Author {
+        var name: String
+        var via: String?
+        var folder: String
+
+        func mark(_ what: String, at: Date) -> AutomationMark { AutomationMark(what: what, by: name, at: at, via: via) }
+    }
+
     private func create(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
-        let context = AutomationTools.Context(sessionFolder: caller.record.directory, homeFolder: HomeFolder.path)
-        let fields: AutomationTools.Fields
-        switch AutomationTools.read(args, creating: true, in: context) {
-        case .success(let found): fields = found
-        case .failure(let problems): throw AutomationRefusal.refused(problems.lines)
-        }
+        let automation = try make(args, model, author: Author(name: Self.title(of: caller), via: nil, folder: caller.record.directory))
         let now = Date()
-        var automation = AutomationTools.make(fields, in: context, now: now)
-        automation.mark = AutomationMark(what: AutomationTools.markText(made: automation), by: Self.title(of: caller), at: now)
-        guard model.automations.save(automation, rollingBack: true) else { throw notSaved(model) }
         let first = automation.enabled
             ? AutomationSlot.next(automation.cadence, zone: automation.zone, after: now).map { "It first runs \(Self.time($0))." } ?? "It has no next run."
             : "It is off, so it runs when it is turned on."
@@ -119,13 +121,30 @@ final class AutomationAccess {
             + "Tell the user what you made; Settings › Automations shows it with a mark until they have seen it."
     }
 
-    private func edit(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
+    /// Makes an automation from a call's arguments, checked as a session's are, marked by `author`, and saved; nothing is saved when anything is wrong.
+    func make(_ args: PanelArguments, _ model: LauncherModel, author: Author) throws -> Automation {
+        let context = AutomationTools.Context(sessionFolder: author.folder, homeFolder: HomeFolder.path)
+        let fields: AutomationTools.Fields
+        switch AutomationTools.read(args, creating: true, in: context) {
+        case .success(let found): fields = found
+        case .failure(let problems): throw AutomationRefusal.refused(problems.lines)
+        }
+        let now = Date()
+        var automation = AutomationTools.make(fields, in: context, now: now)
+        automation.mark = author.mark(AutomationTools.markText(made: automation), at: now)
+        guard model.automations.save(automation, rollingBack: true) else { throw notSaved(model) }
+        return automation
+    }
+
+    /// Changes the fields given of the automation `args["id"]` names, checked as a session's edit is (an automation set to Skip is refused), marked by
+    /// `author`, and saved. `edited` is nil when every field already had its value; nothing is written then.
+    func change(_ args: PanelArguments, _ model: LauncherModel, author: Author) throws -> (current: Automation, edited: (automation: Automation, changed: [String])?) {
         let store = model.automations
         // Every wrong part is named at once: the id, a Skip automation, and the fields.
         let found = automation(args, store)
         var problems = found.problem.map { [$0] } ?? []
         if let current = found.automation, let refusal = AutomationTools.editRefusal(for: current) { problems.append(refusal) }
-        let context = AutomationTools.Context(sessionFolder: caller.record.directory, homeFolder: HomeFolder.path, current: found.automation)
+        let context = AutomationTools.Context(sessionFolder: author.folder, homeFolder: HomeFolder.path, current: found.automation)
         var fields = AutomationTools.Fields()
         switch AutomationTools.read(args, creating: false, in: context) {
         case .success(let read): fields = read
@@ -133,20 +152,16 @@ final class AutomationAccess {
         }
         guard problems.isEmpty, let current = found.automation else { throw AutomationRefusal.refused(problems) }
         let now = Date()
-        guard var edited = AutomationTools.edit(current, with: fields, now: now) else {
-            return "Nothing changed: \"\(current.name)\" already has those values."
-        }
-        edited.automation.mark = AutomationMark(what: AutomationTools.markText(edited: edited.changed, to: edited.automation), by: Self.title(of: caller), at: now)
+        guard var edited = AutomationTools.edit(current, with: fields, now: now) else { return (current, nil) }
+        edited.automation.mark = author.mark(AutomationTools.markText(edited: edited.changed, to: edited.automation), at: now)
         // Onto the store's current copy, which is the one just read: nothing awaits between the two.
         let next = edited.automation
         guard store.update(current.id, rollingBack: true, { $0 = next }) else { throw notSaved(model) }
-        let after = next.enabled
-            ? AutomationSlot.next(next.cadence, zone: next.zone, after: now).map { "It next runs \(Self.time($0))." } ?? "It has no next run."
-            : "It is off."
-        return "Changed \(edited.changed.joined(separator: ", ")) of \"\(next.name)\". \(after) Its runs and last slot are as they were. Tell the user what you changed."
+        return (current, (next, edited.changed))
     }
 
-    private func switchOnOff(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
+    /// Turns the automation `args["id"]` names on or off, marked by `author`. `next` is nil when it was in that state already; nothing is written then.
+    func turn(_ args: PanelArguments, _ model: LauncherModel, author: Author) throws -> (current: Automation, on: Bool, next: Automation?) {
         let store = model.automations
         var problems = args.keys.sorted().filter { $0 != "id" && $0 != "on" }.map { "\($0) is not an argument: the arguments are id and on" }
         let found = automation(args, store)
@@ -156,12 +171,29 @@ final class AutomationAccess {
         guard problems.isEmpty, let current = found.automation, let word else { throw AutomationRefusal.refused(problems) }
         let on = word == "true"
         let now = Date()
-        guard var next = AutomationTools.switching(current, on: on, now: now) else {
-            return "\"\(current.name)\" is already \(on ? "on" : "off"). Nothing changed."
-        }
-        next.mark = AutomationMark(what: on ? "Turned on" : "Turned off", by: Self.title(of: caller), at: now)
+        guard var next = AutomationTools.switching(current, on: on, now: now) else { return (current, on, nil) }
+        next.mark = author.mark(on ? "Turned on" : "Turned off", at: now)
         let marked = next
         guard store.update(current.id, rollingBack: true, { $0 = marked }) else { throw notSaved(model) }
+        return (current, on, marked)
+    }
+
+    private func edit(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
+        let done = try change(args, model, author: Author(name: Self.title(of: caller), via: nil, folder: caller.record.directory))
+        guard let edited = done.edited else { return "Nothing changed: \"\(done.current.name)\" already has those values." }
+        let now = Date()
+        let next = edited.automation
+        let after = next.enabled
+            ? AutomationSlot.next(next.cadence, zone: next.zone, after: now).map { "It next runs \(Self.time($0))." } ?? "It has no next run."
+            : "It is off."
+        return "Changed \(edited.changed.joined(separator: ", ")) of \"\(next.name)\". \(after) Its runs and last slot are as they were. Tell the user what you changed."
+    }
+
+    private func switchOnOff(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
+        let done = try turn(args, model, author: Author(name: Self.title(of: caller), via: nil, folder: caller.record.directory))
+        let current = done.current, on = done.on
+        guard let marked = done.next else { return "\"\(current.name)\" is already \(on ? "on" : "off"). Nothing changed." }
+        let now = Date()
         let after = on
             ? AutomationSlot.next(marked.cadence, zone: marked.zone, after: now).map { "Its slots start from now; it next runs \(Self.time($0))." } ?? "It has no next run."
             : "It runs no more until it is turned on; a run that is going goes on."
@@ -179,12 +211,11 @@ final class AutomationAccess {
         let rows: [[String: Any]] = model.automations.automations.map { automation in
             let cadence = (try? encoder.encode(automation.cadence)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? NSNull()
             var last: Any = NSNull()
-            let runs = model.taskRuns.runs(of: automation.id)
-            if let run = runs.first {
-                let now = model.displayed(run)
-                last = ["state": now.state.text, "detail": text(now.detail), "slot": date(run.trigger.slot), "count": run.count ?? 1] as [String: Any]
+            let outcome = Self.outcome(of: automation, in: model)
+            if let run = outcome.newest {
+                last = ["state": run.state, "detail": text(run.detail), "slot": date(Date(timeIntervalSince1970: TimeInterval(run.slot))), "count": run.count] as [String: Any]
             }
-            let going = runs.contains { run in run.pane.flatMap { model.claudePane($0) } != nil && model.displayed(run).state.isGoing }
+            let going = outcome.going
             var mark: Any = NSNull()
             if let found = automation.mark { mark = ["what": found.what, "by": found.by, "at": date(found.at)] as [String: Any] }
             return [
@@ -215,6 +246,18 @@ final class AutomationAccess {
     }
 
     // MARK: Helpers
+
+    /// How the automation's newest run stands now (the live turn read from its pane), and whether a run of it still works or waits on the user.
+    static func outcome(of automation: Automation, in model: LauncherModel) -> (newest: PeerPhoneLast?, going: Bool) {
+        let runs = model.taskRuns.runs(of: automation.id)
+        var newest: PeerPhoneLast?
+        if let run = runs.first {
+            let now = model.displayed(run)
+            newest = PeerPhoneLast(state: now.state.text, detail: now.detail, slot: Int(run.trigger.slot.timeIntervalSince1970), count: run.count ?? 1)
+        }
+        let going = runs.contains { run in run.pane.flatMap { model.claudePane($0) } != nil && model.displayed(run).state.isGoing }
+        return (newest, going)
+    }
 
     /// The calling pane: a Claude pane on this Mac. One that another Mac or the phone controls is included (unlike `CallingPane.find`, which Screen
     /// access and Panel access use because they read this Mac's screen): its session runs here, so its automations are this Mac's.
@@ -252,8 +295,8 @@ final class AutomationAccess {
 }
 
 extension AutomationMark {
-    /// "A session: Edited: prompt by "Planning" · Oct 15, 9:07 AM": what the row and the Runs tab show until the user has seen it.
+    /// "A session: Edited: prompt by "Planning" · Oct 15, 9:07 AM" (or "The phone: ... by "Pixel" ..."): what the row and the Runs tab show until the user has seen it.
     var line: String {
-        "A session: \(what) by \u{201C}\(by)\u{201D} \u{00B7} \(at.formatted(date: .abbreviated, time: .shortened))"
+        "\(via == PhoneAutomations.phone ? "The phone" : "A session"): \(what) by \u{201C}\(by)\u{201D} \u{00B7} \(at.formatted(date: .abbreviated, time: .shortened))"
     }
 }

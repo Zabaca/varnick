@@ -31,6 +31,7 @@
   <a id="new-session" class="button primary" href="#new">New session</a>
   <a id="voice-mode" class="button" href="#voice" hidden>Voice mode</a>
   <a id="outline-open" class="button" href="#outline" hidden>Outline</a>
+  <a id="automations-open" class="button" href="#automations" hidden>Automations</a>
   <main>
     <section aria-labelledby="open-heading">
       <h2 id="open-heading">Open tabs</h2>
@@ -144,6 +145,58 @@
     <button type="button" data-key="note" aria-label="Note" aria-pressed="false">Note</button>
     <button type="button" data-key="delete" aria-label="Delete">Delete</button>
     <button type="button" data-key="done">Done</button>
+  </div>
+</div>
+
+<div id="automations" hidden>
+  <header class="bar">
+    <button id="automations-back" type="button" aria-label="Back">←</button>
+    <div class="who">
+      <h1 id="automations-title">Automations</h1>
+      <p id="automations-host"></p>
+    </div>
+    <button id="automations-refresh" type="button">Refresh</button>
+  </header>
+  <div id="automations-body" class="new-body">
+    <p id="automations-problem" class="error" role="alert" hidden></p>
+    <div id="automations-list-view">
+      <p class="hint">Prompts this Mac starts as Claude sessions on a cadence. Each run draws on your Claude plan and runs with nobody there to answer.</p>
+      <ul id="automations-list"></ul>
+      <p id="automations-empty" class="empty" hidden></p>
+    </div>
+    <div id="automation-view" hidden></div>
+    <div id="automation-form" hidden>
+      <label class="field-label" for="auto-name">Name</label>
+      <input id="auto-name" class="field" type="text" autocomplete="off" maxlength="200" placeholder="Daily recap">
+      <label class="field-label" for="auto-prompt">Prompt</label>
+      <textarea id="auto-prompt" class="field" rows="6" placeholder="What should Claude do each time?" autocapitalize="sentences"></textarea>
+      <span class="field-label" id="auto-when-label">When</span>
+      <div id="auto-kinds" class="chips" role="group" aria-labelledby="auto-when-label"></div>
+      <div id="auto-steps" class="chips" role="group" aria-label="How often" hidden></div>
+      <div id="auto-days" class="chips" role="group" aria-label="Day of the week" hidden></div>
+      <input id="auto-time" class="field" type="time" aria-label="Time of day" hidden>
+      <p id="auto-zone" class="hint"></p>
+      <label class="field-label" for="auto-project-filter">Folder</label>
+      <input id="auto-project-filter" class="field" type="search" placeholder="Filter projects" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <div id="auto-projects" class="projects" role="radiogroup" aria-label="Folder"></div>
+      <div id="auto-agents-wrap" hidden>
+        <span class="field-label" id="auto-agent-label">Agent</span>
+        <div id="auto-agents" class="chips" role="group" aria-labelledby="auto-agent-label"></div>
+      </div>
+      <span class="field-label" id="auto-permissions-label">Permissions</span>
+      <div id="auto-permissions" class="chips" role="group" aria-labelledby="auto-permissions-label"></div>
+      <p id="auto-permissions-detail" class="hint"></p>
+      <label class="field-label" for="auto-tools">Allowed tools</label>
+      <textarea id="auto-tools" class="field" rows="3" placeholder="One rule a line: WebSearch, Bash(git status)" autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
+      <label class="field-label" for="auto-limit">Working limit (minutes)</label>
+      <input id="auto-limit" class="field" type="number" inputmode="numeric" min="5" max="1440" step="1">
+      <label class="switch"><input id="auto-enabled" type="checkbox"> On</label>
+    </div>
+  </div>
+  <div class="new-foot">
+    <p id="automations-status" class="new-status" role="status" hidden></p>
+    <a id="automations-new" class="button primary" href="#automations=new">New automation</a>
+    <button id="automation-save" type="button" class="primary" hidden>Save</button>
   </div>
 </div>
 

@@ -988,6 +988,52 @@ let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveR
 expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
 expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
 expect("this is protocol 34", PeerProtocol.version == 34)
+// A Mac's automations on its Phone page: a device may send the one request, and none of the five a Mac sends a headless host. The list of what a device
+// may not send is explicit, so a new request is a device's unless someone writes it here.
+let deviceRefused: Set<PeerOp> = [.rows, .pages, .arrange, .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened, .upgrade, .restart]
+expect("a device is refused exactly these requests", Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)) == deviceRefused, "\(Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)).symmetricDifference(deviceRefused))")
+expect("phoneAutomations is a device's, and no Mac's or page server's", !PeerProtocol.isMacsOnly(.phoneAutomations) && PeerProtocol.isDeviceOnly(.phoneAutomations)
+       && PeerProtocol.isPhoneAutomationRequest(.phoneAutomations) && !PeerProtocol.isAutomationRequest(.phoneAutomations))
+expect("only the Outline's two and phoneAutomations are device-only", Set(PeerOp.allCases.filter(PeerProtocol.isDeviceOnly)) == [.outlineRead, .outlineEdit, .phoneAutomations])
+expect("phoneAutomations needs this build's protocol like the rest", !PeerProtocol.answersAnyVersion(.phoneAutomations))
+var phoneRequest = PeerRequest(.phoneAutomations)
+phoneRequest.phoneAutomation = PeerPhoneAutomationAsk(.save, id: "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77", fields: ["name": "Recap", "cadence": "{\"kind\":\"daily\",\"hour\":15}"])
+let decodedPhone = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(phoneRequest))
+expect("a phone request carries its kind, id and fields", decodedPhone?.op == .phoneAutomations && decodedPhone?.phoneAutomation == phoneRequest.phoneAutomation)
+// The line the page's server writes (`buildRequest` in PhonePage/relay.ts: the ask's fields, then v, op and by), read by the relay.
+let pageLine = #"{"phoneAutomation":{"kind":"save","id":"3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77","fields":{"name":"Recap","enabled":"true","cadence":"{\"kind\":\"daily\",\"hour\":15,\"minute\":0}"}},"v":34,"op":"phoneAutomations","by":"aaaaaaaa-0000-4000-8000-000000000001"}"#
+let fromPage = PeerJSON.decode(PeerRequest.self, from: pageLine)
+expect("the page's own line decodes as a phone request", fromPage?.op == .phoneAutomations && fromPage?.by == "aaaaaaaa-0000-4000-8000-000000000001"
+       && fromPage?.phoneAutomation?.kind == .save && fromPage?.phoneAutomation?.fields?["enabled"] == "true" && fromPage?.phoneAutomation?.fields?["cadence"]?.contains("daily") == true)
+for (word, kind) in [("list", PeerPhoneAutomationAsk.Kind.list), ("switch", .switchOnOff), ("runNow", .runNow), ("delete", .delete)] {
+    expect("the page's \(word) decodes", PeerJSON.decode(PeerRequest.self, from: #"{"phoneAutomation":{"kind":"\#(word)"},"v":34,"op":"phoneAutomations"}"#)?.phoneAutomation?.kind == kind)
+}
+expect("its kinds are the five the phone sends", Set(["list", "switch", "runNow", "save", "delete"]) == Set([PeerPhoneAutomationAsk.Kind.list, .switchOnOff, .runNow, .save, .delete].map(\.rawValue)))
+// A mark made by the phone names the device and says so; a session's mark is written as it was (no `via` key).
+let phoneMark = AutomationMark(what: "Edited: prompt", by: "Pixel", at: at("2026-10-29 09:00"), via: PhoneAutomations.phone)
+let sessionMark = AutomationMark(what: "Made", by: "Planning", at: at("2026-10-29 09:00"))
+expect("a phone mark round trips with its via", PeerJSON.decode(AutomationMark.self, from: PeerJSON.line(phoneMark)) == phoneMark)
+expect("a session's mark has no via key and reads without one", !PeerJSON.line(sessionMark).contains("via") && PeerJSON.decode(AutomationMark.self, from: "{\"what\":\"Made\",\"by\":\"x\",\"at\":0}")?.via == nil)
+// The row the phone is shown.
+var phoneSource = Automation(name: "Daily recap", prompt: "Run /daily-recap", folder: "/Users/u/Home", agent: "reviewer", cadence: .weekdays(hour: 15, minute: 0),
+                             timeZone: "UTC", permissions: .ask, allowedTools: ["WebSearch"], workingLimitMinutes: 30, mark: phoneMark)
+let nextRun = at("2026-10-30 15:00")
+let phoneRow = PhoneAutomations.row(phoneSource, homeFolder: "/Users/u/Home", next: nextRun, going: true, last: PeerPhoneLast(state: "Done", slot: 100))
+expect("Varnick's Home is the phone's Home (no folder) and the rest is as saved", phoneRow.folder == nil && phoneRow.agent == "reviewer" && phoneRow.permissions == "ask"
+       && phoneRow.allowedTools == ["WebSearch"] && phoneRow.workingLimitMinutes == 30 && phoneRow.cadenceLabel == "Weekdays at 15:00" && phoneRow.going)
+expect("it names the next run while on, and the mark with its via", phoneRow.nextRun == Int(nextRun.timeIntervalSince1970) && phoneRow.mark?.via == "phone" && phoneRow.mark?.by == "Pixel")
+phoneSource.enabled = false
+expect("an automation that is off has no next run", PhoneAutomations.row(phoneSource, homeFolder: "/x", next: nextRun, going: false, last: nil).nextRun == nil)
+expect("a project's folder is kept", PhoneAutomations.row(phoneSource, homeFolder: "/x", next: nil, going: false, last: nil).folder == "/Users/u/Home")
+phoneSource.permissions = .skip
+let skipRow = PhoneAutomations.row(phoneSource, homeFolder: "/x", next: nil, going: false, last: nil)
+expect("an automation set to Skip is not editable from the phone, and says skip", skipRow.permissions == "skip" && !skipRow.editable && phoneRow.editable)
+let phoneReply = PeerPhoneAutomationReply(automations: [phoneRow, skipRow], note: "Made", made: phoneRow.id, timeZone: "UTC", skipPermissions: false)
+expect("the reply round trips", PeerJSON.decode(PeerPhoneAutomationReply.self, from: PeerJSON.line(phoneReply)) == phoneReply)
+expect("the fields of a save are the tools' names, and never skip",
+       PhoneAutomations.shapeProblems(["name": "a", "permissions": "ask", "allowed_tools": "[]"]).isEmpty
+       && PhoneAutomations.shapeProblems(["task": "x"]).count == 1 && PhoneAutomations.shapeProblems(["permissions": "skip"]).count == 1
+       && PhoneAutomations.shapeProblems(["permissions": "Skip permissions"]).count == 1 && PhoneAutomations.shapeProblems(["permissions": "ASK"]).isEmpty)
 // restartPane (protocol 32): its tab and pane travel as an ordinary request, and an older build's frozen maintenance requests do not include it.
 var restartPaneRequest = PeerRequest(.restartPane)
 restartPaneRequest.tab = "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77"

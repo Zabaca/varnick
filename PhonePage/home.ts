@@ -68,6 +68,8 @@ export interface HomeTab {
   /** True when this device is in control of the tab, and who is, in the one wording; empty when nothing in it can be taken. */
   mine: boolean;
   text: string;
+  /** A run nobody opened: the id of the automation that made it, when the host says (`PeerRunMark.automation`), for the link to it. */
+  automation: string | null;
   panes: HomePane[];
 }
 
@@ -170,7 +172,8 @@ export function shapeTab(tab: Record<string, unknown>, device: Device): HomeTab 
   const mine = live.length > 0 && same(tab.control, device.id);
   const controller = mine ? "this phone" : optional(tab.controlName) ?? "another device";
   const clients = typeof tab.clients === "number" ? tab.clients : 0;
-  return { tab: tab.tab.toLowerCase(), name: optional(tab.name), mine, text: live.length > 0 ? controlledText(controller, clients > 0) : "", panes };
+  const automation = isObject(tab.run) && typeof tab.run.automation === "string" && uuidPattern.test(tab.run.automation) ? tab.run.automation.toLowerCase() : null;
+  return { tab: tab.tab.toLowerCase(), name: optional(tab.name), mine, text: live.length > 0 ? controlledText(controller, clients > 0) : "", automation, panes };
 }
 
 export const shapeTabs = (tabs: Record<string, unknown>[], device: Device): HomeTab[] => tabs.flatMap((tab) => shapeTab(tab, device) ?? []);
@@ -204,7 +207,9 @@ export function shapeHome(input: {
 }): Home {
   const { device } = input;
   const { tabs, runs } = input.tabs.ok ? splitRuns(objects(input.tabs.reply.tabs)) : { tabs: [], runs: [] };
-  const part = (rows: Record<string, unknown>[]): Part<HomeTab> => (input.tabs.ok ? { rows: shapeTabs(rows, device) } : { error: input.tabs.error });
+  // A Mac's page links a run to its automation (ADR 0040's amendment of 2026-10-29); a headless host's automations are not on the phone, so its ids go no further.
+  const part = (rows: Record<string, unknown>[]): Part<HomeTab> =>
+    input.tabs.ok ? { rows: shapeTabs(rows, device).map((tab) => (input.host.headless ? { ...tab, automation: null } : tab)) } : { error: input.tabs.error };
   return {
     host: input.host,
     loopback: input.loopback,
