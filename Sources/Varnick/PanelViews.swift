@@ -365,7 +365,7 @@ struct OutlinePanelView: PanelAccessView {
     @MainActor func refusal(of key: PanelKey) -> String? { nil }
 
     /// The Outline with its file read, or why a session can't use it now (the same words for a read and an edit).
-    @MainActor fileprivate func ready() async throws -> Outline {
+    @MainActor func ready() async throws -> Outline {
         // Before the file is touched: with the switch off a session reads and edits nothing, and nothing is loaded for it.
         guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
         let outline = model.outline

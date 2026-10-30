@@ -411,6 +411,7 @@ With Settings › Experimental › Outline on at a Mac, that Mac's Phone page (S
 - **It goes only to a device you listed on that Mac, over the tailnet.** The path is Varnick on that Mac, its relay, the page's server, `tailscale serve` and the phone's browser. A Mac you paired is refused, and a headless host has no Outline. With the page in loopback mode (below), any program on that Mac can also ask, as it can already drive your sessions there.
 - **The phone holds it in the page's memory while the view shows, and nowhere else.** The page's worker caches nothing and every reply is `no-store`. No bullet, note or text you typed goes into the page's storage, a push or a notification, the address (it holds ids, not text) or a log; the server's log line is the method, the path, the status, the device and the time, and Varnick's holds the kind of request, its outcome and counts. The only thing the page stores is whether you turned Show completed on. Closing the view, or the page, drops it; anyone who can see your phone's screen can see it, and so can its app switcher's picture.
 - **The phone can change and delete your Outline, without the Mac asking.** Adding, editing text or a note, completing, deleting, moving, indenting and outdenting go through the Outline's own edits: each is one step of your undo (⌘Z at the Mac takes it back), and an edit to the bullet you are typing in goes in as if typed, your caret kept. The phone has no undo of its own; it asks before deleting a bullet that has others nested under it. A save over a bullet or note you changed at the Mac after the phone read it is refused, and the phone keeps what it typed beside the Mac's version for you to choose. Zooming, collapsing and Show completed on the phone belong to the phone and are never saved to your file.
+- **An automation you allowed can add bullets too,** without reading yours (Automations act while you are away, below).
 - **Turn the Outline off, or the page, to stop it.** With the Outline off the Mac refuses every request in the Outline's words, and nothing is read or changed. List only devices you control.
 
 ## What can act as you
@@ -570,6 +571,19 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   runs inherits Varnick's Accessibility and Screen Recording (see Screen permissions reach every pane, above). With permission
   checks skipped that covers every command; with Ask or Allowed tools only it covers the commands you allowed. The editor says so.
   A headless host has no screen and no macOS grants, so an automation kept there reaches only what its account can; it suits one that allows broad shell use, and with permission checks skipped every command a run tries is allowed, as the host's own user, with nobody there to answer. A run there follows the host's own Skip permissions unless the automation says otherwise.
+- **A run can file a bullet in your Outline if you name the tool, and read nothing of it.** An automation whose allowed tools hold
+  `mcp__varnick__outline_append` gives its run `outline_append(heading, text, note?)`: it adds one last bullet under the top-level bullet of that
+  name, made at the end if absent (a heading of 1 to 80 characters and 320 bytes, a text of 1 to 300 and 1,200 bytes, a note of up to 20,000 bytes). It reads
+  nothing of your Outline and its answer carries no text of it, only the new bullet's id and whether the heading was made. That one bit does tell the
+  run, so Anthropic, whether a top-level bullet of a name it guessed exists (and a refusal says if it is marked done); nothing else of your Outline
+  goes to Anthropic through it. The bullets it writes are stored in your
+  outline file on this Mac like any other, shown on a listed device's Phone page (ADR 0046), and one ⌘Z takes one back. A run that read something
+  hostile can be steered into writing text of the attacker's choosing there; the bounds limit its size, not its words. It is refused while the
+  Outline is off or its file can't be read (ADR 0030), and a Task step, the voice session and a headless host's run never have it (ADR 0040's
+  amendment of 2026-10-29). **A Claude session you start can save an automation whose allowed tools name this rule** (`automation_create` and
+  `automation_edit` take `allowed_tools`), which makes a recurring, unattended writer to your Outline with no approval step of Varnick's; the mark on the
+  automation names the rules the session set and stays until you open its editor, switch it or press Seen. Taking the rule out stops future runs
+  only (ADR 0040's amendment).
 - **What steers a run can steer it:** a file in the folder, a page it reads, a prompt that quotes either. A run is as exposed as
   a session you leave unattended with the same permissions.
 - **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no

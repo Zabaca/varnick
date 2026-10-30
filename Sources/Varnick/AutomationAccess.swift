@@ -218,7 +218,7 @@ final class AutomationAccess {
 
     /// The calling pane: a Claude pane on this Mac. One that another Mac or the phone controls is included (unlike `CallingPane.find`, which Screen
     /// access and Panel access use because they read this Mac's screen): its session runs here, so its automations are this Mac's.
-    private func callingPane(_ text: String, in model: LauncherModel) throws -> ClaudeSession {
+    func callingPane(_ text: String, in model: LauncherModel) throws -> ClaudeSession {
         guard let id = UUID(uuidString: text),
               let session = model.tabs.lazy.flatMap(\.sessions).first(where: { $0.id == id && $0.isClaude && !$0.isOnPeer }) else { throw AutomationRefusal.noPane }
         return session

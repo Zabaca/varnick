@@ -633,7 +633,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // Which sets of MCP tools a pane gets (the one place; ADR 0031's amendment of 2026-10-17 is the docs' home), read at each start, not stored:
         // `notify` always; Panel access's set and the pane tools with no switch; the screen tools while Screen access is on (ADR 0023); the
         // automation tools with no switch, the task tools while Tasks is on. A run of an automation lists `notify` alone (option 01 of
-        // `prompts-cant-run-on-a-schedule`). A step of a Task's Run is a run too: `notify` and, while its folder holds the step's result schema,
+        // `prompts-cant-run-on-a-schedule`), and `outline_append` too when its allowed tools name it (ADR 0040's amendment of 2026-10-29). A step of a Task's Run is a run too: `notify` and, while its folder holds the step's result schema,
         // `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a). The voice session gets a pane's set but not the pane tools.
         // The Problems board's work-link hooks are read at each start as well.
         let isRun = record.isRun
@@ -649,7 +649,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                                                     automations: !isRun,
                                                                                     tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult,
                                                                                     voiceSearch: isVoice,
-                                                                                    panes: !isRun && !isVoice),
+                                                                                    panes: !isRun && !isVoice,
+                                                                                    outlineAppend: record.automation != nil && record.taskRun == nil && !isVoice
+                                                                                        && OutlineAppendTool.isNamed(in: record.allowedTools ?? [])),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
                                                  voice: isVoice)
 

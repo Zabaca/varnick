@@ -999,6 +999,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(AutomationRequestHead.self, from: line)?.automation != nil {
             return AutomationAccess.shared.answer(line)
         }
+        // An automation run's outline-append request (ADR 0040's amendment of 2026-10-29) is told apart the same way, by its own key.
+        if head.op == nil, PeerJSON.decode(OutlineAppendRequestHead.self, from: line)?.outlineAppend != nil {
+            return await OutlineAppendAccess.shared.answer(line)
+        }
         // A task request (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is told apart the same way, by its own key.
         if head.op == nil, PeerJSON.decode(TaskToolRequestHead.self, from: line)?.tasks != nil {
             return await TaskAccess.shared.answer(line)

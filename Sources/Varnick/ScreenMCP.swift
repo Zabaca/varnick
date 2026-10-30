@@ -247,6 +247,8 @@ enum ScreenMCP {
         static let voiceSearch = Sets(rawValue: 64)
         /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`). Their calls travel as Panel access's requests.
         static let panes = Sets(rawValue: 128)
+        /// `outline_append`: an automation's run, and only when its allowed tools name it (`ClaudeSession.launchClaude`). Its call travels as its own request.
+        static let outlineAppend = Sets(rawValue: 256)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
@@ -266,6 +268,7 @@ enum ScreenMCP {
             if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
             if arguments.contains(Self.voiceSearchArgument) { found.insert(.voiceSearch) }
             if arguments.contains(Self.panesArgument) { found.insert(.panes) }
+            if arguments.contains(OutlineAppendTool.argument) { found.insert(.outlineAppend) }
             self = found.isEmpty ? .screen : found
         }
 
@@ -276,13 +279,13 @@ enum ScreenMCP {
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets
     /// (`ClaudeSession.launchClaude` says which). `--notify` is always there.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
-                              voiceSearch: Bool = false, panes: Bool = false) -> String {
+                              voiceSearch: Bool = false, panes: Bool = false, outlineAppend: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
                                     + (automations ? [Sets.automationsArgument] : []) + (tasks ? [Sets.tasksArgument] : [])
                                     + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : [])
-                                    + (panes ? [Sets.panesArgument] : []))
+                                    + (panes ? [Sets.panesArgument] : []) + (outlineAppend ? [OutlineAppendTool.argument] : []))
     }
 
     // MARK: The tools
@@ -398,7 +401,7 @@ enum ScreenMCP {
     // MARK: The server
 
     /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, the task tools, then `notify`,
-    /// `task_result` (which is listed only while the pane's folder holds a step's schema), the voice session's `search` and the pane tools.
+    /// `task_result` (which is listed only while the pane's folder holds a step's schema), the voice session's `search`, the pane tools and `outline_append`.
     static func tools(for sets: Sets, pane: UUID? = nil) -> [[String: Any]] {
         var listed: [[String: Any]] = []
         if sets.contains(.screen) { listed += tools }
@@ -409,6 +412,7 @@ enum ScreenMCP {
         if sets.contains(.taskResult), let pane { listed += TaskResultTool.tools(in: TaskResultTool.folder(for: pane)) }
         if sets.contains(.voiceSearch) { listed += VoiceSearchMCP.tools }
         if sets.contains(.panes) { listed += PaneMCP.tools }
+        if sets.contains(.outlineAppend) { listed.append(OutlineAppendTool.tool) }
         return listed
     }
 
@@ -432,6 +436,8 @@ enum ScreenMCP {
                 reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.automations), AutomationMCP.names.contains(name) {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
+            } else if sets.contains(.outlineAppend), name == OutlineAppendTool.name {
+                reply = ask(OutlineAppendMCP.requestLine(pane: pane, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.tasks), TaskMCP.names.contains(name) {
                 reply = ask(TaskMCP.requestLine(pane: pane, tool: name, arguments: arguments))
             } else if sets.contains(.voiceSearch), VoiceSearchMCP.names.contains(name) {

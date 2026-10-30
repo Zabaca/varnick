@@ -376,6 +376,34 @@ if all(name in pane_described for name in pane_tools):
     if close_schema.get("required") != ["id"] or close_schema.get("properties", {}).get("id", {}).get("type") != "string":
         fail("pane_close is %s: a required string id" % close_schema)
 
+# outline_append (ADR 0040's amendment of 2026-10-29): the one write an automation's run may make to the Outline, listed only when the app names
+# --outline-append, which it does for a run whose allowed tools name the tool. Named with --notify (a run's set) it lists notify then outline_append;
+# a run without it lists notify alone. NEVER call it here: with Varnick running, the call reaches it and files a real bullet in the user's Outline.
+# Only a call to a server that does not list it is made (below), and that is refused before anything is sent.
+append_tool = ["outline_append"]
+if listed(["--notify", "--outline-append"]) != ["notify"] + append_tool:
+    fail("--notify --outline-append lists %s, not notify then outline_append" % listed(["--notify", "--outline-append"]))
+if listed(["--notify"]) != ["notify"]:
+    fail("a run's set without --outline-append lists %s, not notify alone" % listed(["--notify"]))
+if listed(["--outline-append"]) != append_tool:
+    fail("--outline-append lists %s, not outline_append alone" % listed(["--outline-append"]))
+if listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"]) \
+        != screen + only_panel + automation_tools + task_tools + ["notify"] + voice_tools + pane_tools + append_tool:
+    fail("every set lists %s, with outline_append last" % listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"], ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes"]):
+    if "outline_append" in listed(arguments):
+        fail("%s lists outline_append" % arguments)
+appended = [t for t in listed(["--outline-append"], full=True) if t["name"] == "outline_append"]
+if appended:
+    schema = appended[0]["inputSchema"]
+    properties = schema.get("properties", {})
+    if schema.get("required") != ["heading", "text"] or set(properties) != {"heading", "text", "note"} or any(properties[name].get("type") != "string" for name in properties):
+        fail("outline_append is %s: string heading and text (required) and an optional string note, nothing else" % schema)
+    description = appended[0]["description"]
+    for phrase in ("without reading it", "at most 20000 bytes", "1 to 80", "1 to 300", "One call adds one bullet"):
+        if phrase not in description:
+            fail("outline_append's description doesn't say %r" % phrase)
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
                         (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
@@ -387,6 +415,7 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list"),
                         ([], "pane_open"), ([], "pane_close"), (["--panel"], "pane_open"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
                         (["--search"], "pane_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
+                        ([], "outline_append"), (["--notify"], "outline_append"), (["--panel"], "outline_append"), (["--automations"], "outline_append"), (["--outline-append"], "notify"), (["--outline-append"], "outline_act"),
                         ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
