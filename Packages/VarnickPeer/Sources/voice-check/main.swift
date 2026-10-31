@@ -68,6 +68,21 @@ ended("one the user opened is never ended, whatever its turn", turn(.question, s
 ended("one with no known turn, started 10 minutes ago", nil, at: 600, is: true)
 ended("one with no known turn, started a minute ago", nil, at: 60, is: false)
 
+// Which session a Phone page lists (option 02 of `voice-mode-forgets-the-exchange`): from when its first request is taken, not before.
+func listed(_ name: String, _ turn: PaneTurn?, taken: Bool, is expected: Bool) {
+    let got = VoiceSession.isListed(turn: turn, takenAt: taken ? after(1) : nil)
+    expect("listed: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+listed("a session with no turn file is not", nil, taken: false, is: false)
+listed("a first prompt typed at start, before its hook has run", turn(.working, since: 0), taken: false, is: false)
+listed("a first request taken and working", turn(.working, since: 0), taken: true, is: true)
+listed("a first request that stopped on a question", turn(.question, since: 0), taken: true, is: true)
+listed("an answered one", turn(.waiting, since: 0), taken: true, is: true)
+listed("an answered one while the next request's markers are cleared", turn(.waiting, since: 0), taken: false, is: true)
+listed("one with background work", turn(.background, since: 0), taken: false, is: true)
+listed("one that stopped on an error", turn(.failed, since: 0), taken: false, is: true)
+
 // A working turn whose request was given up on (the deadline, or a cancel) is busy, not replaceable: a new session would end it.
 func decideAbandoned(_ name: String, _ turn: PaneTurn?, abandoned: TimeInterval?, at seconds: TimeInterval, is expected: VoiceSession.Decision) {
     let got = VoiceSession.decide(held: free, turn: turn, opened: false, now: after(seconds), abandonedAt: abandoned.map(after))

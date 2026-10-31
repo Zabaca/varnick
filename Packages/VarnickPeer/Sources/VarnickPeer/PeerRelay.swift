@@ -207,7 +207,8 @@ public enum PeerRelay {
         let names = host.controllerNames()
         let proxy = PeerProxyStatus.read()
         var reply = reply
-        reply.tabs = tabs.map { tab in
+        // The Voice session's tab is a listed device's alone: not a paired Mac's, and not the host's own page server's.
+        reply.tabs = PeerTab.visible(tabs, toListedDevice: device != nil && !keepingControllers).map { tab in
             var tab = tab
             tab.panes = tab.panes.map { pane in
                 var pane = pane

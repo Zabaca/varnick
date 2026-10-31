@@ -981,6 +981,19 @@ let plainTab = PeerTab(tab: markedID, layout: .leaf(markedID), panes: [])
 expect("an ordinary tab has no mark and writes none", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(plainTab))?.run == nil && !PeerJSON.line(plainTab).contains("\"run\""))
 expect("a device is still told the mark", markedTab.hiding(from: UUID().uuidString).run == markedTab.run)
 
+// The Voice session's tab (option 02 of `voice-mode-forgets-the-exchange`): a voice mark on a tab, never a run mark, told to a listed device alone.
+let voiceID = "aaaaaaaa-0000-0000-0000-000000000002"
+let voiceTab = PeerTab(tab: voiceID, name: "Hey Varnick", layout: .leaf(voiceID), panes: [], voice: true)
+expect("a voice mark survives the wire, with no run mark", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(voiceTab)) == voiceTab && voiceTab.run == nil)
+expect("an ordinary tab writes no voice mark", !PeerJSON.line(plainTab).contains("\"voice\"") && PeerJSON.decode(PeerTab.self, from: PeerJSON.line(plainTab))?.voice == nil)
+expect("a tab from a host before the mark reads without it",
+       PeerJSON.decode(PeerTab.self, from: #"{"tab":"\#(voiceID)","layout":{"pane":"\#(voiceID)"},"panes":[]}"#).map { $0.voice == nil && $0.run == nil } == true)
+expect("a device is still told the voice mark", voiceTab.hiding(from: UUID().uuidString).voice == true)
+let mixedListing = [plainTab, voiceTab, markedTab]
+expect("a listed device is told the voice tab, and the ordinary tab and the run as before", PeerTab.visible(mixedListing, toListedDevice: true) == mixedListing)
+expect("a paired Mac and the host's own page server are not told the voice tab; the ordinary tab and the run stay",
+       PeerTab.visible(mixedListing, toListedDevice: false) == [plainTab, markedTab])
+
 // A request carries a whole automation, and the five requests are told apart.
 var saveRequest = PeerRequest(.saveAutomation)
 saveRequest.automation = hostBase

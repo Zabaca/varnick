@@ -314,9 +314,12 @@ public struct PeerTab: Codable, Equatable, Sendable {
     /// The tab is a run nobody opened (protocol 29): the Macs drop it from their lists, and the Phone page lists
     /// it under Runs. Nil: an ordinary tab.
     public var run: PeerRunMark?
+    /// The tab is the host's Voice session, once it has taken its first request (ADR 0043's amendment of 2026-10-31): it runs with permissions skipped, and
+    /// Voice mode and Hey Varnick type into it. Only a listed device is told (`PeerTab.visible`), and the tab has no `run` mark. Nil: an ordinary tab.
+    public var voice: Bool?
 
     public init(tab: String, name: String? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
-                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil) {
+                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil, voice: Bool? = nil) {
         self.tab = tab
         self.name = name
         self.control = control
@@ -324,6 +327,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
         self.clients = clients
         self.showsFiles = showsFiles
         self.run = run
+        self.voice = voice
         self.layout = layout
         self.panes = panes
     }
@@ -352,6 +356,12 @@ public struct PeerTab: Codable, Equatable, Sendable {
             return pane
         }
         return tab
+    }
+
+    /// The tabs a listed device or anyone else may be told. The Voice session's tab goes to a listed device alone: a paired Mac would list it as an ordinary
+    /// tab, and the host's own page server reads this listing for its push watch and port proxy, which must not see it (ADR 0043's amendment of 2026-10-31).
+    public static func visible(_ tabs: [PeerTab], toListedDevice: Bool) -> [PeerTab] {
+        toListedDevice ? tabs : tabs.filter { $0.voice != true }
     }
 
     /// The Claude panes that run, as the per-session entries the board and the session lists use (`PeerOpenSession`), each with the tab's

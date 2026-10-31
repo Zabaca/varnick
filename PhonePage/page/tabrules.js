@@ -172,3 +172,14 @@ export const doneQuestion = (title, host) => `Done with “${title}”? Every pa
 
 /** What Restart asks before it ends the session's claude and starts it again. */
 export const restartQuestion = (title) => `Restart “${title}”? Claude stops what it is doing and starts again in this pane, picking up the conversation where it was.`;
+
+/**
+ * The host's Voice session, listed once it has taken its first request (option 02 of voice-mode-forgets-the-exchange). Its row says what it is and that it runs
+ * with permissions skipped; the tab view says what Take over does to it. Taking it over makes it the user's, and the host drops the mark.
+ */
+export const voiceMark = "Voice session";
+export const voiceLine = "Runs with permissions skipped";
+export const voiceNote = "Voice mode and Hey Varnick type into this session. Take over makes it yours: Varnick stops using it. It runs with permissions skipped until it is restarted.";
+
+/** Whether the tab is marked as the host's Voice session. */
+export const isVoiceSession = (tab) => tab?.voice === true;

@@ -266,7 +266,7 @@ Nothing of a spoken request goes to TypeSafe, and Text generation, the relevance
 web and Point at the screen are not used for it. The Voice session needs Hey Varnick on (for Voice mode on the phone too: nothing runs with permissions skipped on a Mac whose user never turned it on), Keep sessions running and Claude Code found and logged in, and
 Claude Code's one-time warning for skip-permissions mode accepted; when one is missing Hey Varnick says so and the setting shows it beside Hey Varnick, and
 nothing falls back to Varnick's own steps, so nothing is sent by another route.
-What the session does is shown in its tab (Settings › Listening › Show beside Hey Varnick, or its Needs you notice); Varnick's log says only how long a
+What the session does is shown in its tab (Settings › Listening › Show beside Hey Varnick, its Needs you notice, or, on a device you have added, that Mac's Phone page, which lists it in Open tabs from its first request until it ends, marked as the Voice session and as running with permissions skipped: the device can watch it, and Take over to type into it, which makes it yours and ends its time as the Voice session; it is listed to your added devices only, never to your other Macs); Varnick's log says only how long a
 request took, whether the session was started or reused, and how it ended, never a word of the request, the answer or what Claude did.
 
 ### Anthropic, through Screen access

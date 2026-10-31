@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle,
+  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle, isVoiceSession, voiceLine, voiceMark, voiceNote,
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
@@ -311,5 +311,37 @@ describe("Restart", () => {
     const text = restartQuestion("Fix it");
     expect(text).toContain("“Fix it”");
     expect(text).toContain("starts again");
+  });
+});
+
+describe("the host's Voice session (option 02 of voice-mode-forgets-the-exchange)", () => {
+  const page = (file: string) => readFileSync(new URL(`./page/${file}`, import.meta.url), "utf8");
+
+  test("a tab is the Voice session only when the host marks it", () => {
+    expect(isVoiceSession({ voice: true, panes: [claude(a)] })).toBe(true);
+    for (const unmarked of [{ panes: [claude(a)] }, { voice: false, panes: [] }, { voice: "yes", panes: [] }, null, undefined]) expect(isVoiceSession(unmarked)).toBe(false);
+  });
+
+  test("the row says what it is and that it runs with permissions skipped", () => {
+    expect(voiceMark).toBe("Voice session");
+    expect(voiceLine).toBe("Runs with permissions skipped");
+    const app = page("app.js");
+    expect(app).toContain("isVoiceSession(tab)");
+    expect(app).toContain("voiceMark");
+    expect(app).toContain("voiceLine");
+  });
+
+  test("the tab view's note says what Take over does, before it is pressed", () => {
+    expect(voiceNote).toContain("Voice mode and Hey Varnick type into this session");
+    expect(voiceNote).toContain("Take over makes it yours");
+    expect(voiceNote).toContain("permissions skipped until it is restarted");
+    expect(page("index.html")).toContain('id="card-voice"');
+    expect(page("session.js")).toContain("voiceNote");
+  });
+
+  test("the tab view passes the mark to the session view and follows it", () => {
+    const tabJS = page("tab.js");
+    expect(tabJS).toContain("voice: isVoiceSession(t.data)");
+    expect(tabJS).toContain("markVoice(isVoiceSession(t.data))");
   });
 });

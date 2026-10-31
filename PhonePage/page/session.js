@@ -10,7 +10,7 @@ import { Terminal } from "/vendor/xterm.mjs";
 import { FitAddon } from "/vendor/addon-fit.mjs";
 import { createLive } from "/live.js";
 import { parseFrame } from "/liverules.js";
-import { restartQuestion } from "/tabrules.js";
+import { restartQuestion, voiceNote } from "/tabrules.js";
 import { closeAction, ctrlCode, dragLines, gridFor, keys, layoutChanged, layoutSettleMs, livedLongEnough, reattachOnReturn, reconnectDelay, redrawDelays, takenController } from "/rules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -58,10 +58,26 @@ function showCard(s, view, text, { take = false, retry = false } = {}) {
   const note = view === "other" ? s.note : "";
   $("card-note").textContent = note;
   $("card-note").hidden = note === "";
+  paintVoice(s);
   showNotice(s);
   $("take").hidden = !take;
   $("retry").hidden = !retry;
   setSub(s, "");
+}
+
+/** What Take over does to the host's Voice session, over its live screen only (the card is the whole body elsewhere, and the terminal means it was taken). */
+function paintVoice(s) {
+  const show = s.voice && s.view === "other";
+  $("card-voice").textContent = show ? voiceNote : "";
+  $("card-voice").hidden = !show;
+}
+
+/** The tab view says whether the open session is the host's Voice session now (`isVoiceSession`): taking it over drops the mark. */
+export function markVoice(on) {
+  const s = current;
+  if (!s || s.voice === on) return;
+  s.voice = on;
+  paintVoice(s);
 }
 
 /**
@@ -483,7 +499,7 @@ function setCtrl(s, on) {
  * resumed (app.js): it then attaches with take at once, as Take over does, without asking the status first. `tab` is `{id}` for
  * a pane of a tab (tab.js): the header keeps the tab's title, Take over takes the whole tab, and End ends it.
  */
-export function openSession({ name, title, host, done, take = false, tab = null, restart = null }) {
+export function openSession({ name, title, host, done, take = false, tab = null, restart = null, voice = false }) {
   releaseSession();
   const s = {
     name, title: title || "Claude session", host: host || "", done, tab,
@@ -493,6 +509,8 @@ export function openSession({ name, title, host, done, take = false, tab = null,
     mine: false, note: "", error: "", openedAt: 0,
     // restart: the tab and pane Restart acts on while the phone may offer it (`offerRestart`); restarting: one is under way; restartedAt: when the last settled.
     restart, restarting: false, restartedAt: 0,
+    // voice: the tab is the host's Voice session, which Take over makes the user's (the note over its live screen).
+    voice,
   };
   current = s;
   $("session").hidden = false;

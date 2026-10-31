@@ -51,6 +51,9 @@ li { background: var(--panel); border: 1px solid var(--line); border-radius: 10p
 .agent { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px; }
 .control { margin-top: 6px; font-size: 13px; color: var(--muted); }
 .control.mine { color: var(--accent); }
+/* The host's Voice session in Open tabs: what it is, then what it runs with. */
+.voice-mark { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.voice-line { font-size: 13px; color: var(--warn); }
 
 /* A tab of several sessions: its name over a list of its sessions, which are boxed as rows are. */
 li.tab-group { padding: 8px; }
@@ -114,6 +117,7 @@ button.pane-close { color: var(--warn); }
 
 .card { margin: 16px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .card-note { margin: 0 0 8px; font-weight: 600; color: var(--warn); }
+.card-voice { margin: 0 0 8px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
 .card-text { margin: 0 0 16px; font-size: 16px; overflow-wrap: anywhere; }
 .card-error { margin: -8px 0 16px; font-size: 14px; color: var(--warn); overflow-wrap: anywhere; }
 .install { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -125,7 +129,7 @@ button.pane-close { color: var(--warn); }
 .switch input { width: 20px; height: 20px; }
 /* "Controlled on X" over a live screen is a bar with Take over; the screen takes the rest. */
 .card.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 8px 8px; padding: 8px 12px; flex: none; }
-.card.bar .card-note, .card.bar .card-error { flex-basis: 100%; margin: 0; }
+.card.bar .card-note, .card.bar .card-error, .card.bar .card-voice { flex-basis: 100%; margin: 0; }
 .card.bar .card-text { flex: 1; min-width: 0; margin: 0; font-size: 15px; }
 .card.bar .card-actions { flex: none; }
 /* The header's back arrow does the same. */

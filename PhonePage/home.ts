@@ -70,6 +70,8 @@ export interface HomeTab {
   text: string;
   /** A run nobody opened: the id of the automation that made it, when the host says (`PeerRunMark.automation`), for the link to it. */
   automation: string | null;
+  /** The host's Voice session (`PeerTab.voice`): it runs with permissions skipped, and Voice mode and Hey Varnick type into it until Take over makes it the user's. */
+  voice: boolean;
   panes: HomePane[];
 }
 
@@ -173,7 +175,7 @@ export function shapeTab(tab: Record<string, unknown>, device: Device): HomeTab 
   const controller = mine ? "this phone" : optional(tab.controlName) ?? "another device";
   const clients = typeof tab.clients === "number" ? tab.clients : 0;
   const automation = isObject(tab.run) && typeof tab.run.automation === "string" && uuidPattern.test(tab.run.automation) ? tab.run.automation.toLowerCase() : null;
-  return { tab: tab.tab.toLowerCase(), name: optional(tab.name), mine, text: live.length > 0 ? controlledText(controller, clients > 0) : "", automation, panes };
+  return { tab: tab.tab.toLowerCase(), name: optional(tab.name), mine, text: live.length > 0 ? controlledText(controller, clients > 0) : "", automation, voice: tab.voice === true, panes };
 }
 
 export const shapeTabs = (tabs: Record<string, unknown>[], device: Device): HomeTab[] => tabs.flatMap((tab) => shapeTab(tab, device) ?? []);
