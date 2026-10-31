@@ -662,6 +662,11 @@ let five = exchanges((1...5).flatMap { n -> [String] in
 let cappedAt250 = VoiceExchanges.reply(from: five, limit: 250)
 expect("exchanges: at the total the oldest are dropped and counted", cappedAt250.exchanges.map(\.request) == ["request number 4", "request number 5"] && cappedAt250.omitted == 3, "\(cappedAt250)")
 expect("exchanges: under the total all are kept", VoiceExchanges.reply(from: five, limit: 5_000).exchanges.count == 5 && VoiceExchanges.reply(from: five, limit: 5_000).omitted == 0)
+let midTurn = exchanges([typed(said("first"), at: 1), entry("assistant", at: 2, blocks: text("One.")), typed(said("second"), at: 10), entry("assistant", at: 11, blocks: text("Let me check."))])
+expect("exchanges: a turn that has ended shows its answer", VoiceExchanges.reply(from: midTurn).exchanges.last?.answer == "Let me check.")
+expect("exchanges: a turn still going shows its request alone, and the exchanges before it keep theirs",
+       VoiceExchanges.reply(from: midTurn, unfinished: true).exchanges == [PeerVoiceExchange(request: "first", answer: "One."), PeerVoiceExchange(request: "second")])
+expect("exchanges: nothing unfinished in no exchanges", VoiceExchanges.reply(from: [], unfinished: true) == PeerVoiceExchanges())
 expect("exchanges: the default total is well under a reply line", VoiceExchanges.replyBytes * 2 < 1_000_000)
 var withExchanges = PeerReply.success()
 withExchanges.voiceExchanges = heardBack

@@ -255,8 +255,8 @@ session's:
   session's first prompt is. Later requests are in Claude Code's transcript only.
 - **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
   last request.
-- **A listed device sees the session's requests and answers.** When Voice mode opens on a Mac's Phone page, the Mac reads the Voice session's transcript
-  and sends that page the requests it holds (the hint taken off) with the last text Claude wrote for each, up to a total, newest first, which includes what
+- **A listed device sees the session's requests and answers.** When Voice mode opens on a Mac's Phone page, the Mac reads the transcript of the Voice session its next request would continue
+  and sends that page the requests it holds (the hint taken off) with the last text Claude wrote for each, the newest that fit a total (sent oldest first), which includes what
   you asked at the Mac by Hey Varnick. Any device on the Mac's device list can ask for it (`voiceExchanges`; ADR 0043's amendment of 2026-10-31); nothing else
   can: a paired Mac and a headless host are refused. It goes over the tailnet to that page and is not kept there. A device could already open the session's
   terminal through Needs you, so this is no new kind of reach, but it is a way to read the desk's questions from the phone: remove a device you do not trust

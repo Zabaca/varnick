@@ -184,7 +184,7 @@ export function shapeStatus(result: RelayResult): VoiceAnswer {
 //
 // Asked once when the view opens. The page keeps none of it: it is drawn into the view and goes with it, and the reply is `no-store`.
 
-/** A request is at most `VoiceSession.maxRequestCharacters` on the host; an answer is cut there to the `answered` event's limit. */
+/** The host cuts a request to `VoiceSession.maxRequestCharacters` (1,500); the page allows a little more. An answer is cut to `textLimit`, as an event's text is. */
 const requestLimit = 1_600;
 /** The host sends the newest that fit in 300,000 bytes; this is the most rows the page takes of them. */
 const exchangeLimit = 500;
@@ -204,12 +204,14 @@ export function shapeExchanges(result: RelayResult): EarlierAnswer {
   const raw = result.reply.voiceExchanges;
   if (!isObject(raw) || !Array.isArray(raw.exchanges)) return { status: 502, body: { ok: false, error: "The host's answer wasn't readable" } };
   const exchanges: EarlierExchange[] = [];
-  for (const row of raw.exchanges.slice(-exchangeLimit)) {
+  // The oldest rows beyond the page's limit are left out and counted with the host's.
+  const beyond = Math.max(0, raw.exchanges.length - exchangeLimit);
+  for (const row of raw.exchanges.slice(beyond)) {
     if (!isObject(row) || typeof row.request !== "string" || row.request === "" || !row.request.isWellFormed()) continue;
     const exchange: EarlierExchange = { request: row.request.slice(0, requestLimit) };
     if (typeof row.answer === "string" && row.answer !== "" && row.answer.isWellFormed()) exchange.answer = row.answer.slice(0, textLimit);
     exchanges.push(exchange);
   }
-  const omitted = typeof raw.omitted === "number" && Number.isInteger(raw.omitted) && raw.omitted > 0 ? raw.omitted : 0;
-  return { status: 200, body: { ok: true, exchanges, omitted } };
+  const hosts = typeof raw.omitted === "number" && Number.isInteger(raw.omitted) && raw.omitted > 0 ? raw.omitted : 0;
+  return { status: 200, body: { ok: true, exchanges, omitted: hosts + beyond } };
 }

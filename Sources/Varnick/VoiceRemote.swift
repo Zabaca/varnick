@@ -209,20 +209,20 @@ final class VoiceRemote {
         }
     }
 
-    /// The Voice session's earlier exchanges for the Voice mode view (`voiceExchanges`; ADR 0043's amendment of 2026-10-31): the session the next request would
-    /// go to, read from its own transcript off the main actor. No such session is an empty list, not an error. Counts and timing are logged, never a word.
+    /// The Voice session's earlier exchanges for the Voice mode view (`voiceExchanges`; ADR 0043's amendment of 2026-10-31): the session the next request
+    /// continues, read from its own transcript off the main actor. No such session is an empty list, not an error. Counts and timing are logged, never a word.
     func exchanges(model: LauncherModel) async -> PeerReply {
         let began = Date()
         var reply = PeerReply.success()
-        guard let path = model.voiceSession.transcriptPath() else {
-            NSLog("Varnick: voice exchanges phone: no voice session [%.2f s]", Date().timeIntervalSince(began))
+        guard let source = model.voiceSession.exchangesSource() else {
+            NSLog("Varnick: voice exchanges phone: no session to continue [%.2f s]", Date().timeIntervalSince(began))
             reply.voiceExchanges = PeerVoiceExchanges()
             return reply
         }
         let read = await Task.detached(priority: .userInitiated) { () -> (PeerVoiceExchanges, Int)? in
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return nil }
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: source.path), options: .mappedIfSafe) else { return nil }
             let all = TranscriptReader.exchanges(data)
-            return (VoiceExchanges.reply(from: all), all.count)
+            return (VoiceExchanges.reply(from: all, unfinished: source.unfinished), all.count)
         }.value
         guard let (found, total) = read else {
             // The hook reported a transcript Claude Code hasn't written yet (the first prompt is still being taken): nothing to show.

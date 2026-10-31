@@ -18,15 +18,16 @@ The Mac reads them from the Voice session's own transcript, which is the convers
 
 They include what was asked at the Mac by Hey Varnick, since that is the same session.
 
-When there is no Voice session, the view opens empty. That happens 10 minutes after the last turn, when the voice session is switched off, or once the user has opened or taken over the session (it is theirs then, ADR 0042). The page keeps nothing itself: the exchanges live in the view and go with it, as today.
+When there is no Voice session, the view opens empty. That happens when the next request would start a new session: 10 minutes after the last turn, when the voice session is switched off, once the user has opened or taken over the session (it is theirs then, ADR 0042), or when it sits on a question, a plan or an error. The page keeps nothing itself: the exchanges live in the view and go with it, as today.
 
 ## Trade-offs
 
 - **The transcript is the record, so nothing new is saved.** No second copy of spoken requests is written on the Mac or the phone.
 - **Only exchanges come back.** The view's notes (couldn't make out the audio, busy, a failure line), a request collected but never ended with "over", and refusals are not in the transcript, and are not shown again.
-- **An answer reads as Claude wrote it,** as the live answer's text does. For a turn that stopped on a question or a plan, the request shows with whatever Claude wrote before it, or alone.
+- **An answer reads as Claude wrote it,** as the live answer's text does.
+- **Only the session the next request continues is shown** (amended at the review of 2026-10-31). A session that sits on a question, a plan or an error, is past the deadline or has been idle for 10 minutes is one the next request replaces, so the view opens empty rather than show a conversation that won't be continued. A session left on a question is reached through the tab list or Needs you.
 - **What was asked at the desk now shows on the phone.** Any listed device that opens Voice mode on the Mac's page reads it. A device could already open the session's terminal through Needs you, and can open it from the list with option 02, so this is no new kind of reach. The privacy doc says so anyway.
-- **A request still in flight when the view opens shows with no answer.** That is a request asked at the Mac, or one sent before a reload. The view doesn't follow it, because it can't poll an ask it didn't send. It shows the answer at the next open.
+- **A request still in flight when the view opens shows with no answer.** That is a request asked at the Mac, or one sent before a reload, while its turn goes on: what Claude has written so far is interim, so it is left off. The view doesn't follow it, because it can't poll an ask it didn't send. It shows the answer at the next open.
 - **A long session is cut.** Only the newest exchanges up to a cap are shown, with a line saying how many earlier ones were left out.
 - **Considered, not chosen: the Mac keeps its own log of what the phone was shown,** in memory or as a file in the pane folder. It would be exact to the view, but a log in memory is lost at a restart of Varnick while the session lives on, and a file is a second copy of every spoken request. Neither holds the requests asked before it was built.
 

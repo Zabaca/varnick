@@ -657,8 +657,9 @@ describe("the Voice session's earlier exchanges", () => {
   test("a text is cut to what the page draws, and no more than a few hundred exchanges are taken, the newest", () => {
     const long = shapeExchanges(reply({ exchanges: [{ request: "r".repeat(5_000), answer: "a".repeat(20_000) }] }));
     expect(long.status === 200 && long.body.ok && [long.body.exchanges[0].request.length, long.body.exchanges[0].answer?.length]).toEqual([1_600, 9_000]);
-    const many = shapeExchanges(reply({ exchanges: Array.from({ length: 700 }, (_, n) => ({ request: `r${n}` })) }));
-    expect(many.status === 200 && many.body.ok && [many.body.exchanges.length, many.body.exchanges[499].request]).toEqual([500, "r699"]);
+    const many = shapeExchanges(reply({ exchanges: Array.from({ length: 700 }, (_, n) => ({ request: `r${n}` })), omitted: 4 }));
+    // The 200 the page left out are counted with the 4 the host left out.
+    expect(many.status === 200 && many.body.ok && [many.body.exchanges.length, many.body.exchanges[499].request, many.body.omitted]).toEqual([500, "r699", 204]);
   });
 
   test("a reply without the list is unreadable, and a host that doesn't know the request is the host's failure", () => {

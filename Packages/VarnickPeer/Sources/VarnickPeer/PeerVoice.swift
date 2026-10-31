@@ -201,9 +201,10 @@ public enum VoiceExchanges {
     }
 
     /// The reply for a transcript's exchanges: each spoken request with the last text Claude wrote for it (cut to the `answered` event's limit), the newest
-    /// that fit within `limit` bytes of text, the oldest dropped first and counted.
-    public static func reply(from exchanges: [TranscriptExchange], limit: Int = replyBytes) -> PeerVoiceExchanges {
-        let spoken: [PeerVoiceExchange] = exchanges.compactMap { exchange in
+    /// that fit within `limit` bytes of text, the oldest dropped first and counted. `unfinished` says the last turn has not ended: what Claude has written for
+    /// it so far is interim ("Let me check."), so that exchange shows its request alone.
+    public static func reply(from exchanges: [TranscriptExchange], unfinished: Bool = false, limit: Int = replyBytes) -> PeerVoiceExchanges {
+        var spoken: [PeerVoiceExchange] = exchanges.compactMap { exchange in
             guard let request = request(ofPrompt: exchange.prompt) else { return nil }
             let answer = exchange.parts.reversed().lazy.compactMap { part -> String? in
                 if case .claude(let text) = part { return text }
@@ -211,6 +212,7 @@ public enum VoiceExchanges {
             }.first.map { String($0.prefix(PeerVoiceEvent.maxAnswerCharacters)) }
             return PeerVoiceExchange(request: request, answer: answer)
         }
+        if unfinished, !spoken.isEmpty { spoken[spoken.count - 1].answer = nil }
         var kept = 0
         var bytes = 0
         for exchange in spoken.reversed() {

@@ -98,14 +98,11 @@ public enum PeerRelay {
                 ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
-            // A Mac's automations and its Voice session's exchanges go to a listed device alone, on these requests: the five a Mac sends a headless host stay a Mac's.
+            // The Outline's text (ADR 0046), a Mac's automations and its Voice session's exchanges go to a listed device alone, on these requests: the five a Mac
+            // sends a headless host stay a Mac's.
             if PeerProtocol.isDeviceOnly(op), device == nil || ownPageServer {
                 let what = op == .voiceExchanges ? "its Voice session's exchanges" : PeerProtocol.isOutlineRequest(op) ? "its Outline" : "its automations"
                 return finish(.failure("\(host.name) shows \(what) to a listed device only"))
-            }
-            // The Outline's text goes to a listed device alone (ADR 0046).
-            if PeerProtocol.isOutlineRequest(op), device == nil || ownPageServer {
-                return finish(.failure("\(host.name) shows its Outline to a listed device only"))
             }
         }
         switch op {

@@ -559,7 +559,7 @@ async function main(): Promise<void> {
     }
     if (path === "/api/voice/exchanges" && request.method === "GET") {
       // The Voice session's earlier exchanges, read by the Mac from the session's transcript and shown above the live ones. Nothing is kept here.
-      const answered = shapeExchanges(await voiceRelay.ask("voiceExchanges", device.id));
+      const answered = shapeExchanges(await relay.ask("voiceExchanges", device.id));
       return json(answered.body, answered.status);
     }
     if (path === "/api/voice/status" && request.method === "GET") {
