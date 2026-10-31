@@ -981,6 +981,22 @@ let plainTab = PeerTab(tab: markedID, layout: .leaf(markedID), panes: [])
 expect("an ordinary tab has no mark and writes none", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(plainTab))?.run == nil && !PeerJSON.line(plainTab).contains("\"run\""))
 expect("a device is still told the mark", markedTab.hiding(from: UUID().uuidString).run == markedTab.run)
 
+// The Voice session's tab (option 02 of `voice-mode-forgets-the-exchange`): a voice mark on a tab, never a run mark, told to a listed device alone.
+let voiceID = "aaaaaaaa-0000-0000-0000-000000000002"
+let voiceTab = PeerTab(tab: voiceID, name: "Hey Varnick", layout: .leaf(voiceID), panes: [], voice: true)
+expect("a voice mark survives the wire, with no run mark", PeerJSON.decode(PeerTab.self, from: PeerJSON.line(voiceTab)) == voiceTab && voiceTab.run == nil)
+expect("an ordinary tab writes no voice mark", !PeerJSON.line(plainTab).contains("\"voice\"") && PeerJSON.decode(PeerTab.self, from: PeerJSON.line(plainTab))?.voice == nil)
+expect("a tab from a host before the mark reads without it",
+       PeerJSON.decode(PeerTab.self, from: #"{"tab":"\#(voiceID)","layout":{"pane":"\#(voiceID)"},"panes":[]}"#).map { $0.voice == nil && $0.run == nil } == true)
+expect("a device is still told the voice mark", voiceTab.hiding(from: UUID().uuidString).voice == true)
+let mixedListing = [plainTab, voiceTab, markedTab]
+expect("the asker is a listed device, the host's own page server, or a paired Mac, as the relay's two facts say",
+       PeerAsker(device: nil, ownPageServer: false) == .pairedMac && PeerAsker(device: "d", ownPageServer: false) == .listedDevice
+       && PeerAsker(device: "d", ownPageServer: true) == .ownPageServer && PeerAsker(device: nil, ownPageServer: true) == .pairedMac)
+expect("a listed device is told the voice tab, and the ordinary tab and the run as before", PeerTab.visible(mixedListing, to: .listedDevice) == mixedListing)
+expect("a paired Mac is not told the voice tab; the ordinary tab and the run stay", PeerTab.visible(mixedListing, to: .pairedMac) == [plainTab, markedTab])
+expect("the host's own page server is not told the voice tab; the ordinary tab and the run stay", PeerTab.visible(mixedListing, to: .ownPageServer) == [plainTab, markedTab])
+
 // A request carries a whole automation, and the five requests are told apart.
 var saveRequest = PeerRequest(.saveAutomation)
 saveRequest.automation = hostBase
@@ -994,7 +1010,11 @@ let deviceRefused: Set<PeerOp> = [.rows, .pages, .arrange, .automations, .saveAu
 expect("a device is refused exactly these requests", Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)) == deviceRefused, "\(Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)).symmetricDifference(deviceRefused))")
 expect("phoneAutomations is a device's, and no Mac's or page server's", !PeerProtocol.isMacsOnly(.phoneAutomations) && PeerProtocol.isDeviceOnly(.phoneAutomations)
        && PeerProtocol.isPhoneAutomationRequest(.phoneAutomations) && !PeerProtocol.isAutomationRequest(.phoneAutomations))
-expect("only the Outline's two and phoneAutomations are device-only", Set(PeerOp.allCases.filter(PeerProtocol.isDeviceOnly)) == [.outlineRead, .outlineEdit, .phoneAutomations])
+expect("only the Outline's two, phoneAutomations and voiceExchanges are device-only", Set(PeerOp.allCases.filter(PeerProtocol.isDeviceOnly)) == [.outlineRead, .outlineEdit, .phoneAutomations, .voiceExchanges])
+expect("voiceExchanges is a device's, and no Mac's or page server's", !PeerProtocol.isMacsOnly(.voiceExchanges) && PeerProtocol.isDeviceOnly(.voiceExchanges)
+       && !PeerProtocol.isAutomationRequest(.voiceExchanges) && !PeerProtocol.isPhoneAutomationRequest(.voiceExchanges) && !PeerProtocol.isOutlineRequest(.voiceExchanges))
+expect("voiceExchanges needs this build's protocol like the rest, and the protocol stays 34", !PeerProtocol.answersAnyVersion(.voiceExchanges) && PeerProtocol.version == 34)
+expect("a voiceExchanges request is a bare op", PeerJSON.decode(PeerRequest.self, from: #"{"v":34,"op":"voiceExchanges","by":"aaaaaaaa-0000-4000-8000-000000000001"}"#)?.op == .voiceExchanges)
 expect("phoneAutomations needs this build's protocol like the rest", !PeerProtocol.answersAnyVersion(.phoneAutomations))
 var phoneRequest = PeerRequest(.phoneAutomations)
 phoneRequest.phoneAutomation = PeerPhoneAutomationAsk(.save, id: "3b9d6a40-1e52-4c7f-9a08-6d2c5e8f1a77", fields: ["name": "Recap", "cadence": "{\"kind\":\"daily\",\"hour\":15}"])

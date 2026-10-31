@@ -2,7 +2,7 @@
 problem: voice-mode-forgets-the-exchange
 title: A Mac's Phone page lists its Voice session, marked, from its first turn until it ends
 summary: The Mac's tab listing includes the Voice session's hidden tab for a listed device once its first request is taken, marked as the Voice session and not as a run. The phone shows it in Open tabs with "Voice session" and "Runs with permissions skipped". It opens like any tab. Watching leaves it the Voice session; Take over makes it the user's, as ADR 0042 has it, though it runs with permissions skipped until restarted. Other Macs and the page server's push watch still don't see it. No protocol bump.
-status: accepted
+status: shipped
 ---
 
 ## Solution

@@ -98,20 +98,18 @@ public enum PeerRelay {
                 ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
-            // A Mac's automations go to and come from a listed device alone, on this one request: the five a Mac sends a headless host stay a Mac's.
+            // The Outline's text (ADR 0046), a Mac's automations and its Voice session's exchanges go to a listed device alone, on these requests: the five a Mac
+            // sends a headless host stay a Mac's.
             if PeerProtocol.isDeviceOnly(op), device == nil || ownPageServer {
-                return finish(.failure("\(host.name) shows its automations to a listed device only"))
-            }
-            // The Outline's text goes to a listed device alone (ADR 0046).
-            if PeerProtocol.isOutlineRequest(op), device == nil || ownPageServer {
-                return finish(.failure("\(host.name) shows its Outline to a listed device only"))
+                let what = op == .voiceExchanges ? "its Voice session's exchanges" : PeerProtocol.isOutlineRequest(op) ? "its Outline" : "its automations"
+                return finish(.failure("\(host.name) shows \(what) to a listed device only"))
             }
         }
         switch op {
         case .hello:
             return finish(host.hello(line: line))
         case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps, .automations, .saveAutomation, .deleteAutomation, .runAutomation,
-             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations:
+             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations, .voiceExchanges:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)
@@ -209,7 +207,8 @@ public enum PeerRelay {
         let names = host.controllerNames()
         let proxy = PeerProxyStatus.read()
         var reply = reply
-        reply.tabs = tabs.map { tab in
+        // The Voice session's tab is a listed device's alone: not a paired Mac's, and not the host's own page server's.
+        reply.tabs = PeerTab.visible(tabs, to: PeerAsker(device: device, ownPageServer: keepingControllers)).map { tab in
             var tab = tab
             tab.panes = tab.panes.map { pane in
                 var pane = pane

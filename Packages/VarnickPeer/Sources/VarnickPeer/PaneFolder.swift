@@ -55,6 +55,9 @@ public enum PaneFolder {
     static let voiceTakenFileName = ".varnick-voice-taken"
     static let voiceWebFileName = ".varnick-voice-web"
 
+    /// Whether a turn of the pane has ended since claude started: the `Stop` hook has saved its input.
+    public static func hasStopped(for id: UUID) -> Bool { modificationDate(stopFile(for: id).path) != nil }
+
     /// The `Stop` input as saved, with its date. Nil without a file.
     static func stopInput(for id: UUID) -> (data: Data, savedAt: Date)? {
         let file = stopFile(for: id)

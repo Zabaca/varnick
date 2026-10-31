@@ -98,6 +98,22 @@ final class VoiceSessionHost: ObservableObject {
         panes.first { !isOpened($0) }.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
     }
 
+    /// The session the Phone page's Voice mode shows the exchanges of: the one the next request continues, which is the one `VoiceSession.decide` would give the
+    /// request to (`.send`, or `.busy` while its turn goes on). Nil when there is none, when the next request would start a new session (idle, on a question, a
+    /// plan or an error, working past the deadline) or before its first hook has reported. `unfinished` says its last turn has not ended, so that turn's text is
+    /// interim and not an answer.
+    func exchangesSource() -> (path: String, unfinished: Bool)? {
+        guard let held, let pane = model?.claudePane(held.pane) else { return nil }
+        if !pane.readsOwnTurn { pane.checkTurn() }
+        switch VoiceSession.decide(held: held, turn: pane.turn, opened: false, now: Date(), abandonedAt: abandoned[pane.id]) {
+        case .start: return nil
+        case .send, .busy: break
+        }
+        guard let path = PaneFolder.transcriptPath(for: pane.id) else { return nil }
+        let unfinished = pane.turn.map { $0.turn == .working || $0.turn == .background } ?? true
+        return (path, unfinished)
+    }
+
     private func refreshGoing() {
         let now = panes.contains { !isOpened($0) }
         if going != now { going = now }

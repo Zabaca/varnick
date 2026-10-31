@@ -194,6 +194,9 @@ public enum PeerOp: String, Codable, Sendable, CaseIterable {
     /// A Mac's automations on its Phone page (`PeerPhoneAutomationAsk`; ADR 0040's amendment of 2026-10-29): list, switch, run now, save and delete. A listed device
     /// may ask; a paired Mac and a headless host are refused. No protocol bump: only a host's own page server sends it.
     case phoneAutomations
+    /// The Voice session's earlier exchanges, for the Voice mode view on a Mac's Phone page (`PeerVoiceExchanges`; ADR 0043's amendment of 2026-10-31). A listed device
+    /// may ask; a paired Mac and a headless host are refused. No protocol bump: only a host's own page server sends it.
+    case voiceExchanges
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -900,6 +903,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// PhoneAutomations: the Mac's automations after the ask.
     public var phoneAutomations: PeerPhoneAutomationReply?
+
+    /// VoiceExchanges: the Voice session's earlier exchanges, as its transcript holds them.
+    public var voiceExchanges: PeerVoiceExchanges?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

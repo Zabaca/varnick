@@ -294,6 +294,65 @@ public struct PeerRunMark: Codable, Equatable, Sendable {
     public init(automation: String? = nil) { self.automation = automation }
 }
 
+/// Who a relay answers `tabs` for: what each may be told differs (`PeerTab.visible`).
+public enum PeerAsker: Equatable, Sendable {
+    /// A Mac the host lists as a peer.
+    case pairedMac
+    /// The host's own Phone page server, reading the listing for its push watch and port proxy (protocol 27).
+    case ownPageServer
+    /// A device the host lists.
+    case listedDevice
+
+    /// `device` is the asking device's id, nil for a paired Mac; `ownPageServer` is the host's own id asking as a device.
+    public init(device: String?, ownPageServer: Bool) {
+        self = device == nil ? .pairedMac : ownPageServer ? .ownPageServer : .listedDevice
+    }
+}
+
+/// What a tab's listing needs to know of one of its panes' records (the Mac's `SessionRecord`).
+public struct PeerTabRecord: Equatable, Sendable {
+    /// The record is an unopened voice session (the Mac's `SessionRecord.isUnopenedVoice`).
+    public var unopenedVoice: Bool
+    /// An unopened run that isn't the voice session.
+    public var unopenedRun: Bool
+    /// The record is a step of a Task's Run.
+    public var taskRun: Bool
+    /// The automation that made it, a lowercase uuid.
+    public var automation: String?
+    /// For an unopened voice session: whether it has taken a request (`VoiceSession.isListed`).
+    public var voiceListed: Bool
+
+    public init(unopenedVoice: Bool = false, unopenedRun: Bool = false, taskRun: Bool = false, automation: String? = nil, voiceListed: Bool = false) {
+        self.unopenedVoice = unopenedVoice
+        self.unopenedRun = unopenedRun
+        self.taskRun = taskRun
+        self.automation = automation
+        self.voiceListed = voiceListed
+    }
+}
+
+/// How a tab is listed given its records: whether at all, and its marks. Pure, so `voice-check` covers it.
+public enum PeerTabMarks {
+    public struct Choice: Equatable, Sendable {
+        public var run: PeerRunMark?
+        public var voice: Bool?
+
+        public init(run: PeerRunMark? = nil, voice: Bool? = nil) {
+            self.run = run
+            self.voice = voice
+        }
+    }
+
+    /// Nil: the tab is left out. A Task's unopened Run is (until its Runs are listed), and so is a Voice session that has taken no request. Otherwise an
+    /// unopened run is marked as a run (protocol 29), and an unopened Voice session as the Voice session and never as a run.
+    public static func choose(_ records: [PeerTabRecord]) -> Choice? {
+        if records.contains(where: { ($0.unopenedRun && $0.taskRun) || ($0.unopenedVoice && !$0.voiceListed) }) { return nil }
+        let runs = records.filter(\.unopenedRun)
+        return Choice(run: runs.isEmpty ? nil : PeerRunMark(automation: runs.compactMap(\.automation).first),
+                      voice: records.contains(where: \.unopenedVoice) ? true : nil)
+    }
+}
+
 /// An open tab of the host: its id and name, who is in control of it, how its panes are laid out and what each shows.
 public struct PeerTab: Codable, Equatable, Sendable {
     /// The tab's id (ADR 0032), a lowercase uuid.
@@ -314,9 +373,12 @@ public struct PeerTab: Codable, Equatable, Sendable {
     /// The tab is a run nobody opened (protocol 29): the Macs drop it from their lists, and the Phone page lists
     /// it under Runs. Nil: an ordinary tab.
     public var run: PeerRunMark?
+    /// The tab is the host's Voice session, once it has taken its first request (ADR 0043's amendment of 2026-10-31): it runs with permissions skipped, and
+    /// Voice mode and Hey Varnick type into it. Only a listed device is told (`PeerTab.visible`), and the tab has no `run` mark. Nil: an ordinary tab.
+    public var voice: Bool?
 
     public init(tab: String, name: String? = nil, control: String? = nil, controlName: String? = nil, clients: Int? = nil,
-                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil) {
+                layout: PeerLayout, panes: [PeerPane], showsFiles: Bool? = nil, run: PeerRunMark? = nil, voice: Bool? = nil) {
         self.tab = tab
         self.name = name
         self.control = control
@@ -324,6 +386,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
         self.clients = clients
         self.showsFiles = showsFiles
         self.run = run
+        self.voice = voice
         self.layout = layout
         self.panes = panes
     }
@@ -352,6 +415,12 @@ public struct PeerTab: Codable, Equatable, Sendable {
             return pane
         }
         return tab
+    }
+
+    /// The tabs `asker` may be told. The Voice session's tab goes to a listed device alone: a paired Mac would list it as an ordinary tab, and the host's own
+    /// page server reads this listing for its push watch and port proxy, which must not see it (ADR 0043's amendment of 2026-10-31).
+    public static func visible(_ tabs: [PeerTab], to asker: PeerAsker) -> [PeerTab] {
+        asker == .listedDevice ? tabs : tabs.filter { $0.voice != true }
     }
 
     /// The Claude panes that run, as the per-session entries the board and the session lists use (`PeerOpenSession`), each with the tab's

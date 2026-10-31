@@ -88,6 +88,15 @@ public enum VoiceSession {
         return turn.turn != .working && now.timeIntervalSince(turn.since) >= reuseWithin
     }
 
+    // MARK: Which session a Phone page lists
+
+    /// Whether an unopened voice session is listed on a device's Phone page: from its first taken request (ADR 0043, 2026-10-31). A working turn counts with
+    /// the prompt hook's marker, or once a turn has finished (`stopped`), since a later request's working turn and `clearMarkers` race the hook.
+    public static func isListed(turn: PaneTurn?, takenAt: Date?, stopped: Bool) -> Bool {
+        guard let turn else { return false }
+        return turn.turn != .working || takenAt != nil || stopped
+    }
+
     // MARK: The hooks only its settings carry
 
     /// `UserPromptSubmit`: the session took a prompt. `PreToolUse` for the web tools: Claude is going to the web.
@@ -125,6 +134,9 @@ public enum VoiceHint {
         var words: String { self == .us ? "US" : "metric" }
     }
 
+    /// How every hint begins, which is how a prompt in the session's transcript is known for a spoken request (`VoiceExchanges`).
+    public static let prefix = "[Said aloud to Varnick "
+
     /// `searchTool` is false on a host that has no History or Bookmarks (a headless one), where the tool isn't listed. `voiceMode` is true for a request
     /// made on a Mac while its voice mode is on (option 10 of `listening-never-answers`): it was heard without a wake phrase.
     public static func text(device: Device, now: Date, timeZone: TimeZone, units: Units, searchTool: Bool = true, voiceMode: Bool = false) -> String {
@@ -135,7 +147,7 @@ public enum VoiceHint {
         let day = formatter.string(from: now)
         formatter.dateFormat = "h:mm a"
         let time = formatter.string(from: now)
-        return "[Said aloud to Varnick \(device.words) on \(day), \(time); \(units.words) units. "
+        return "\(prefix)\(device.words) on \(day), \(time); \(units.words) units. "
             + "A voice reads your reply: answer in one or two short spoken sentences, with no lists, links, paths, code or Markdown, "
             + "and say where the answer came from in a few words."
             + (searchTool ? " Varnick's search tool (\(searchToolName)) finds the user's pages, bookmarks and Claude sessions." : "")

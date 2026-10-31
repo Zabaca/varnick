@@ -14,7 +14,7 @@ import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
 import { closeVoice, openVoice } from "/voice.js";
-import { paneSummary, parseTabHash, tabHash, tabTitle } from "/tabrules.js";
+import { isVoiceSession, paneSummary, parseTabHash, tabHash, tabTitle, voiceLine, voiceMark } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const refreshButton = $("refresh");
@@ -57,6 +57,8 @@ function tabRow(tab, linkAutomation = false) {
   const link = element("a", "row-link");
   link.href = tabHash(tab.tab, null);
   link.append(element("div", "title", tabTitle(tab)));
+  // The host's Voice session: told apart from the user's own tabs, and what it runs with.
+  if (isVoiceSession(tab)) link.append(element("div", "voice-mark", voiceMark), element("div", "voice-line", voiceLine));
   const meta = element("div", "meta");
   if (first.folder) {
     const path = element("span", "folder", shortFolder(first.folder));

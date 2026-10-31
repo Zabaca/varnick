@@ -156,6 +156,17 @@ describe("runs", () => {
     expect((macHome([{ tab: tabA, panes: [pane(paneA)] }]).tabs as { rows: any[] }).rows[0].automation).toBeNull();
   });
 
+  test("the host's Voice session is an open tab with its mark, and no run (option 02 of voice-mode-forgets-the-exchange)", () => {
+    const voiceTab = { tab: tabB, name: "Hey Varnick", voice: true, controlName: "Mac mini", clients: 0, panes: [pane(paneB, { title: "Hey Varnick" })] };
+    const macHome = (list: Record<string, unknown>[]) =>
+      shapeHome({ host: { name: "Mac mini", headless: false }, loopback: false, device, tabs: ok({ tabs: list }), recent: ok({ recent: [] }), hosts: [] });
+    const shaped = macHome([{ tab: tabA, panes: [pane(paneA)] }, voiceTab]);
+    expect((shaped.tabs as { rows: any[] }).rows.map((tab) => [tab.tab, tab.voice])).toEqual([[tabA, false], [tabB, true]]);
+    expect((shaped.runs as { rows: any[] }).rows).toEqual([]);
+    expect((shaped.tabs as { rows: any[] }).rows[1]).toMatchObject({ automation: null, name: "Hey Varnick" });
+    expect((macHome([{ ...voiceTab, voice: "true" }]).tabs as { rows: any[] }).rows[0].voice).toBe(false);
+  });
+
   test("a host that can't be read has no runs to show either", () => {
     const shaped = shapeHome({ host: { name: "linux box", headless: true }, loopback: false, device, tabs: { ok: false, error: "down" }, recent: ok({ recent: [] }), hosts: [] });
     expect(shaped.runs).toEqual({ error: "down" });

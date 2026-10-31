@@ -86,6 +86,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// build reads it as an ordinary pane.
     var voice: Bool?
     var isVoice: Bool { voice == true }
+    /// The voice session while its tab is hidden; opening or taking it over clears `runUnopened` (`markRunOpened`).
+    var isUnopenedVoice: Bool { isVoice && runUnopened == true }
 
     /// The pane whose session opened this one with `pane_open`; it may close it until the user takes the pane, which clears this.
     /// Optional so older records load.

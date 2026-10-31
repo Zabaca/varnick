@@ -4,7 +4,7 @@ description: On a Mac's Phone page, End (or Back, or any navigation away) closes
 impact: The user can't see what they asked and what Varnick answered, so a follow-up is made from memory, and the session looks gone when it is waiting to be picked up. The only way to it from the phone is the Needs you event's Open, and only while Voice mode is on. What was asked at the desk by Hey Varnick, which the same session holds, is invisible from the phone altogether.
 severity: low
 evidence: The user's request of 2026-10-31, relayed by the coordinator. Code and docs read at 051243f (main). That the Voice session's requests are typed prompts in its transcript, the voice hint first, was checked read-only against Voice session transcripts on the user's machine; nothing of them is kept here.
-status: open
+status: closed
 ---
 
 ## What the user wants

@@ -8,9 +8,9 @@
 
 import { element, notListed, postJSON } from "/dom.js";
 import { closeAdd, openAdd } from "/add.js";
-import { confirmClose, confirmDone, confirmEnd, holdsForRestart, offerRestart, openSession, releaseSession, tell } from "/session.js";
+import { confirmClose, confirmDone, confirmEnd, holdsForRestart, markVoice, offerRestart, openSession, releaseSession, tell } from "/session.js";
 import {
-  choosePane, closeQuestion, doneQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, kindWord, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
+  choosePane, closeQuestion, doneQuestion, framedAddress, hasSession, isLocalAddress, isOpenable, isVoiceSession, kindWord, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, paneNote, readyToShow, samePanes, showsSwitcher, tabHash, tabTitle,
 } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -167,7 +167,7 @@ function showPane(t, pane) {
     // The page's own start of this session takes it once; any other open asks the host's status first.
     const take = t.take === pane.session;
     if (take) t.take = null;
-    openSession({ name: pane.session, title: tabTitle(t.data), host: t.host, done: t.done, take, tab: { id: t.id }, restart: restartOffer(t, pane) });
+    openSession({ name: pane.session, title: tabTitle(t.data), host: t.host, done: t.done, take, tab: { id: t.id }, restart: restartOffer(t, pane), voice: isVoiceSession(t.data) });
     return;
   }
   t.session = false;
@@ -289,6 +289,8 @@ async function load(t) {
   }
   // The phone's control of the tab, or the pane, can have changed since the session opened: Restart follows it.
   if (t.session && !restarting) offerRestart(restartOffer(t, now));
+  // Take over makes the Voice session the user's: the host drops its mark, and the note over the screen goes.
+  if (t.session) markVoice(isVoiceSession(t.data));
 }
 
 function failed(t, error) {

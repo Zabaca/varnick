@@ -436,6 +436,29 @@ export function applyEvents(view, events, id) {
   return next;
 }
 
+/** The quiet line above the Voice session's earlier exchanges, and what the view says when they couldn't be read. */
+export const earlierHeading = "Earlier in this Voice session";
+export const earlierFailed = "Voice mode couldn't read the earlier exchanges.";
+
+/**
+ * The Voice session's earlier exchanges (`/api/voice/exchanges`) as lines for the log, in the order they were asked: the request, then Varnick's answer when
+ * the session wrote one. `omitted` is how many older ones the Mac left out. A reply that isn't a good one is no lines. Held in the view only; never kept.
+ */
+export function earlierView(reply) {
+  if (!reply || reply.ok !== true || !Array.isArray(reply.exchanges)) return { lines: [], omitted: 0 };
+  const lines = [];
+  for (const row of reply.exchanges) {
+    if (!row || typeof row.request !== "string" || row.request === "") continue;
+    lines.push({ who: "you", text: row.request });
+    if (typeof row.answer === "string" && row.answer !== "") lines.push({ who: "varnick", text: row.answer });
+  }
+  const omitted = Number.isInteger(reply.omitted) && reply.omitted > 0 ? reply.omitted : 0;
+  return { lines, omitted: lines.length === 0 ? 0 : omitted };
+}
+
+/** The line that says how many earlier exchanges aren't shown. */
+export const omittedLine = (count) => (count === 1 ? "1 earlier exchange isn't shown." : `${count} earlier exchanges aren't shown.`);
+
 /** A pause the page can tell of: no frame from the microphone for this long means it was frozen or throttled. */
 export const pauseMs = 5000;
 

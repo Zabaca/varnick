@@ -28,7 +28,7 @@ import { presenceMarker, pushPaths, pushRoute, pushStatus, setupPush, takeKeyFil
 import { Shared } from "./pushwatch";
 import { editFields, parseEditBody, parseReadBody, readFields, shapeListing, type EditAsk, type ReadAsk } from "./outline";
 import { actFields, listFields, parseActBody, shapeListing as shapeAutomations, type ActBody } from "./automations";
-import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
+import { askFields, audioFields, parseAskBody, parseAudioBody, parseStatusQuery, shapeExchanges, shapeStatus, shapeTaken, statusFields, type AudioChunk, type TextAsk } from "./voice";
 
 /** The relay protocol this server speaks (`PeerProtocol.version` in Packages/VarnickPeer). Every protocol bump changes this too. */
 export const PROTOCOL_VERSION = 34;
@@ -556,6 +556,11 @@ async function main(): Promise<void> {
       if (!folder.ok) return json({ ok: false, error: folder.error }, 400);
       const agents = await agentsOf(relay, device, host.name, folder.value);
       return json(agents.body, agents.status);
+    }
+    if (path === "/api/voice/exchanges" && request.method === "GET") {
+      // The Voice session's earlier exchanges, read by the Mac from the session's transcript and shown above the live ones. Nothing is kept here.
+      const answered = shapeExchanges(await relay.ask("voiceExchanges", device.id));
+      return json(answered.body, answered.status);
     }
     if (path === "/api/voice/status" && request.method === "GET") {
       const query = parseStatusQuery(new URL(request.url).searchParams);

@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { argumentLimit, buildRequest, Relay, relayArguments } from "./relay";
 import {
-  askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeStatus, shapeTaken, statusFields,
+  askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeExchanges, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
 import {
-  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, Endpointer, floorTimes, fromBase64, hint, lowestThreshold, maxUtteranceMs,
+  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
+  lowestThreshold, maxUtteranceMs, omittedLine,
   minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
   toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
@@ -627,5 +628,68 @@ describe("the microphone's reader", () => {
     expect([...pcm]).toEqual([16384, -32767, 32767, -32767]);
     expect(rms).toBeCloseTo(Math.sqrt((0.25 + 1 + 1 + 1) / 4), 5);
     expect(block([]).rms).toBe(0);
+  });
+});
+
+describe("the Voice session's earlier exchanges", () => {
+  const reply = (voiceExchanges: unknown) => ({ ok: true as const, reply: { v: V, ok: true, voiceExchanges } as Record<string, unknown> });
+
+  test("the request carries nothing but its op and the device", () => {
+    expect(JSON.parse(buildRequest(V, "voiceExchanges", id))).toEqual({ v: V, op: "voiceExchanges", by: id });
+  });
+
+  test("the host's exchanges are listed oldest first, with how many older ones it left out", () => {
+    expect(shapeExchanges(reply({ exchanges: [{ request: "what time is it", answer: "Noon." }, { request: "and in Tokyo" }], omitted: 3 }))).toEqual({
+      status: 200, body: { ok: true, exchanges: [{ request: "what time is it", answer: "Noon." }, { request: "and in Tokyo" }], omitted: 3 },
+    });
+  });
+
+  test("no Voice session is an empty list", () => {
+    expect(shapeExchanges(reply({ exchanges: [], omitted: 0 }))).toEqual({ status: 200, body: { ok: true, exchanges: [], omitted: 0 } });
+  });
+
+  test("a row that is not a request is left out, an answer that is not text is dropped, and a bad count is none", () => {
+    expect(shapeExchanges(reply({ exchanges: [null, 7, { answer: "x" }, { request: "" }, { request: 5 }, { request: "ok", answer: 5 }, { request: "lone\ud800" }], omitted: -2 })))
+      .toEqual({ status: 200, body: { ok: true, exchanges: [{ request: "ok" }], omitted: 0 } });
+    expect(shapeExchanges(reply({ exchanges: [], omitted: 1.5 })).body).toMatchObject({ omitted: 0 });
+  });
+
+  test("a text is cut to what the page draws, and no more than a few hundred exchanges are taken, the newest", () => {
+    const long = shapeExchanges(reply({ exchanges: [{ request: "r".repeat(5_000), answer: "a".repeat(20_000) }] }));
+    expect(long.status === 200 && long.body.ok && [long.body.exchanges[0].request.length, long.body.exchanges[0].answer?.length]).toEqual([1_600, 9_000]);
+    const many = shapeExchanges(reply({ exchanges: Array.from({ length: 700 }, (_, n) => ({ request: `r${n}` })), omitted: 4 }));
+    // The 200 the page left out are counted with the 4 the host left out.
+    expect(many.status === 200 && many.body.ok && [many.body.exchanges.length, many.body.exchanges[499].request, many.body.omitted]).toEqual([500, "r699", 204]);
+  });
+
+  test("a reply without the list is unreadable, and a host that doesn't know the request is the host's failure", () => {
+    expect(shapeExchanges(reply(undefined)).status).toBe(502);
+    expect(shapeExchanges(reply({ exchanges: "x" })).status).toBe(502);
+    expect(shapeExchanges({ ok: false, error: "Unknown request" })).toEqual({ status: 502, body: { ok: false, error: "Unknown request" } });
+  });
+
+  test("the page draws a request and then its answer, in order, with the count left out", () => {
+    const view = earlierView({ ok: true, exchanges: [{ request: "one", answer: "A." }, { request: "two" }, { request: "three", answer: "C." }], omitted: 2 });
+    expect(view.lines).toEqual([
+      { who: "you", text: "one" }, { who: "varnick", text: "A." }, { who: "you", text: "two" }, { who: "you", text: "three" }, { who: "varnick", text: "C." },
+    ]);
+    expect(view.omitted).toBe(2);
+    expect(omittedLine(1)).toBe("1 earlier exchange isn't shown.");
+    expect(omittedLine(2)).toBe("2 earlier exchanges aren't shown.");
+    expect(earlierHeading).toBe("Earlier in this Voice session");
+    expect(earlierFailed).toContain("earlier exchanges");
+  });
+
+  test("a failure or an empty list leaves nothing above", () => {
+    for (const reply of [null, undefined, { ok: false, error: "x" }, { ok: true }, { ok: true, exchanges: [], omitted: 4 }, { ok: true, exchanges: [{ request: "" }, null] }]) {
+      expect(earlierView(reply)).toEqual({ lines: [], omitted: 0 });
+    }
+  });
+
+  test("the live exchange is not touched by the earlier ones", () => {
+    const earlier = earlierView({ ok: true, exchanges: [{ request: "old" }], omitted: 0 });
+    const view = applyEvents(newView(), [{ kind: "heard", text: "new" }, { kind: "taken" }]);
+    expect(view.exchange).toEqual([{ who: "you", text: "new" }]);
+    expect(earlier.lines).toEqual([{ who: "you", text: "old" }]);
   });
 });

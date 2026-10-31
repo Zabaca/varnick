@@ -4,12 +4,14 @@
 //
 // Kept alive by a quiet tone for as long as the mode runs, because a page that is hidden and silent is frozen by Chrome within about a minute, and a
 // page that plays audio is not (the spike, 2026-10-16). The screen is kept on while the page is shown. If the page is frozen anyway, the next resume
-// reconnects the microphone and says so. Nothing is kept: the exchange lives in this view and goes with it.
+// reconnects the microphone and says so. Nothing is kept: the exchange lives in this view and goes with it. The Voice session's earlier exchanges are read
+// from the Mac each time the view opens (`loadEarlier`) and shown above, in the same way.
 // Everything the host sent goes in with textContent, never as markup.
 
 import { element, getJSON, postJSON } from "/dom.js";
 import {
-  applyEvents, DeadMic, Endpointer, fromBase64, hint, minSpeechMs, newView, pauseNote, preRollMs, Segments, serial, settled, shortSpeechMs, stateLine, Utterance,
+  applyEvents, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, pauseNote, preRollMs, Segments, serial,
+  settled, shortSpeechMs, stateLine, Utterance,
 } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -32,7 +34,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function openVoice({ host, done, openSession }) {
   closeVoice();
   current = {
-    host, done, openSession, closed: false, running: false, view: newView(), note: "",
+    host, done, openSession, closed: false, running: false, view: newView(), note: "", earlier: earlierView(null),
     ctx: null, stream: null, node: null, osc: null, lock: null, held: false,
     endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
     // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, and the one line their chunks are sent in.
@@ -53,6 +55,7 @@ export function openVoice({ host, done, openSession }) {
   document.addEventListener("freeze", v.onFreeze);
   document.addEventListener("resume", v.onResume);
   render(v);
+  void loadEarlier(v);
 }
 
 export function closeVoice() {
@@ -68,7 +71,8 @@ export function closeVoice() {
   void v.lock?.release().catch(() => {});
   v.lock = null;
   clearMediaSession();
-  // The exchange goes with the view.
+  // The exchange, and the earlier ones read from the Mac, go with the view.
+  v.earlier = earlierView(null);
   $("voice-log").replaceChildren();
   $("voice").hidden = true;
 }
@@ -82,9 +86,30 @@ function end(v, text) {
 // ---------------------------------------------------------------------------------------------------------------
 // What is shown
 
+/**
+ * The Voice session's earlier exchanges, read from the Mac when the view opens. Asked once, before Start. They are held in the view and go with it: nothing
+ * is kept on the page, and a failure leaves one line in the notice and nothing above.
+ */
+async function loadEarlier(v) {
+  const reply = await getJSON("/api/voice/exchanges");
+  if (v.closed) return;
+  if (!reply.ok) {
+    // Not over a note that something else has said meanwhile (a microphone that wouldn't start).
+    if (v.note === "") say(v, earlierFailed);
+    return;
+  }
+  v.earlier = earlierView(reply);
+  render(v);
+}
+
 function render(v) {
   const log = $("voice-log");
-  const lines = v.view.exchange.map((line) => element("p", `voice-line ${line.who}`, line.text));
+  const earlier = v.earlier.lines.length === 0 ? [] : [
+    element("p", "voice-quiet", earlierHeading),
+    ...(v.earlier.omitted > 0 ? [element("p", "voice-quiet", omittedLine(v.earlier.omitted))] : []),
+    ...v.earlier.lines.map((line) => element("p", `voice-line ${line.who}`, line.text)),
+  ];
+  const lines = [...earlier, ...v.view.exchange.map((line) => element("p", `voice-line ${line.who}`, line.text))];
   // The request so far, still being built: it becomes a line of the exchange when the Mac has it whole.
   if (v.view.pending) lines.push(element("p", "voice-line you building", v.view.pending));
   log.replaceChildren(...lines);
