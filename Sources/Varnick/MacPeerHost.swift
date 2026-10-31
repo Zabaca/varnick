@@ -248,32 +248,28 @@ enum PeerOpenTabs {
         // The voice session's hidden tab (option 09 of `listening-never-answers`) is listed once it has taken its first request (option 02 of
         // `voice-mode-forgets-the-exchange`), marked `voice` and not as a run. The relay tells it to a listed device alone (`PeerTab.visible`); the phone's Voice
         // mode still reaches it by the needs-you event of `voiceStatus`, which names its session.
-        let listable = hosted(in: state).filter { tab in
-            !tab.layout.records.contains { record in
-                guard record.runUnopened == true else { return false }
-                return record.isVoice ? !voiceTaken(record) : record.taskRun != nil
-            }
-        }
-        return listable.map { tab in
-            // A run nobody opened is marked (protocol 29), as a headless host marks its own: the other Macs keep it out of their lists. The voice session is no run.
-            let unopened = tab.layout.records.filter { $0.runUnopened == true && !$0.isVoice }
-            let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first.map { $0.uuidString.lowercased() })
-            let voice = tab.layout.records.contains { $0.isVoice && $0.runUnopened == true } ? true : nil
+        return hosted(in: state).compactMap { tab -> PeerTab? in
+            // Whether the tab is listed and how it is marked is `PeerTabMarks`'s (pure, checked by `make check-voice`).
+            guard let choice = PeerTabMarks.choose(tab.layout.records.map(facts(of:))) else { return nil }
             var listed = PeerTab(tab: tab.resolvedID.uuidString.lowercased(), name: tab.name, layout: tab.layout.peerLayout,
                                  panes: tab.layout.records.map { record in
                                      var listed = pane(for: record, status: statuses[Zmx.sessionName(record.id)])
                                      if keepOff, listed.running == false { listed.note = why }
                                      return listed
-                                 }, showsFiles: tab.showsFiles == true ? true : nil, run: mark, voice: voice)
+                                 }, showsFiles: tab.showsFiles == true ? true : nil, run: choice.run, voice: choice.voice)
             listed.settleControl()
             return listed
         }
     }
 
-    /// Whether an unopened voice session has taken a request, read from its pane's folder (`VoiceSession.isListed`).
-    private static func voiceTaken(_ record: SessionRecord) -> Bool {
-        VoiceSession.isListed(turn: PaneFolder.recordedTurn(for: record.id),
-                              takenAt: PaneFolder.modificationDate(PaneFolder.voiceTakenFile(for: record.id).path))
+    /// What the tab's listing needs of a pane's record; an unopened voice session's files are read for whether it has taken a request.
+    private static func facts(of record: SessionRecord) -> PeerTabRecord {
+        let voice = record.isUnopenedVoice
+        let listed = voice && VoiceSession.isListed(turn: PaneFolder.recordedTurn(for: record.id),
+                                                    takenAt: PaneFolder.modificationDate(PaneFolder.voiceTakenFile(for: record.id).path),
+                                                    stopped: PaneFolder.hasStopped(for: record.id))
+        return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, taskRun: record.taskRun != nil,
+                             automation: record.automation.map { $0.uuidString.lowercased() }, voiceListed: listed)
     }
 
     private static func pane(for record: SessionRecord, status: PeerSessionStatus?) -> PeerPane {

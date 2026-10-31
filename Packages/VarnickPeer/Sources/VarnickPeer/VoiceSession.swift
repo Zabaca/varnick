@@ -90,12 +90,11 @@ public enum VoiceSession {
 
     // MARK: Which session a Phone page lists
 
-    /// Whether an unopened voice session is listed on a listed device's Phone page (ADR 0043's amendment of 2026-10-31): from when its first request is
-    /// taken. A pane writes its turn file when it starts claude with the prompt, before the prompt hook has run, so a working turn counts only with the
-    /// hook's marker; any other turn is one the session has had, and stays listed while `clearMarkers` has removed the marker for the next request.
-    public static func isListed(turn: PaneTurn?, takenAt: Date?) -> Bool {
+    /// Whether an unopened voice session is listed on a device's Phone page: from its first taken request (ADR 0043, 2026-10-31). A working turn counts with
+    /// the prompt hook's marker, or once a turn has finished (`stopped`), since a later request's working turn and `clearMarkers` race the hook.
+    public static func isListed(turn: PaneTurn?, takenAt: Date?, stopped: Bool) -> Bool {
         guard let turn else { return false }
-        return turn.turn != .working || takenAt != nil
+        return turn.turn != .working || takenAt != nil || stopped
     }
 
     // MARK: The hooks only its settings carry

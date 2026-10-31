@@ -69,8 +69,8 @@ ended("one with no known turn, started 10 minutes ago", nil, at: 600, is: true)
 ended("one with no known turn, started a minute ago", nil, at: 60, is: false)
 
 // Which session a Phone page lists (option 02 of `voice-mode-forgets-the-exchange`): from when its first request is taken, not before.
-func listed(_ name: String, _ turn: PaneTurn?, taken: Bool, is expected: Bool) {
-    let got = VoiceSession.isListed(turn: turn, takenAt: taken ? after(1) : nil)
+func listed(_ name: String, _ turn: PaneTurn?, taken: Bool, stopped: Bool = false, is expected: Bool) {
+    let got = VoiceSession.isListed(turn: turn, takenAt: taken ? after(1) : nil, stopped: stopped)
     expect("listed: " + name, got == expected, "got \(got), wanted \(expected)")
 }
 
@@ -82,6 +82,28 @@ listed("an answered one", turn(.waiting, since: 0), taken: true, is: true)
 listed("an answered one while the next request's markers are cleared", turn(.waiting, since: 0), taken: false, is: true)
 listed("one with background work", turn(.background, since: 0), taken: false, is: true)
 listed("one that stopped on an error", turn(.failed, since: 0), taken: false, is: true)
+// A later request: the working turn is written and the marker cleared before the prompt hook writes it again, in either order.
+listed("a later request's working turn before its marker", turn(.working, since: 700), taken: false, stopped: true, is: true)
+listed("a later request's working turn with its marker", turn(.working, since: 700), taken: true, stopped: true, is: true)
+listed("no turn is not listed even when a turn once finished", nil, taken: false, stopped: true, is: false)
+
+// How a tab is listed and marked from its records (`PeerTabMarks`): the voice mark, never the run mark.
+let voiceBefore = PeerTabRecord(unopenedVoice: true, voiceListed: false)
+let voiceAfter = PeerTabRecord(unopenedVoice: true, voiceListed: true)
+let voiceOpened = PeerTabRecord()
+let automationRun = PeerTabRecord(unopenedRun: true, automation: "11111111-0000-4000-8000-000000000001")
+let taskStep = PeerTabRecord(unopenedRun: true, taskRun: true, automation: "11111111-0000-4000-8000-000000000001")
+expect("tab: a voice session before its first turn is left out", PeerTabMarks.choose([voiceBefore]) == nil)
+expect("tab: after it, it has the voice mark and no run mark", PeerTabMarks.choose([voiceAfter]) == PeerTabMarks.Choice(run: nil, voice: true))
+expect("tab: the race of a later request does not leave it out",
+       PeerTabMarks.choose([PeerTabRecord(unopenedVoice: true, voiceListed: VoiceSession.isListed(turn: turn(.working, since: 700), takenAt: nil, stopped: true))])
+       == PeerTabMarks.Choice(run: nil, voice: true))
+expect("tab: once opened it is an ordinary tab", PeerTabMarks.choose([voiceOpened]) == PeerTabMarks.Choice(run: nil, voice: nil))
+expect("tab: an automation's unopened run keeps its run mark and no voice mark",
+       PeerTabMarks.choose([automationRun]) == PeerTabMarks.Choice(run: PeerRunMark(automation: "11111111-0000-4000-8000-000000000001"), voice: nil))
+expect("tab: an unopened run of no automation is a mark with none", PeerTabMarks.choose([PeerTabRecord(unopenedRun: true)]) == PeerTabMarks.Choice(run: PeerRunMark(), voice: nil))
+expect("tab: a Task's unopened step is left out", PeerTabMarks.choose([taskStep]) == nil)
+expect("tab: a pane beside the voice session doesn't change its choice", PeerTabMarks.choose([voiceAfter, voiceOpened]) == PeerTabMarks.Choice(run: nil, voice: true))
 
 // A working turn whose request was given up on (the deadline, or a cancel) is busy, not replaceable: a new session would end it.
 func decideAbandoned(_ name: String, _ turn: PaneTurn?, abandoned: TimeInterval?, at seconds: TimeInterval, is expected: VoiceSession.Decision) {

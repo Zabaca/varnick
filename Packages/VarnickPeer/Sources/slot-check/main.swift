@@ -990,9 +990,12 @@ expect("a tab from a host before the mark reads without it",
        PeerJSON.decode(PeerTab.self, from: #"{"tab":"\#(voiceID)","layout":{"pane":"\#(voiceID)"},"panes":[]}"#).map { $0.voice == nil && $0.run == nil } == true)
 expect("a device is still told the voice mark", voiceTab.hiding(from: UUID().uuidString).voice == true)
 let mixedListing = [plainTab, voiceTab, markedTab]
-expect("a listed device is told the voice tab, and the ordinary tab and the run as before", PeerTab.visible(mixedListing, toListedDevice: true) == mixedListing)
-expect("a paired Mac and the host's own page server are not told the voice tab; the ordinary tab and the run stay",
-       PeerTab.visible(mixedListing, toListedDevice: false) == [plainTab, markedTab])
+expect("the asker is a listed device, the host's own page server, or a paired Mac, as the relay's two facts say",
+       PeerAsker(device: nil, ownPageServer: false) == .pairedMac && PeerAsker(device: "d", ownPageServer: false) == .listedDevice
+       && PeerAsker(device: "d", ownPageServer: true) == .ownPageServer && PeerAsker(device: nil, ownPageServer: true) == .pairedMac)
+expect("a listed device is told the voice tab, and the ordinary tab and the run as before", PeerTab.visible(mixedListing, to: .listedDevice) == mixedListing)
+expect("a paired Mac is not told the voice tab; the ordinary tab and the run stay", PeerTab.visible(mixedListing, to: .pairedMac) == [plainTab, markedTab])
+expect("the host's own page server is not told the voice tab; the ordinary tab and the run stay", PeerTab.visible(mixedListing, to: .ownPageServer) == [plainTab, markedTab])
 
 // A request carries a whole automation, and the five requests are told apart.
 var saveRequest = PeerRequest(.saveAutomation)
