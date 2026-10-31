@@ -244,6 +244,7 @@ body.in-voice { height: var(--page-height, 100dvh); overflow: hidden; display: f
 .voice-line.you { align-self: flex-end; border-color: var(--accent); }
 .voice-line.building { border-style: dashed; opacity: 0.75; }
 .voice-line.note { align-self: center; max-width: 100%; background: none; border: none; font-size: 13px; color: var(--warn); text-align: center; }
+.voice-quiet { margin: 0; align-self: center; max-width: 100%; font-size: 13px; color: var(--muted); text-align: center; }
 .voice-state { margin: 0; font-size: 18px; font-weight: 600; text-align: center; }
 #voice-start { min-height: 52px; font-size: 17px; }
 #voice-open { min-height: 48px; }

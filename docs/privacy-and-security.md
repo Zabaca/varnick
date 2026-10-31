@@ -255,6 +255,12 @@ session's:
   session's first prompt is. Later requests are in Claude Code's transcript only.
 - **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
   last request.
+- **A listed device sees the session's requests and answers.** When Voice mode opens on a Mac's Phone page, the Mac reads the Voice session's transcript
+  and sends that page the requests it holds (the hint taken off) with the last text Claude wrote for each, up to a total, newest first, which includes what
+  you asked at the Mac by Hey Varnick. Any device on the Mac's device list can ask for it (`voiceExchanges`; ADR 0043's amendment of 2026-10-31); nothing else
+  can: a paired Mac and a headless host are refused. It goes over the tailnet to that page and is not kept there. A device could already open the session's
+  terminal through Needs you, so this is no new kind of reach, but it is a way to read the desk's questions from the phone: remove a device you do not trust
+  from the list.
 
 Nothing of a spoken request goes to TypeSafe, and Text generation, the relevance filter's part in a spoken request, Answer from the
 web and Point at the screen are not used for it. The Voice session needs Hey Varnick on (for Voice mode on the phone too: nothing runs with permissions skipped on a Mac whose user never turned it on), Keep sessions running and Claude Code found and logged in, and
@@ -642,7 +648,7 @@ Voice mode (the Phone page, on a Mac's page; it needs Hey Varnick turned on at t
 - **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches of speech (it listens for speech and sends from the first word to a pause, with the 300 ms before the first word, which it keeps in memory while it listens), never continuously. A request ends only when you say "over", so everything said since Start that the Mac has not yet taken is sent as it is said, one stretch after each pause. The browser's own microphone indicator is on the whole time.
 - **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.
 - **The audio goes to the Mac over the tailnet and nowhere else.** The Mac turns it into text on-device (Listening's transcriber) and does not keep the audio; it holds the text of a request you have not yet ended with "over" in memory until you do, or until the cap (ADR 0044) sends it as it stands, and drops it when you start Voice mode again; the finished request goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
-- **Nothing of the exchange is kept on the phone,** and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
+- **Nothing of the exchange is kept on the phone,** though the view shows the Voice session's earlier exchanges, read from the Mac when it opens (above), and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
 - **A quiet tone plays on the phone for as long as Voice mode runs,** to keep the page from being frozen while it is in the background.
 - **A question the session asks is answered in the session's terminal,** opened from the page with Take over, as any session is.
 

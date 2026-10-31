@@ -5,6 +5,7 @@
 //   POST /api/voice/audio   one chunk of a segment (16 kHz 16-bit mono, base64), in order        -> relay `voiceAudio`
 //   POST /api/voice/ask     the request as text                                                  -> relay `voiceAsk`
 //   GET  /api/voice/status  the ask's events after the ones the page has                         -> relay `voiceStatus`
+//   GET  /api/voice/exchanges  the Voice session's earlier exchanges, once when the view opens   -> relay `voiceExchanges` (below)
 //
 // A segment is what the page heard between two pauses (where-it-breaks, Voice mode on the phone): its id is the page's own (a uuid), shared by its chunks
 // and polls, and it names the Voice mode run it is in. Nothing a request holds (audio, words, an answer) is logged: the server's access line is the
@@ -174,4 +175,41 @@ export function shapeStatus(result: RelayResult): VoiceAnswer {
   }
   const events = (Array.isArray(voice.events) ? voice.events : []).map(shapeEvent).filter((event): event is VoiceEvent => event !== null);
   return { status: 200, body: { ok: true, id, events, next: voice.next, done: voice.done === true } };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Voice session's earlier exchanges (option 01 of voice-mode-forgets-the-exchange)
+//
+//   GET  /api/voice/exchanges   the exchanges the Mac's Voice session holds, oldest first   -> relay `voiceExchanges`
+//
+// Asked once when the view opens. The page keeps none of it: it is drawn into the view and goes with it, and the reply is `no-store`.
+
+/** A request is at most `VoiceSession.maxRequestCharacters` on the host; an answer is cut there to the `answered` event's limit. */
+const requestLimit = 1_600;
+/** The host sends the newest that fit in 300,000 bytes; this is the most rows the page takes of them. */
+const exchangeLimit = 500;
+
+export interface EarlierExchange {
+  request: string;
+  answer?: string;
+}
+
+export type EarlierAnswer =
+  | { status: 200; body: { ok: true; exchanges: EarlierExchange[]; omitted: number } }
+  | { status: number; body: { ok: false; error: string } };
+
+/** A `voiceExchanges` reply: the exchanges the host lists, a row that isn't a request left out, and how many earlier ones the host left out. */
+export function shapeExchanges(result: RelayResult): EarlierAnswer {
+  if (!result.ok) return { status: 502, body: { ok: false, error: result.error } };
+  const raw = result.reply.voiceExchanges;
+  if (!isObject(raw) || !Array.isArray(raw.exchanges)) return { status: 502, body: { ok: false, error: "The host's answer wasn't readable" } };
+  const exchanges: EarlierExchange[] = [];
+  for (const row of raw.exchanges.slice(-exchangeLimit)) {
+    if (!isObject(row) || typeof row.request !== "string" || row.request === "" || !row.request.isWellFormed()) continue;
+    const exchange: EarlierExchange = { request: row.request.slice(0, requestLimit) };
+    if (typeof row.answer === "string" && row.answer !== "" && row.answer.isWellFormed()) exchange.answer = row.answer.slice(0, textLimit);
+    exchanges.push(exchange);
+  }
+  const omitted = typeof raw.omitted === "number" && Number.isInteger(raw.omitted) && raw.omitted > 0 ? raw.omitted : 0;
+  return { status: 200, body: { ok: true, exchanges, omitted } };
 }

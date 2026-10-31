@@ -98,6 +98,12 @@ final class VoiceSessionHost: ObservableObject {
         panes.first { !isOpened($0) }.map { VoiceSession.Held(pane: $0.id, requestInFlight: inFlight == $0.id) }
     }
 
+    /// The transcript of the session the next request would go to (the Phone page's Voice mode shows its exchanges). Nil with no unopened session, or before
+    /// its first hook has reported.
+    func transcriptPath() -> String? {
+        held.flatMap { PaneFolder.transcriptPath(for: $0.pane) }
+    }
+
     private func refreshGoing() {
         let now = panes.contains { !isOpened($0) }
         if going != now { going = now }

@@ -125,6 +125,9 @@ public enum VoiceHint {
         var words: String { self == .us ? "US" : "metric" }
     }
 
+    /// How every hint begins, which is how a prompt in the session's transcript is known for a spoken request (`VoiceExchanges`).
+    public static let prefix = "[Said aloud to Varnick "
+
     /// `searchTool` is false on a host that has no History or Bookmarks (a headless one), where the tool isn't listed. `voiceMode` is true for a request
     /// made on a Mac while its voice mode is on (option 10 of `listening-never-answers`): it was heard without a wake phrase.
     public static func text(device: Device, now: Date, timeZone: TimeZone, units: Units, searchTool: Bool = true, voiceMode: Bool = false) -> String {
@@ -135,7 +138,7 @@ public enum VoiceHint {
         let day = formatter.string(from: now)
         formatter.dateFormat = "h:mm a"
         let time = formatter.string(from: now)
-        return "[Said aloud to Varnick \(device.words) on \(day), \(time); \(units.words) units. "
+        return "\(prefix)\(device.words) on \(day), \(time); \(units.words) units. "
             + "A voice reads your reply: answer in one or two short spoken sentences, with no lists, links, paths, code or Markdown, "
             + "and say where the answer came from in a few words."
             + (searchTool ? " Varnick's search tool (\(searchToolName)) finds the user's pages, bookmarks and Claude sessions." : "")

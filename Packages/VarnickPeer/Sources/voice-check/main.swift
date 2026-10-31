@@ -619,5 +619,53 @@ expect("hint: without voice mode, the same as before", !hint.contains("Voice mod
        && VoiceHint.text(device: .mac, now: moment, timeZone: utc, units: .us, voiceMode: false) == hint)
 expect("hint: voice mode still starts with [", modeHint.hasPrefix("["))
 
+// MARK: The Voice session's earlier exchanges (option 01 of `voice-mode-forgets-the-exchange`)
+
+/// A transcript line for a typed prompt, which has `origin.kind` human as Claude Code writes it.
+func typed(_ words: String, at seconds: TimeInterval) -> String {
+    let object: [String: Any] = ["type": "user", "origin": ["kind": "human"], "timestamp": iso.string(from: after(seconds)),
+                                 "message": ["role": "user", "content": words]]
+    return String(decoding: (try? JSONSerialization.data(withJSONObject: object)) ?? Data(), as: UTF8.self)
+}
+func said(_ request: String, device: VoiceHint.Device = .phone, voiceMode: Bool = false) -> String {
+    VoicePaste.line(hint: VoiceHint.text(device: device, now: moment, timeZone: utc, units: .us, voiceMode: voiceMode), request: request)
+}
+func exchanges(_ lines: [String]) -> [TranscriptExchange] { TranscriptReader.exchanges(Data((lines.joined(separator: "\n") + "\n").utf8)) }
+
+let heardBack = VoiceExchanges.reply(from: exchanges([
+    typed(said("what is 6 times 7"), at: 1),
+    entry("assistant", at: 2, blocks: text("Let me work it out.")),
+    entry("assistant", at: 3, blocks: [["type": "tool_use", "id": "x", "name": "Bash", "input": ["command": "echo hi"]]]),
+    entry("assistant", at: 4, blocks: text("It is 42.")),
+    typed(said("and the weather", device: .mac, voiceMode: true), at: 10),
+    typed("a prompt someone typed into the session", at: 20),
+    entry("assistant", at: 21, blocks: text("Typed answer.")),
+    typed(said("one with no answer"), at: 30),
+]))
+expect("exchanges: the hint is taken off a phone's request and a Mac's, voice mode's too, and the last text is the answer",
+       heardBack.exchanges == [PeerVoiceExchange(request: "what is 6 times 7", answer: "It is 42."), PeerVoiceExchange(request: "and the weather"),
+                            PeerVoiceExchange(request: "one with no answer")] && heardBack.omitted == 0, "\(heardBack)")
+expect("exchanges: a prompt with no hint is left out, answer and all", !heardBack.exchanges.contains { $0.answer == "Typed answer." || $0.request.contains("typed") })
+expect("exchanges: the hint's own words are in none", !heardBack.exchanges.contains { $0.request.contains("Said aloud") || $0.request.contains("]") })
+expect("exchanges: a request that holds a bracket keeps it", VoiceExchanges.request(ofPrompt: said("is a[1] in range] ok")) == "is a[1] in range] ok")
+expect("exchanges: no transcript, no exchanges", VoiceExchanges.reply(from: []) == PeerVoiceExchanges())
+expect("exchanges: a prompt that is the hint alone is no request", VoiceExchanges.request(ofPrompt: String(said("x").prefix(while: { $0 != "]" })) + "]") == nil)
+
+let longAnswer = String(repeating: "a", count: PeerVoiceEvent.maxAnswerCharacters + 500)
+let longCut = VoiceExchanges.reply(from: exchanges([typed(said("tell me everything"), at: 1), entry("assistant", at: 2, blocks: text(longAnswer))]))
+expect("exchanges: an answer is cut at the answered event's limit", longCut.exchanges.first?.answer?.count == PeerVoiceEvent.maxAnswerCharacters, "\(longCut.exchanges.first?.answer?.count ?? -1)")
+
+// Five exchanges of about 100 bytes each: a limit of 250 keeps the newest two and says three were left out.
+let five = exchanges((1...5).flatMap { n -> [String] in
+    [typed(said("request number \(n)"), at: TimeInterval(n * 10)), entry("assistant", at: TimeInterval(n * 10 + 1), blocks: text(String(repeating: "x", count: 100)))]
+})
+let cappedAt250 = VoiceExchanges.reply(from: five, limit: 250)
+expect("exchanges: at the total the oldest are dropped and counted", cappedAt250.exchanges.map(\.request) == ["request number 4", "request number 5"] && cappedAt250.omitted == 3, "\(cappedAt250)")
+expect("exchanges: under the total all are kept", VoiceExchanges.reply(from: five, limit: 5_000).exchanges.count == 5 && VoiceExchanges.reply(from: five, limit: 5_000).omitted == 0)
+expect("exchanges: the default total is well under a reply line", VoiceExchanges.replyBytes * 2 < 1_000_000)
+var withExchanges = PeerReply.success()
+withExchanges.voiceExchanges = heardBack
+expect("exchanges: the reply survives the wire", PeerJSON.decode(PeerReply.self, from: PeerJSON.line(withExchanges))?.voiceExchanges == heardBack)
+
 print("check-voice: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

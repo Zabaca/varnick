@@ -161,6 +161,67 @@ public struct PeerVoiceReply: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Earlier exchanges
+
+/// One earlier exchange of the Voice session, as its Voice mode view on the phone draws it: the request as it was asked (the voice hint taken off) and the last
+/// text Claude wrote for it, none when it wrote none.
+public struct PeerVoiceExchange: Codable, Equatable, Sendable {
+    public var request: String
+    public var answer: String?
+
+    public init(request: String, answer: String? = nil) {
+        self.request = request
+        self.answer = answer
+    }
+}
+
+/// A `voiceExchanges` reply's body (`PeerReply.voiceExchanges`): the newest exchanges that fit, oldest first, and how many earlier ones were left out.
+public struct PeerVoiceExchanges: Codable, Equatable, Sendable {
+    public var exchanges: [PeerVoiceExchange]
+    public var omitted: Int
+
+    public init(exchanges: [PeerVoiceExchange] = [], omitted: Int = 0) {
+        self.exchanges = exchanges
+        self.omitted = omitted
+    }
+}
+
+/// What of a voice session's transcript the phone is shown (option 01 of `voice-mode-forgets-the-exchange`). Pure: the Mac reads the transcript and hands
+/// its exchanges here. Nothing is kept anywhere.
+public enum VoiceExchanges {
+    /// The most the exchanges of a reply may be, as the UTF-8 bytes of their texts: a reply line is 1,000,000 bytes at most, and JSON can double a text.
+    public static let replyBytes = 300_000
+
+    /// The request of a prompt in the session's transcript, which is the voice hint, a space and the request (`VoicePaste.line`); nil for a prompt that
+    /// does not begin with the hint, which no spoken request was. The hint holds no "]" before its end.
+    public static func request(ofPrompt prompt: String) -> String? {
+        guard prompt.hasPrefix(VoiceHint.prefix), let end = prompt.range(of: "] ") else { return nil }
+        let request = String(prompt[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(request.prefix(VoiceSession.maxRequestCharacters))
+    }
+
+    /// The reply for a transcript's exchanges: each spoken request with the last text Claude wrote for it (cut to the `answered` event's limit), the newest
+    /// that fit within `limit` bytes of text, the oldest dropped first and counted.
+    public static func reply(from exchanges: [TranscriptExchange], limit: Int = replyBytes) -> PeerVoiceExchanges {
+        let spoken: [PeerVoiceExchange] = exchanges.compactMap { exchange in
+            guard let request = request(ofPrompt: exchange.prompt) else { return nil }
+            let answer = exchange.parts.reversed().lazy.compactMap { part -> String? in
+                if case .claude(let text) = part { return text }
+                return nil
+            }.first.map { String($0.prefix(PeerVoiceEvent.maxAnswerCharacters)) }
+            return PeerVoiceExchange(request: request, answer: answer)
+        }
+        var kept = 0
+        var bytes = 0
+        for exchange in spoken.reversed() {
+            bytes += exchange.request.utf8.count + (exchange.answer?.utf8.count ?? 0)
+            if bytes > limit { break }
+            kept += 1
+        }
+        return PeerVoiceExchanges(exchanges: Array(spoken.suffix(kept)), omitted: spoken.count - kept)
+    }
+}
+
 // MARK: - Audio
 
 public enum VoiceAudio {

@@ -98,9 +98,10 @@ public enum PeerRelay {
                 ownPageServer = true
             }
             guard peer || device != nil else { return finish(.unlisted("\(host.name) doesn't list the Mac or device that asked")) }
-            // A Mac's automations go to and come from a listed device alone, on this one request: the five a Mac sends a headless host stay a Mac's.
+            // A Mac's automations and its Voice session's exchanges go to a listed device alone, on these requests: the five a Mac sends a headless host stay a Mac's.
             if PeerProtocol.isDeviceOnly(op), device == nil || ownPageServer {
-                return finish(.failure("\(host.name) shows its automations to a listed device only"))
+                let what = op == .voiceExchanges ? "its Voice session's exchanges" : PeerProtocol.isOutlineRequest(op) ? "its Outline" : "its automations"
+                return finish(.failure("\(host.name) shows \(what) to a listed device only"))
             }
             // The Outline's text goes to a listed device alone (ADR 0046).
             if PeerProtocol.isOutlineRequest(op), device == nil || ownPageServer {
@@ -111,7 +112,7 @@ public enum PeerRelay {
         case .hello:
             return finish(host.hello(line: line))
         case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps, .automations, .saveAutomation, .deleteAutomation, .runAutomation,
-             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations:
+             .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations, .voiceExchanges:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)

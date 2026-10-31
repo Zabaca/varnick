@@ -18,8 +18,8 @@ extension PeerProtocol {
     /// listed Mac's alone.
     public static func isPhoneAutomationRequest(_ op: PeerOp) -> Bool { op == .phoneAutomations }
 
-    /// The requests only a listed device sends (a paired Mac and the host's own page server are refused): the Outline's two and `phoneAutomations`.
-    public static func isDeviceOnly(_ op: PeerOp) -> Bool { isOutlineRequest(op) || isPhoneAutomationRequest(op) }
+    /// The requests only a listed device sends (a paired Mac and the host's own page server are refused): the Outline's two, `phoneAutomations` and `voiceExchanges`.
+    public static func isDeviceOnly(_ op: PeerOp) -> Bool { isOutlineRequest(op) || isPhoneAutomationRequest(op) || op == .voiceExchanges }
 }
 
 /// What the phone asks of a Mac's automations. `list` changes nothing; the others answer with the list after them.

@@ -1071,6 +1071,13 @@ final class PeerManager: ObservableObject {
             }
             guard let model else { return starting }
             return PeerJSON.line(await OutlineRemote.answer(request, by: by, model: model))
+        case .voiceExchanges:
+            // The Voice session's requests and answers go to a listed device alone, read from the file the relay reads: a paired Mac is refused here as in the relay.
+            guard let by = request.by, UUID(uuidString: by) != nil, MacPeerHost().listsDevice(by) else {
+                return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "That Mac") shows its Voice session's exchanges to a listed device only"))
+            }
+            guard let model else { return starting }
+            return PeerJSON.line(await VoiceRemote.shared.exchanges(model: model))
         case .phoneAutomations:
             // A Mac's automations go to a listed device alone, read from the file the relay reads: a paired Mac is refused here as in the relay.
             guard let by = request.by, UUID(uuidString: by) != nil, MacPeerHost().listsDevice(by) else {
