@@ -2,7 +2,7 @@
 problem: spoken-requests-get-words-wrong
 title: ElevenLabs' Scribe v2 transcribes each spoken request, with Apple's text standing by
 summary: A switch in Settings › Listening on each Mac, Transcribe requests with ElevenLabs, off by default, with a list of names to listen for. With it on, each segment the phone's Voice mode sends, and each line of a Hey Varnick request or of Voice mode at the Mac, goes to ElevenLabs' Scribe v2 (batch) while Apple's transcriber runs on it as today. Scribe's text is used when it comes back within 2 s; on a failure, a slow reply or no network, Apple's is. The wake phrase stays Apple's, so nothing leaves the Mac before "Hey Varnick". The request's audio, the user's voice and anything else the microphone heard in those seconds, goes to ElevenLabs and is kept there under its policy. Estimated under $3 a month at 30 requests a day; about half a second to a second more per request, unmeasured.
-status: proposed
+status: accepted
 ---
 
 ## Solution
