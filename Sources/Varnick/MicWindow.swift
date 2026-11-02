@@ -1,15 +1,12 @@
 import AVFoundation
+import VarnickPeer
 
-/// The last minute of the microphone's audio, in memory, so the lines of a request can be sent to ElevenLabs' Scribe once Apple has finished them
-/// (option 01 of `spoken-requests-get-words-wrong`; ADR 0047). It is filled from the mic callback in `Listener`'s capture under the rule Save audio
-/// follows: `feed` only counts and hands the buffer to a serial queue. It exists only while the switch, Listening and Hey Varnick are on and the Voice
-/// session answers (`SpokenRequests` says), is never written anywhere, and is emptied the moment any of them turns off.
-///
-/// Time is the analyzer's own: it counts the samples it was fed from zero (`AudioClock` says so), so a result's range in seconds is a sample range here.
+/// The microphone's last minute, held in memory only while Scribe is wanted (ADR 0047), cut by a result's range in seconds on the analyzer's clock,
+/// which counts the samples it was fed from zero. `feed` runs on the mic thread and only counts and hands the buffer to a queue (the Save audio rule).
 final class MicWindow: @unchecked Sendable {
     /// How much audio is kept.
     static let seconds: TimeInterval = 60
-    /// Audio kept either side of a line, so a clipped first or last word reaches Scribe whole.
+    /// Audio added after a line, and before it unless it starts at the wake phrase, so a clipped word reaches Scribe whole.
     static let pad: TimeInterval = 0.15
 
     private let lock = NSLock()
@@ -59,16 +56,16 @@ final class MicWindow: @unchecked Sendable {
         while let oldest = chunks.first, oldest.first + Int(oldest.buffer.frameLength) < newest - keep { chunks.removeFirst() }
     }
 
-    /// The audio from `start` to `end` seconds on the analyzer's clock, padded, as 16 kHz mono 16-bit little-endian; nil when none of it is held.
-    func pcm16(from start: Double, to end: Double) async -> Data? {
+    /// The audio from `start` to `end` seconds as 16 kHz mono 16-bit, padded after and, with `padBefore`, before; nil when none of it is held.
+    func pcm16(from start: Double, to end: Double, padBefore: Bool = true) async -> Data? {
         await withCheckedContinuation { continuation in
-            queue.async { continuation.resume(returning: self.cut(from: start, to: end)) }
+            queue.async { continuation.resume(returning: self.cut(from: start, to: end, padBefore: padBefore)) }
         }
     }
 
-    private func cut(from start: Double, to end: Double) -> Data? {
+    private func cut(from start: Double, to end: Double, padBefore: Bool) -> Data? {
         guard rate > 0, start.isFinite, end.isFinite, end > start else { return nil }
-        let from = max(0, Int((start - Self.pad) * rate))
+        let from = max(0, Int((start - (padBefore ? Self.pad : 0)) * rate))
         let to = Int((end + Self.pad) * rate)
         var samples: [Float] = []
         for chunk in chunks {
@@ -106,11 +103,6 @@ final class MicWindow: @unchecked Sendable {
             guard let converted = AudioConversion.convert(input, using: converter, to: target), let result = converted.floatChannelData?[0] else { return nil }
             out = Array(UnsafeBufferPointer(start: result, count: Int(converted.frameLength)))
         }
-        var data = Data(capacity: out.count * 2)
-        for sample in out {
-            let value = Int16(max(-1, min(1, sample)) * 32767)
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        return data
+        return VoiceAudio.pcm16(fromFloats: out)
     }
 }

@@ -17,7 +17,7 @@ enum VoiceTranscriber {
 
     /// The words in `pcm16`, or an empty string when there are none. Throws when the transcriber can't run or takes too long.
     static func transcribe(pcm16: Data) async throws -> String {
-        guard VoiceAudio.peak(ofPCM16: pcm16) >= silence else { return "" }
+        guard VoiceAudio.peak(ofPCM16: pcm16) >= VoiceAudio.silenceFloor else { return "" }
         // The model is installed outside the limit: a first use downloads it, which takes as long as it takes.
         let model = try await prepare()
         return try await withThrowingTaskGroup(of: String.self) { group in
@@ -31,9 +31,6 @@ enum VoiceTranscriber {
             return first
         }
     }
-
-    /// An utterance whose loudest sample is under this (of 1) is silence: the phone's mic reads exact zeros when it is muted.
-    private static let silence: Float = 0.002
 
     /// The transcriber with its model installed, and the audio format it takes.
     private struct Model: @unchecked Sendable {

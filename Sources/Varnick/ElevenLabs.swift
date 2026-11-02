@@ -172,11 +172,10 @@ enum ElevenLabs {
 
     /// The shortest audio Scribe takes, in bytes of 16 kHz 16-bit mono (100 ms).
     static let minimumTranscriptionBytes = 3_200
-    /// A request that has not answered by then is given up; the choice of text has long since gone to Apple's (`Transcription.deadline`).
+    /// A request not answered by then is given up.
     private static let transcriptionTimeout: TimeInterval = 8
 
-    /// Scribe v2's text for `pcm16` (raw 16 kHz mono 16-bit little-endian), told to expect English and to listen for `keyterms`. Asks for no audio-event
-    /// tags, speaker labels or timestamps. Throws a `Failure`, or `CancellationError`; nothing of the audio, the text or the names is logged.
+    /// Scribe v2's text for `pcm16` (16 kHz mono 16-bit), told to expect English and to listen for `keyterms`. Throws a `Failure` or `CancellationError`.
     static func transcribe(pcm16: Data, keyterms: [String], key: String) async throws -> String {
         let boundary = "varnick-" + UUID().uuidString
         var fields: [(String, String)] = [("model_id", transcriptionModel), ("file_format", "pcm_s16le_16"),

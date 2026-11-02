@@ -54,12 +54,14 @@ final class SpokenRequests: ObservableObject {
         var lines: [Line] = []
     }
 
-    /// One final mic result of a request: Apple's text, and Scribe's run on the same audio when it was started.
+    /// One final mic result of a request: Apple's text, and Scribe's run on the same audio, or why there is none.
     private struct Line {
         let apple: String
         let scribe: ScribeRun.Run?
-        /// When both were started: Scribe's deadline counts from here.
+        let whyNot: String
+        /// When both were started, and how long after the speech ended Apple's result arrived.
         let began: Date
+        let appleTook: TimeInterval
     }
 
     private enum Phase {
@@ -250,32 +252,43 @@ final class SpokenRequests: ObservableObject {
         }
     }
 
-    /// A final result that became part of a request for the voice session: with ElevenLabs transcription on, its audio, cut from the microphone's last
-    /// minute by its own time range, goes to Scribe at once, while the request goes on being collected on Apple's text.
+    /// A final result of a request for the voice session, with its audio sent to Scribe at once when that is on (ADR 0047). Audio is cut from the wake
+    /// word when the result has one, so nothing said before it is sent.
     private func line(of phrase: MicPhrase) -> Line {
         var run: ScribeRun.Run?
-        if let audio = phrase.audio, let window = Listener.shared.micWindow {
-            run = ScribeRun.start { await window.pcm16(from: audio.lowerBound, to: audio.upperBound) }
+        var whyNot = ScribeRun.whyNot
+        if Settings.shared.transcribesInElevenLabs {
+            whyNot = "no audio"
+            if let range = phrase.audio, let window = Listener.shared.micWindow {
+                let wakes = SpokenText.request(in: phrase.text) != nil
+                if let wake = phrase.wakeStart, wakes {
+                    let from = max(range.lowerBound, wake)
+                    run = ScribeRun.start { await window.pcm16(from: from, to: range.upperBound, padBefore: false) }
+                } else if wakes {
+                    whyNot = "no wake time"
+                } else {
+                    run = ScribeRun.start { await window.pcm16(from: range.lowerBound, to: range.upperBound) }
+                }
+            }
         }
-        return Line(apple: phrase.text, scribe: run, began: Date())
+        return Line(apple: phrase.text, scribe: run, whyNot: whyNot, began: Date(), appleTook: max(0, Date().timeIntervalSince(phrase.end)))
     }
 
-    /// The text of a request about to go to the voice session: Apple's as collected, or with Scribe's lines the request made again from them
-    /// (`Transcription.request`). Each line still out is waited for until its deadline, counted from when it was started, so the wait is at most the
-    /// last line's. Never empty when Apple's was not: a request Scribe heard nothing in is Apple's. Timing is logged as kinds and seconds only.
+    /// The request's text for the voice session: Apple's as collected, or made again from the lines with Scribe's where it came in time.
+    /// Each line still out is waited for to its own deadline.
     private func text(of request: Request) async -> (text: String, how: String) {
-        guard request.lines.contains(where: { $0.scribe != nil }) else { return (request.text, "") }
+        guard request.lines.contains(where: { $0.scribe != nil }) else { return (request.text, "text apple (\(request.lines.first?.whyNot ?? "off")), ") }
         var lines: [Transcription.Line] = []
-        var kinds: [String] = []
+        var logs: [String] = []
         for line in request.lines {
-            let apple = Transcription.Attempt.text(line.apple, took: 0)
-            let scribe = await ScribeRun.attempt(of: line.scribe, within: Transcription.deadline - Date().timeIntervalSince(line.began))
-            let choice = Transcription.choose(apple: apple, scribe: scribe)
-            kinds.append(ScribeRun.describe(choice, apple: apple, scribe: scribe))
-            if case .scribe(let text) = choice { lines.append(Transcription.Line(apple: line.apple, scribe: text)) } else { lines.append(Transcription.Line(apple: line.apple)) }
+            let apple = Transcription.Attempt.text(line.apple, took: line.appleTook)
+            let remaining = Transcription.deadline - Date().timeIntervalSince(line.began)
+            let decided = await ScribeRun.decide(apple: apple, scribe: line.scribe, whyNot: line.whyNot, within: remaining)
+            logs.append(decided.log)
+            if case .scribe(let text) = decided.choice { lines.append(Transcription.Line(apple: line.apple, scribe: text)) } else { lines.append(Transcription.Line(apple: line.apple)) }
         }
         let made = String(Transcription.request(from: lines, afterWake: { SpokenText.request(in: $0) }).prefix(SpokenText.maxRequestCharacters))
-        let how = "lines: " + kinds.enumerated().map { "\($0.offset + 1) \($0.element)" }.joined(separator: "; ") + ", "
+        let how = "lines: " + logs.enumerated().map { "\($0.offset + 1) \($0.element)" }.joined(separator: "; ") + ", "
         return (made.isEmpty ? request.text : made, how)
     }
 

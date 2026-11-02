@@ -727,7 +727,7 @@ choose("Apple failed, Scribe answered in time", apple: .failed(kind: "transcribe
 choose("Apple failed, Scribe answered late", apple: .failed(kind: "transcriber"), scribe: .text("scribe words", took: 3), is: .scribe("scribe words"))
 choose("both failed", apple: .failed(kind: "transcriber"), scribe: .failed(kind: "slow"), is: .failed)
 choose("Apple failed, Scribe not back", apple: .failed(kind: "transcriber"), scribe: .pending, is: .failed)
-expect("choose: the reasons are kinds only", Transcription.Why.scribeFailed("key refused").logKind == "failed, key refused" && Transcription.Why.late.logKind == "late")
+expect("choose: the reasons are kinds only", Transcription.Why.scribeFailed("key refused").logKind == "key refused" && Transcription.Why.late.logKind == "late")
 
 // MARK: The names Scribe listens for
 
@@ -748,6 +748,40 @@ terms("49 characters are kept, 50 are not", fortyNine + "\n" + fortyNine + "a", 
 let hundredAndFive = (1...105).map { "name\($0)" }.joined(separator: "\n")
 let cut = Transcription.keyterms(from: hundredAndFive)
 expect("keyterms: cut at 100 in all, Varnick first", cut.count == 100 && cut.first == "Varnick" && cut.last == "name99", "\(cut.count) \(cut.last ?? "")")
+
+// MARK: Scribe's wait ends at the deadline
+
+func elapsed(_ run: Task<Transcription.Attempt, Never>, within seconds: TimeInterval) async -> (Transcription.Attempt, TimeInterval) {
+    let start = Date()
+    let got = await Transcription.attempt(of: run, within: seconds)
+    return (got, Date().timeIntervalSince(start))
+}
+
+let slowRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .seconds(4))
+    return .text("late", took: 4)
+}
+let (slowGot, slowTook) = await elapsed(slowRun, within: 1)
+expect("attempt: a run that answers at 4 s returns pending at the 1 s deadline", slowGot == .pending && slowTook < 1.5, "\(slowGot) after \(slowTook) s")
+let fastRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .milliseconds(100))
+    return .text("quick", took: 0.1)
+}
+let (fastGot, fastTook) = await elapsed(fastRun, within: 5)
+expect("attempt: a run that answers first returns its outcome at once", fastGot == .text("quick", took: 0.1) && fastTook < 1, "\(fastGot) after \(fastTook) s")
+let doneRun = Task.detached { Transcription.Attempt.failed(kind: "key refused") }
+_ = await doneRun.value
+let (doneGot, doneTook) = await elapsed(doneRun, within: 5)
+expect("attempt: a run already finished returns at once", doneGot == .failed(kind: "key refused") && doneTook < 0.5, "\(doneGot) after \(doneTook) s")
+let cancelRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .seconds(4))
+    return .pending
+}
+let waiting = Task { await elapsed(cancelRun, within: 10) }
+try? await Task.sleep(for: .milliseconds(100))
+waiting.cancel()
+let (cancelGot, cancelTook) = await waiting.value
+expect("attempt: a cancelled wait returns at once", cancelGot == .pending && cancelTook < 1.5, "\(cancelGot) after \(cancelTook) s")
 
 // MARK: A Mac request made from its lines
 
@@ -783,8 +817,10 @@ made("Voice mode lines with no wake phrase", [Line(apple: "open the pantry notes
      is: "open the Pantry notes from yesterday.")
 made("Voice mode: Scribe's last line without over uses Apple's", [Line(apple: "from yesterday over", scribe: "from yesterday")], is: "from yesterday")
 made("Voice mode: Scribe adding the wake phrase has it taken off", [Line(apple: "what time is it over", scribe: "Hey Varnick what time is it. Over.")], is: "what time is it.")
-made("Scribe's over in a middle line is not the end", [Line(apple: "hey varnik move it", scribe: "Hey Varnick move it over"), Line(apple: "to the left over", scribe: "to the left over")],
-     is: "move it to the left")
+made("Scribe's over in a middle line is kept as a word, not cut out", [Line(apple: "hey varnik move it", scribe: "Hey Varnick move it over"), Line(apple: "to the left over", scribe: "to the left over")],
+     is: "move it over to the left")
+made("only the last line has its over taken off", [Line(apple: "open the notes", scribe: "open the notes"), Line(apple: "from last week over", scribe: "from last week. Over.")],
+     is: "open the notes from last week.")
 made("no lines is no request", [], is: "")
 
 print("check-voice: \(cases) cases, \(failures) failed")

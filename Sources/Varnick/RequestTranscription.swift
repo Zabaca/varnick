@@ -1,20 +1,21 @@
 import Foundation
 import VarnickPeer
 
-/// ElevenLabs' Scribe v2 beside Apple's transcriber for a spoken request (option 01 of `spoken-requests-get-words-wrong`; ADR 0047). A piece of audio that
-/// becomes part of a request (a segment the phone sent, a line of a Mac request) is started here when the switch is on and a key is saved, and the
-/// caller takes `Transcription.choose` of both. The rules that break are in docs/agents/where-it-breaks.md, Listening and spoken requests. Nothing of the
-/// audio, either text, a name or the key is logged: failures are kinds.
+/// ElevenLabs' Scribe v2 beside Apple's transcriber for a spoken request (ADR 0047): `start` runs it on a piece of audio, `decide` takes the text of
+/// the two. Nothing of the audio, either text, a name or the key is logged; failures are kinds (where-it-breaks.md, Listening and spoken requests).
 @MainActor
 enum ScribeRun {
-    /// A piece of audio quieter than this (of 1) goes to neither transcriber, as Apple's pass has always skipped it.
-    nonisolated static let silence: Float = 0.002
-
     typealias Run = Task<Transcription.Attempt, Never>
 
-    /// Starts Scribe on `audio` (16 kHz mono 16-bit, cut off the main actor); nil when the switch is off or no key is saved, so nothing is sent. The
-    /// run ends in `.failed("not sent")` for audio that is silent or under 100 ms, which sets no note, and in any other failure's kind with the
-    /// note under the switch set. The key is read off the main actor, before the clock of the request starts.
+    /// How long Scribe is waited for when Apple failed; the request's own timeout is the limit.
+    static let patience: TimeInterval = 10
+
+    /// Why `start` returns nil now, for the timing line.
+    static var whyNot: String { Settings.shared.transcribeRequests ? "no key" : "off" }
+
+    /// Scribe on `audio` (16 kHz mono 16-bit, cut off the main actor), or nil with the switch off or no key saved, so nothing is sent. The run's clock
+    /// starts here, so a slow Keychain read counts against its deadline. Audio that is silent or under 100 ms is `.failed("not sent")` with no note;
+    /// any other failure sets the note under the switch.
     static func start(audio: @escaping @Sendable () async -> Data?) -> Run? {
         let settings = Settings.shared
         guard settings.transcribesInElevenLabs else { return nil }
@@ -22,9 +23,11 @@ enum ScribeRun {
         return Task.detached {
             let began = Date()
             guard let key = await ElevenLabs.apiKey() else { return .failed(kind: "no key") }
-            guard let pcm = await audio(), pcm.count >= ElevenLabs.minimumTranscriptionBytes, VoiceAudio.peak(ofPCM16: pcm) >= silence else {
+            guard let pcm = await audio(), pcm.count >= ElevenLabs.minimumTranscriptionBytes, VoiceAudio.peak(ofPCM16: pcm) >= VoiceAudio.silenceFloor else {
                 return .failed(kind: "not sent")
             }
+            // The switch may have gone off while the key was read or the audio cut.
+            guard await MainActor.run(body: { Settings.shared.transcribesInElevenLabs }) else { return .failed(kind: "off") }
             do {
                 let text = try await ElevenLabs.transcribe(pcm16: pcm, keyterms: names, key: key)
                 await MainActor.run { Settings.shared.noteTranscription(nil) }
@@ -38,27 +41,12 @@ enum ScribeRun {
         }
     }
 
-    /// Scribe's outcome as it stands once `remaining` seconds have passed, or when it finishes, whichever is first: `.pending` if it is still out. No run
-    /// is a run that was never started.
-    static func attempt(of run: Run?, within remaining: TimeInterval) async -> Transcription.Attempt {
-        guard let run else { return .failed(kind: "off") }
-        return await withTaskGroup(of: Transcription.Attempt.self) { group in
-            group.addTask { await run.value }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(max(0, remaining)))
-                return .pending
-            }
-            let first = await group.next() ?? .pending
-            group.cancelAll()
-            return first
-        }
-    }
-
-    /// How long Scribe is waited for when Apple has failed: the request's own timeout is the limit.
-    static let patience: TimeInterval = 10
-
-    /// For the timing lines: which text was used and what each took, in kinds and seconds.
-    static func describe(_ choice: Transcription.Choice, apple: Transcription.Attempt, scribe: Transcription.Attempt) -> String {
+    /// Waits for `scribe` until `within` seconds have passed (a nil run is a failure of kind `whyNot`) and chooses between it and `apple`. The log
+    /// text says which was used, why Apple's was if it was, and what each took.
+    static func decide(apple: Transcription.Attempt, scribe: Run?, whyNot: String, within: TimeInterval) async -> (choice: Transcription.Choice, log: String) {
+        let outcome: Transcription.Attempt
+        if let scribe { outcome = await Transcription.attempt(of: scribe, within: within) } else { outcome = .failed(kind: whyNot) }
+        let choice = Transcription.choose(apple: apple, scribe: outcome)
         func took(_ attempt: Transcription.Attempt) -> String {
             if case .text(_, let seconds) = attempt { return seconds.secondsText }
             return "-"
@@ -69,6 +57,6 @@ enum ScribeRun {
         case .apple(_, let why): used = "apple (\(why.logKind))"
         case .failed: used = "none"
         }
-        return "text \(used), apple \(took(apple)), scribe \(took(scribe))"
+        return (choice, "text \(used), apple \(took(apple)), scribe \(took(outcome))")
     }
 }

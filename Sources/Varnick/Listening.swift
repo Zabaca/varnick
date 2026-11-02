@@ -33,10 +33,9 @@ final class Listener: ObservableObject {
     var onMicPhrase: ((MicPhrase) -> Void)?
     /// The running `Capture` (macOS 26 only, so not typed as one).
     private var capture: AnyObject?
-    /// The last minute of the running capture's microphone, held only while `windowWanted` (ADR 0047); nil when nothing is capturing.
+    /// The running capture's last minute of microphone, held only while `windowWanted` (ADR 0047); nil when nothing is capturing.
     private(set) var micWindow: MicWindow?
-    /// Whether requests' lines go to ElevenLabs, so the window should hold audio: `SpokenRequests` sets it from the settings it depends on. Turning it
-    /// off empties the window at once.
+    /// Whether the window should hold audio, set by `SpokenRequests`; turning it off empties the window at once.
     var windowWanted = false {
         didSet { micWindow?.setOn(windowWanted) }
     }
@@ -236,14 +235,16 @@ enum CaptureEvent {
     case failed(String)
 }
 
-/// One mic result: its text and when its audio began and ended. Volatile results come before the final one. `audio` is the same range in seconds on the
-/// analyzer's own clock, which `MicWindow` is indexed by.
+/// One mic result: its text and when its audio began and ended. Volatile results come before the final one. `audio` is that range in seconds on the
+/// analyzer's clock, which `MicWindow` is indexed by.
 struct MicPhrase {
     let text: String
     let start: Date
     let end: Date
     let isFinal: Bool
     var audio: ClosedRange<Double>? = nil
+    /// Where the wake phrase's "hey" began on that clock, for a final result that has one and whose words carry audio times.
+    var wakeStart: Double? = nil
 }
 
 /// One run of listening: the mic through AVAudioEngine and the Mac's output through a Core
@@ -483,8 +484,11 @@ private final class Capture {
                     if source == .mic, !text.isEmpty {
                         let audio = result.range.start.seconds.isFinite && result.range.end.seconds.isFinite
                             && result.range.end.seconds >= result.range.start.seconds ? result.range.start.seconds...result.range.end.seconds : nil
+                        let wakeStart = result.isFinal ? SpokenText.wakeStart(in: text).flatMap {
+                            Self.audioStart(of: result.text, atCharacter: text.distance(from: text.startIndex, to: $0))
+                        } : nil
                         onEvent(.micPhrase(MicPhrase(text: text, start: start, end: clock.date(at: result.range.end.seconds),
-                                                     isFinal: result.isFinal, audio: audio)))
+                                                     isFinal: result.isFinal, audio: audio, wakeStart: wakeStart)))
                     }
                     if result.isFinal { Transcript.append(source, text, at: start) }
                 }
@@ -512,6 +516,19 @@ private final class Capture {
             saved?.write(out)
             micWindow?.feed(out)
         }
+    }
+
+    /// When the character at `offset` began, on the analyzer's clock, from the audio time ranges of the result's words (interpolated inside a run of
+    /// several); nil when its run has none, so the caller sends nothing rather than guess.
+    private static func audioStart(of text: AttributedString, atCharacter offset: Int) -> Double? {
+        for run in text.runs {
+            let lower = text.characters.distance(from: text.startIndex, to: run.range.lowerBound)
+            let length = text.characters.distance(from: run.range.lowerBound, to: run.range.upperBound)
+            guard offset < lower + length else { continue }
+            guard let range = run.audioTimeRange, length > 0, range.start.seconds.isFinite, range.end.seconds.isFinite else { return nil }
+            return range.start.seconds + Double(max(0, offset - lower)) / Double(length) * (range.end.seconds - range.start.seconds)
+        }
+        return nil
     }
 
     /// Any non-zero byte. A denied System Audio Recording permission delivers exact zeros.

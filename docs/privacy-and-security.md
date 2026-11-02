@@ -133,7 +133,7 @@ fails or can't be reached.
   which is everything said since then that the Mac has not yet taken, a radio or the car's speakers included. The
   Mac holds the last minute of its microphone in memory for this, only while the switch, a saved key, Listening and
   Hey Varnick are on and the voice session answers, and drops it when any goes off; it is never written to disk.
-- **What is never sent.** Anything before "Hey Varnick" at this Mac, the Mac's own audio (what its speakers play),
+- **What is never sent.** Anything before "Hey Varnick" at this Mac (the audio of that line is cut from the word "Hey"), the Mac's own audio (what its speakers play),
   and Listening's transcript of your day. Listening's transcript stays Apple's text and stays on your Mac.
 - **The names.** The list in Settings › Listening › Names to listen for, and "Varnick", go with each piece of audio
   so Scribe listens for them.

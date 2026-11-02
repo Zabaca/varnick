@@ -74,18 +74,15 @@ final class VoiceRemote {
         }
     }
 
-    /// A segment's words, and for the timing line which transcriber's they are (empty when ElevenLabs is not used).
+    /// A segment's words, and the timing line's account of which transcriber's they are.
     private struct Heard {
         let result: Result<String, Error>
         let how: String
     }
 
-    /// Apple's pass over `pcm` and, with this Mac's switch on, Scribe's (started by the caller, at the same moment), and the choice between them
-    /// (`Transcription.choose`): Scribe's text if it came within the deadline, else Apple's. Apple's text is ready by then, so a slow or failed Scribe
-    /// costs nothing more than the deadline; only when Apple failed is Scribe waited for.
-    private static func words(apple: Task<String, Error>, scribe: ScribeRun.Run?, began: Date) async -> Heard {
+    /// Apple's pass and Scribe's, started together by `segment`, and the choice between them: Scribe is waited for past the deadline only if Apple failed.
+    private static func words(apple: Task<String, Error>, scribe: ScribeRun.Run?, whyNot: String, began: Date) async -> Heard {
         let appleResult = await apple.result
-        guard let scribe else { return Heard(result: appleResult, how: "") }
         let appleTook = Date().timeIntervalSince(began)
         let appleAttempt: Transcription.Attempt
         var waiting = max(0, Transcription.deadline - appleTook)
@@ -95,12 +92,10 @@ final class VoiceRemote {
             appleAttempt = .failed(kind: (error as? Failure)?.kind ?? "transcriber")
             waiting = ScribeRun.patience
         }
-        let scribeAttempt = await ScribeRun.attempt(of: scribe, within: waiting)
-        let choice = Transcription.choose(apple: appleAttempt, scribe: scribeAttempt)
-        let how = ", " + ScribeRun.describe(choice, apple: appleAttempt, scribe: scribeAttempt)
-        switch choice {
-        case .scribe(let text), .apple(let text, _): return Heard(result: .success(text), how: how)
-        case .failed: return Heard(result: appleResult, how: how)
+        let decided = await ScribeRun.decide(apple: appleAttempt, scribe: scribe, whyNot: whyNot, within: waiting)
+        switch decided.choice {
+        case .scribe(let text), .apple(let text, _): return Heard(result: .success(text), how: ", " + decided.log)
+        case .failed: return Heard(result: appleResult, how: ", " + decided.log)
         }
     }
 
@@ -129,7 +124,8 @@ final class VoiceRemote {
         // Apple's pass and, with this Mac's switch on, Scribe's start together (ADR 0047).
         let apple = Task { try await Self.transcribe(pcm) }
         let scribe = ScribeRun.start { pcm }
-        let transcription = Task { await Self.words(apple: apple, scribe: scribe, began: began) }
+        let whyNot = ScribeRun.whyNot
+        let transcription = Task { await Self.words(apple: apple, scribe: scribe, whyNot: whyNot, began: began) }
         let before = applied[device]
         applied[device] = Task {
             let heard = await transcription.value
