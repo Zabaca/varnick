@@ -709,5 +709,137 @@ var withExchanges = PeerReply.success()
 withExchanges.voiceExchanges = heardBack
 expect("exchanges: the reply survives the wire", PeerJSON.decode(PeerReply.self, from: PeerJSON.line(withExchanges))?.voiceExchanges == heardBack)
 
+// MARK: Which transcriber's text a request uses (option 01 of `spoken-requests-get-words-wrong`)
+
+func choose(_ name: String, apple: Transcription.Attempt, scribe: Transcription.Attempt, is expected: Transcription.Choice) {
+    let got = Transcription.choose(apple: apple, scribe: scribe)
+    expect("choose: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+choose("Scribe in time", apple: .text("hey varnik", took: 0.3), scribe: .text("Hey Varnick", took: 0.8), is: .scribe("Hey Varnick"))
+choose("Scribe exactly at the deadline", apple: .text("a", took: 0.3), scribe: .text("b", took: Transcription.deadline), is: .scribe("b"))
+choose("Scribe blank in time beats Apple's words", apple: .text("a car horn", took: 0.3), scribe: .text("", took: 0.9), is: .scribe(""))
+choose("Scribe late", apple: .text("apple words", took: 0.3), scribe: .text("scribe words", took: 2.5), is: .apple("apple words", why: .late))
+choose("Scribe not back", apple: .text("apple words", took: 0.3), scribe: .pending, is: .apple("apple words", why: .late))
+choose("Scribe failed", apple: .text("apple words", took: 0.3), scribe: .failed(kind: "missing permission"),
+       is: .apple("apple words", why: .scribeFailed("missing permission")))
+choose("Apple failed, Scribe answered in time", apple: .failed(kind: "transcriber"), scribe: .text("scribe words", took: 0.7), is: .scribe("scribe words"))
+choose("Apple failed, Scribe answered late", apple: .failed(kind: "transcriber"), scribe: .text("scribe words", took: 3), is: .scribe("scribe words"))
+choose("both failed", apple: .failed(kind: "transcriber"), scribe: .failed(kind: "slow"), is: .failed)
+choose("Apple failed, Scribe not back", apple: .failed(kind: "transcriber"), scribe: .pending, is: .failed)
+expect("choose: the reasons are kinds only", Transcription.Why.scribeFailed("key refused").logKind == "key refused" && Transcription.Why.late.logKind == "late")
+
+// MARK: The names Scribe listens for
+
+func terms(_ name: String, _ names: String, is expected: [String]) {
+    let got = Transcription.keyterms(from: names)
+    expect("keyterms: " + name, got == expected, "got \(got), wanted \(expected)")
+}
+
+terms("no names is the app's own", "", is: ["Varnick"])
+terms("trimmed, one a line", "  Jev \n\nTypeSafe  \n", is: ["Varnick", "Jev", "TypeSafe"])
+terms("Varnick is first and not repeated", "Jev\nvarnick\nVARNICK", is: ["Varnick", "Jev"])
+terms("repeats of any case are dropped", "Priya\npriya\nPRIYA", is: ["Varnick", "Priya"])
+terms("refused characters are stripped", "Jev<>\n{[Priya]}\\\n<>", is: ["Varnick", "Jev", "Priya"])
+terms("inner spaces are squeezed", "Mount   Wilson", is: ["Varnick", "Mount Wilson"])
+terms("five words are kept, six are not", "one two three four five\none two three four five six", is: ["Varnick", "one two three four five"])
+let fortyNine = String(repeating: "a", count: 49)
+terms("49 characters are kept, 50 are not", fortyNine + "\n" + fortyNine + "a", is: ["Varnick", fortyNine])
+let hundredAndFive = (1...105).map { "name\($0)" }.joined(separator: "\n")
+let cut = Transcription.keyterms(from: hundredAndFive)
+expect("keyterms: cut at 100 in all, Varnick first", cut.count == 100 && cut.first == "Varnick" && cut.last == "name99", "\(cut.count) \(cut.last ?? "")")
+
+// MARK: Scribe's wait ends at the deadline
+
+func elapsed(_ run: Task<Transcription.Attempt, Never>, within seconds: TimeInterval) async -> (Transcription.Attempt, TimeInterval) {
+    let start = Date()
+    let got = await Transcription.attempt(of: run, within: seconds)
+    return (got, Date().timeIntervalSince(start))
+}
+
+let slowRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .seconds(4))
+    return .text("late", took: 4)
+}
+let (slowGot, slowTook) = await elapsed(slowRun, within: 1)
+expect("attempt: a run that answers at 4 s returns pending at the 1 s deadline", slowGot == .pending && slowTook < 1.5, "\(slowGot) after \(slowTook) s")
+let fastRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .milliseconds(100))
+    return .text("quick", took: 0.1)
+}
+let (fastGot, fastTook) = await elapsed(fastRun, within: 5)
+expect("attempt: a run that answers first returns its outcome at once", fastGot == .text("quick", took: 0.1) && fastTook < 1, "\(fastGot) after \(fastTook) s")
+let doneRun = Task.detached { Transcription.Attempt.failed(kind: "key refused") }
+_ = await doneRun.value
+let (doneGot, doneTook) = await elapsed(doneRun, within: 5)
+expect("attempt: a run already finished returns at once", doneGot == .failed(kind: "key refused") && doneTook < 0.5, "\(doneGot) after \(doneTook) s")
+let cancelRun = Task.detached { () -> Transcription.Attempt in
+    try? await Task.sleep(for: .seconds(4))
+    return .pending
+}
+let waiting = Task { await elapsed(cancelRun, within: 10) }
+try? await Task.sleep(for: .milliseconds(100))
+waiting.cancel()
+let (cancelGot, cancelTook) = await waiting.value
+expect("attempt: a cancelled wait returns at once", cancelGot == .pending && cancelTook < 1.5, "\(cancelGot) after \(cancelTook) s")
+
+// MARK: Where the wake word begins
+
+func started(_ name: String, _ offset: Int, _ runs: [Transcription.TimedRun], is expected: Double?) {
+    let got = Transcription.audioStart(ofCharacter: offset, in: runs)
+    expect("word start: " + name, got == expected, "got \(String(describing: got)), wanted \(String(describing: expected))")
+}
+
+typealias Timed = Transcription.TimedRun
+let words = [Timed(text: "Hey", start: 1.0, end: 1.3), Timed(text: " Varnick", start: 1.3, end: 1.9), Timed(text: " what", start: 1.9, end: 2.2)]
+started("the first word starts at its run", 0, words, is: 1.0)
+started("a word after a space starts at its run, not a quarter in", 4, words, is: 1.3)
+started("the space itself is the run's start", 3, words, is: 1.3)
+started("a later word", 12, words, is: 1.9)
+started("hey after another word is its own run's start", 4, [Timed(text: "and", start: 0.2, end: 0.5), Timed(text: " hey", start: 0.5, end: 0.9)], is: 0.5)
+started("inside a run of several words it is interpolated", 4, [Timed(text: "hey varnick", start: 1.0, end: 2.1)], is: 1.0 + 4.0 / 11.0 * 1.1)
+started("a run with no time gives nothing", 0, [Timed(text: "Hey", start: nil, end: nil)], is: nil)
+started("past the end gives nothing", 20, words, is: nil)
+
+// MARK: A Mac request made from its lines
+
+/// A stand-in for the wake rule: "hey varnick" (any case) at the start, then what follows.
+func wake(_ line: String) -> String? {
+    let lower = line.lowercased()
+    guard lower.hasPrefix("hey varnick") || lower.hasPrefix("hey varnik") else { return nil }
+    let rest = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true).dropFirst(2).joined(separator: " ")
+    return String(rest.drop(while: { ",.:;!? ".contains($0) }))
+}
+
+func made(_ name: String, _ lines: [Transcription.Line], is expected: String) {
+    let got = Transcription.request(from: lines, afterWake: wake)
+    expect("request from lines: " + name, got == expected, "got \"\(got)\", wanted \"\(expected)\"")
+}
+
+typealias Line = Transcription.Line
+made("Apple's only: the wake phrase, the request and over in one line", [Line(apple: "Hey Varnick, what time is it over")], is: "what time is it")
+made("one Scribe line holding all three", [Line(apple: "Hey varnik what time is it over", scribe: "Hey Varnick, what time is it, over.")], is: "what time is it")
+made("several lines of Scribe's", [Line(apple: "hey varnik tell Priya", scribe: "Hey Varnick, tell Priya"), Line(apple: "that the demo moved", scribe: "that the demo moved"),
+                                  Line(apple: "to Tuesday over", scribe: "to Tuesday. Over.")], is: "tell Priya that the demo moved to Tuesday.")
+made("a mix of Scribe's lines and Apple's", [Line(apple: "hey varnik ask pria", scribe: "Hey Varnick ask Priya"), Line(apple: "about the plan over")], is: "ask Priya about the plan")
+made("Scribe's first line without the wake phrase uses Apple's", [Line(apple: "hey varnik what is the plan", scribe: "what is the plan"), Line(apple: "for Friday over", scribe: "for Friday over")],
+     is: "what is the plan for Friday")
+made("a blank first line of Scribe's uses Apple's", [Line(apple: "hey varnik what is the plan over", scribe: "")], is: "what is the plan")
+made("Scribe's last line without over uses Apple's", [Line(apple: "hey varnik the plan", scribe: "Hey Varnick the plan"), Line(apple: "for Friday over", scribe: "for Friday")],
+     is: "the plan for Friday")
+made("a last line of Scribe's that is blank adds nothing", [Line(apple: "hey varnik the plan", scribe: "Hey Varnick the plan"), Line(apple: "over", scribe: "")], is: "the plan")
+made("over alone as Apple's last line ends it", [Line(apple: "hey varnik the plan", scribe: "Hey Varnick the plan"), Line(apple: "over")], is: "the plan")
+made("a blank middle line adds nothing", [Line(apple: "hey varnik the plan"), Line(apple: "a car horn", scribe: ""), Line(apple: "for Friday over")], is: "the plan for Friday")
+made("a line still out at its deadline is Apple's", [Line(apple: "hey varnik the plan", scribe: "Hey Varnick the plan"), Line(apple: "for Friday over", scribe: nil)], is: "the plan for Friday")
+made("Voice mode lines with no wake phrase", [Line(apple: "open the pantry notes", scribe: "open the Pantry notes"), Line(apple: "from yesterday over", scribe: "from yesterday. Over.")],
+     is: "open the Pantry notes from yesterday.")
+made("Voice mode: Scribe's last line without over uses Apple's", [Line(apple: "from yesterday over", scribe: "from yesterday")], is: "from yesterday")
+made("Voice mode: Scribe adding the wake phrase has it taken off", [Line(apple: "what time is it over", scribe: "Hey Varnick what time is it. Over.")], is: "what time is it.")
+made("Scribe's over in a middle line is kept as a word, not cut out", [Line(apple: "hey varnik move it", scribe: "Hey Varnick move it over"), Line(apple: "to the left over", scribe: "to the left over")],
+     is: "move it over to the left")
+made("only the last line has its over taken off", [Line(apple: "open the notes", scribe: "open the notes"), Line(apple: "from last week over", scribe: "from last week. Over.")],
+     is: "open the notes from last week.")
+made("no lines is no request", [], is: "")
+
 print("check-voice: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -5,6 +5,7 @@ import CoreMedia
 import Foundation
 import Speech
 import Synchronization
+import VarnickPeer
 
 /// The language Listening transcribes in, and screen text recognition reads (ADR 0021).
 let listeningLanguage = "en-US"
@@ -33,6 +34,12 @@ final class Listener: ObservableObject {
     var onMicPhrase: ((MicPhrase) -> Void)?
     /// The running `Capture` (macOS 26 only, so not typed as one).
     private var capture: AnyObject?
+    /// The running capture's last minute of microphone, held only while `windowWanted` (ADR 0047); nil when nothing is capturing.
+    private(set) var micWindow: MicWindow?
+    /// Whether the window should hold audio, set by `SpokenRequests`; turning it off empties the window at once.
+    var windowWanted = false {
+        didSet { micWindow?.setOn(windowWanted) }
+    }
     private var starting: Task<Void, Never>?
     /// Bumped on every start and stop, so a capture's late events can't touch a newer one.
     private var generation = 0
@@ -73,8 +80,10 @@ final class Listener: ObservableObject {
         state = .starting("Starting…")
         // Read here, so a change in Settings takes effect the next time Listening starts or restarts (a device change restarts it).
         let saveAudio = Settings.shared.saveAudio
+        let window = MicWindow(isOn: windowWanted)
+        micWindow = window
         starting = Task { [weak self] in
-            let capture = Capture(saveAudio: saveAudio)
+            let capture = Capture(saveAudio: saveAudio, window: window)
             capture.onEvent = { event in Task { @MainActor in self?.handle(event, from: generation) } }
             do {
                 guard await AVCaptureDevice.requestAccess(for: .audio) else {
@@ -136,6 +145,8 @@ final class Listener: ObservableObject {
 
     private func endCapture(discarding: Bool) {
         generation += 1
+        micWindow?.setOn(false)
+        micWindow = nil
         starting?.cancel()
         starting = nil
         pendingRestart?.cancel()
@@ -225,12 +236,16 @@ enum CaptureEvent {
     case failed(String)
 }
 
-/// One mic result: its text and when its audio began and ended. Volatile results come before the final one.
+/// One mic result: its text and when its audio began and ended. Volatile results come before the final one. `audio` is that range in seconds on the
+/// analyzer's clock, which `MicWindow` is indexed by.
 struct MicPhrase {
     let text: String
     let start: Date
     let end: Date
     let isFinal: Bool
+    var audio: ClosedRange<Double>? = nil
+    /// Where the wake phrase's "hey" began on that clock, for a final result that has one and whose words carry audio times.
+    var wakeStart: Double? = nil
 }
 
 /// One run of listening: the mic through AVAudioEngine and the Mac's output through a Core
@@ -262,7 +277,13 @@ private final class Capture {
     /// Off once a discarding stop begins: nothing heard after Stop reaches the transcript.
     private let writes = Atomic(true)
 
-    init(saveAudio: Bool) { self.saveAudio = saveAudio }
+    /// The mic's last minute, fed from the mic's callback while it is on (ADR 0047); the system source never feeds it.
+    private let window: MicWindow
+
+    init(saveAudio: Bool, window: MicWindow) {
+        self.saveAudio = saveAudio
+        self.window = window
+    }
 
     var heardSystemAudio: Bool { heardSystem.load(ordering: .relaxed) }
 
@@ -462,8 +483,13 @@ private final class Capture {
                     if source == .mic, SpeechSpans.shared.covers(start) { continue }
                     let text = String(result.text.characters)
                     if source == .mic, !text.isEmpty {
+                        let audio = result.range.start.seconds.isFinite && result.range.end.seconds.isFinite
+                            && result.range.end.seconds >= result.range.start.seconds ? result.range.start.seconds...result.range.end.seconds : nil
+                        let wakeStart = result.isFinal ? SpokenText.wakeStart(in: text).flatMap {
+                            Self.audioStart(of: result.text, atCharacter: text.distance(from: text.startIndex, to: $0))
+                        } : nil
                         onEvent(.micPhrase(MicPhrase(text: text, start: start, end: clock.date(at: result.range.end.seconds),
-                                                     isFinal: result.isFinal)))
+                                                     isFinal: result.isFinal, audio: audio, wakeStart: wakeStart)))
                     }
                     if result.isFinal { Transcript.append(source, text, at: start) }
                 }
@@ -482,13 +508,23 @@ private final class Capture {
             }
         }
 
+        let micWindow = source == .mic ? window : nil
         return { buffer in
             guard let out = AudioConversion.convert(buffer, using: converter, to: format) else { return }
             clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
             feed.yield(AnalyzerInput(buffer: out))
             // `out` is this call's own buffer, never touched again here, so it is handed over, not copied.
             saved?.write(out)
+            micWindow?.feed(out)
         }
+    }
+
+    /// When the character at `offset` began on the analyzer's clock (`Transcription.audioStart`); nil when its word has no audio time, so nothing is sent.
+    private static func audioStart(of text: AttributedString, atCharacter offset: Int) -> Double? {
+        let runs = text.runs.map { run in
+            Transcription.TimedRun(text: String(text[run.range].characters), start: run.audioTimeRange?.start.seconds, end: run.audioTimeRange?.end.seconds)
+        }
+        return Transcription.audioStart(ofCharacter: offset, in: runs)
     }
 
     /// Any non-zero byte. A denied System Audio Recording permission delivers exact zeros.

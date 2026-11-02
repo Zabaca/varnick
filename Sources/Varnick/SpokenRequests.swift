@@ -50,6 +50,18 @@ final class SpokenRequests: ObservableObject {
         var lastArrived: Date
         /// When Varnick began collecting it, by the clock: `maxSeconds` counts from here, however long the speech goes on.
         let collecting: Date
+        /// The final results that became part of it, for the voice session with ElevenLabs transcription on (ADR 0047); empty otherwise.
+        var lines: [Line] = []
+    }
+
+    /// One final mic result of a request: Apple's text, and Scribe's run on the same audio, or why there is none.
+    private struct Line {
+        let apple: String
+        let scribe: ScribeRun.Run?
+        let whyNot: String
+        /// When both were started, and how long after the speech ended Apple's result arrived.
+        let began: Date
+        let appleTook: TimeInterval
     }
 
     private enum Phase {
@@ -120,6 +132,11 @@ final class SpokenRequests: ObservableObject {
             Settings.shared.$ownStepsOn.dropFirst().sink { [weak self] on in if on { self?.switchedOff() } },
             Listener.shared.$state.dropFirst().sink { [weak self] state in self?.listeningChanged(state) },
             Settings.shared.$pointAtScreen.dropFirst().sink { on in if !on { ArrowOverlay.shared.hide() } },
+            // The microphone's last minute is held for Scribe only while the switch, Hey Varnick and the voice session are all on, and is dropped as
+            // soon as one goes off. The values are the new ones the publishers carry, not a read of Settings, which has not changed yet.
+            Publishers.CombineLatest4(Settings.shared.$transcribeRequests, Settings.shared.$elevenLabsKeyInKeychain, Settings.shared.$heyVarnick,
+                                      Settings.shared.$ownStepsOn)
+                .sink { transcribe, key, hey, ownSteps in Listener.shared.windowWanted = transcribe && key && hey && !ownSteps },
         ]
     }
 
@@ -228,10 +245,51 @@ final class SpokenRequests: ObservableObject {
         }
         request.lastEnd = phrase.end
         request.lastArrived = arrived
+        request.lines.append(line(of: phrase, first: false))
         phase = .collecting(request)
         if ended || request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.maxSeconds {
             dispatch()
         }
+    }
+
+    /// A final result of a request for the voice session, with its audio sent to Scribe at once when that is on (ADR 0047). The request's first
+    /// result is cut from its wake word, so nothing said before it is sent; a later one is all after it.
+    private func line(of phrase: MicPhrase, first: Bool) -> Line {
+        var run: ScribeRun.Run?
+        var whyNot = ScribeRun.whyNot
+        if Settings.shared.transcribesInElevenLabs {
+            whyNot = "no audio"
+            if let range = phrase.audio, let window = Listener.shared.micWindow {
+                let wakes = first && SpokenText.request(in: phrase.text) != nil
+                if let wake = phrase.wakeStart, wakes {
+                    let from = max(range.lowerBound, wake)
+                    run = ScribeRun.start { await window.pcm16(from: from, to: range.upperBound, padBefore: false) }
+                } else if wakes {
+                    whyNot = "no wake time"
+                } else {
+                    run = ScribeRun.start { await window.pcm16(from: range.lowerBound, to: range.upperBound) }
+                }
+            }
+        }
+        return Line(apple: phrase.text, scribe: run, whyNot: whyNot, began: Date(), appleTook: max(0, Date().timeIntervalSince(phrase.end)))
+    }
+
+    /// The request's text for the voice session: Apple's as collected, or made again from the lines with Scribe's where it came in time.
+    /// Each line still out is waited for to its own deadline.
+    private func text(of request: Request) async -> (text: String, how: String) {
+        guard request.lines.contains(where: { $0.scribe != nil }) else { return (request.text, "text apple (\(request.lines.first?.whyNot ?? "off")), ") }
+        var lines: [Transcription.Line] = []
+        var logs: [String] = []
+        for line in request.lines {
+            let apple = Transcription.Attempt.text(line.apple, took: line.appleTook)
+            let remaining = Transcription.deadline - Date().timeIntervalSince(line.began)
+            let decided = await ScribeRun.decide(apple: apple, scribe: line.scribe, whyNot: line.whyNot, within: remaining)
+            logs.append(decided.log)
+            if case .scribe(let text) = decided.choice { lines.append(Transcription.Line(apple: line.apple, scribe: text)) } else { lines.append(Transcription.Line(apple: line.apple)) }
+        }
+        let made = String(Transcription.request(from: lines, afterWake: { SpokenText.request(in: $0) }).prefix(SpokenText.maxRequestCharacters))
+        let how = "lines: " + logs.enumerated().map { "\($0.offset + 1) \($0.element)" }.joined(separator: "; ") + ", "
+        return (made.isEmpty ? request.text : made, how)
     }
 
     /// The wake phrase came alone: the request may begin until `deadline`. When it doesn't, Varnick says what it can do. In voice mode this is its
@@ -289,7 +347,7 @@ final class SpokenRequests: ObservableObject {
         // A new request takes the last one's arrow away at once.
         ArrowOverlay.shared.hide()
         let request = Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
-                              lastArrived: arrived, collecting: arrived)
+                              lastArrived: arrived, collecting: arrived, lines: endsOnOver ? [line(of: phrase, first: true)] : [])
         phase = .collecting(request)
         stopSpeculating()
         speculate(on: request.text)
@@ -364,8 +422,14 @@ final class SpokenRequests: ObservableObject {
         let epoch = epoch
         working = Task { [weak self] in
             var outcome = VoiceMode.Outcome.failed
-            if voice {
-                outcome = await self?.answerByVoiceSession(request) ?? .failed
+            if voice, let self {
+                // The lines Scribe was given are waited for here, each up to its deadline; Apple's text had already ended the request.
+                var final = request
+                let made = await self.text(of: request)
+                final.text = made.text
+                // Hey Varnick turned off, or voice mode ended, while the lines were out: nothing is sent.
+                guard !Task.isCancelled else { return }
+                outcome = await self.answerByVoiceSession(final, transcription: made.how)
             } else if let speculated {
                 await self?.answer(request, speculated: speculated)
             }
@@ -681,7 +745,7 @@ final class SpokenRequests: ObservableObject {
     /// what ended the request instead. It says nothing when the session takes the request or goes to the web; in voice mode the red mark shows it is working.
     /// Nothing of the request, the answer or what Claude does is logged: the timing line holds durations and kinds.
     /// A request with the wake phrase turns voice mode on first, unless a call holds the microphone or the session can't answer; it returns how it ended.
-    private func answerByVoiceSession(_ request: Request) async -> VoiceMode.Outcome {
+    private func answerByVoiceSession(_ request: Request, transcription: String = "") async -> VoiceMode.Outcome {
         let inMode = modeOn
         if !modeOn, let check = entryCheck {
             let ids = await check.value
@@ -762,7 +826,7 @@ final class SpokenRequests: ObservableObject {
         }.joined(separator: ", ")
         NSLog("Varnick: spoken request timing (voice session): said \(request.lastEnd.timeIntervalSince(request.began).secondsText), "
               + "final result \(request.lastArrived.timeIntervalSince(request.lastEnd).secondsText) after speech ended, "
-              + "held \(began.timeIntervalSince(request.lastArrived).secondsText), session \(how), voice mode \(inMode ? "on" : "off"), "
+              + "held \(began.timeIntervalSince(request.lastArrived).secondsText), \(transcription)session \(how), voice mode \(inMode ? "on" : "off"), "
               + "taken after \(tookAfter?.secondsText ?? "-"), web \(looked ? "seen" : "not seen"), "
               + "ended \(ending) after \(endedAfter?.secondsText ?? "-"), lines: \(spoken), voice \(speeches.last?.by ?? "-")")
         return outcome

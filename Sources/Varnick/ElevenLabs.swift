@@ -2,12 +2,15 @@ import AVFoundation
 import Foundation
 
 /// ElevenLabs as the voice Varnick speaks in (ADR 0033): each line streams as raw PCM into Varnick's own engine, and the installed
-/// voice takes over on a failure or after `deadline`. Nothing sent or received is logged; the key goes only in `xi-api-key`.
+/// voice takes over on a failure or after `deadline`. It also turns a spoken request's audio into text with Scribe v2 when the user turned that on
+/// (ADR 0047). Nothing sent or received is logged; the key goes only in `xi-api-key`.
 enum ElevenLabs {
     /// The Keychain account of the key (Settings › Models › Keys); ADR 0033 says why it is never read from a file or the environment.
     static let keyAccount = "ELEVENLABS_API_KEY"
     /// Pinned, with no picker (ADR 0033).
     static let pinnedModel = "eleven_flash_v2_5"
+    /// Speech to text, pinned the same way (ADR 0047).
+    static let transcriptionModel = "scribe_v2"
     /// First audio, and then each stretch of bytes, must come within this, or the line is spoken in the installed voice.
     static let deadline: TimeInterval = 1.5
     private static let host = "https://api.elevenlabs.io"
@@ -55,6 +58,17 @@ enum ElevenLabs {
             case .notAnswering: "ElevenLabs not answering"
             case .slow: "ElevenLabs too slow"
             case .noAudio: "ElevenLabs sent no audio"
+            }
+        }
+
+        /// Under the transcription switch in Settings › Listening: the same failures, worded for minutes and for the Speech to Text permission.
+        var transcriptionNote: String {
+            switch self {
+            case .missingPermission(let name): "The ElevenLabs key lacks the Speech to Text permission\(name.map { " (\($0))" } ?? ""): add it in ElevenLabs"
+            case .outOfCharacters: "ElevenLabs: out of minutes this month"
+            case .slow: "ElevenLabs transcription too slow"
+            case .noAudio: "ElevenLabs sent no text"
+            default: note
             }
         }
 
@@ -141,15 +155,59 @@ enum ElevenLabs {
     }
 
     /// Opens the connection ahead of the answer: `GET /v1/voices/{id}` needs only Voices Read, uses no characters and carries
-    /// nothing of the user's. The reply is ignored; a failure logs only its kind.
+    /// nothing of the user's. The reply is ignored; a failure logs only its kind. With no voice chosen (a warm-up for transcription alone) it is the
+    /// voice list, which the key can already read and which carries only the key.
     static func warm(voice: String) async {
-        guard let key = savedKey(), let request = request("/v1/voices/\(pathComponent(voice))", key: key) else { return }
+        let path = voice.isEmpty ? "/v1/voices" : "/v1/voices/\(pathComponent(voice))"
+        guard let key = savedKey(), let request = request(path, key: key) else { return }
         do {
             let (_, response) = try await session.data(for: request)
             if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { NSLog("Varnick: ElevenLabs warm-up: status \(status)") }
         } catch {
             NSLog("Varnick: ElevenLabs warm-up: \(error.logKind)")
         }
+    }
+
+    // MARK: Transcribing
+
+    /// The shortest audio Scribe takes, in bytes of 16 kHz 16-bit mono (100 ms).
+    static let minimumTranscriptionBytes = 3_200
+    /// A request not answered by then is given up.
+    static let transcriptionTimeout: TimeInterval = 8
+
+    /// Scribe v2's text for `pcm16` (16 kHz mono 16-bit), told to expect English and to listen for `keyterms`. Throws a `Failure` or `CancellationError`.
+    static func transcribe(pcm16: Data, keyterms: [String], key: String) async throws -> String {
+        let boundary = "varnick-" + UUID().uuidString
+        var fields: [(String, String)] = [("model_id", transcriptionModel), ("file_format", "pcm_s16le_16"),
+                                          ("language_code", String(listeningLanguage.prefix { $0 != "-" })),
+                                          ("tag_audio_events", "false"), ("diarize", "false"), ("timestamps_granularity", "none")]
+        fields += keyterms.map { ("keyterms", $0) }
+        guard var request = request("/v1/speech-to-text", key: key, method: "POST") else { throw Failure.notAnswering("bad request") }
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = transcriptionTimeout
+        request.httpBody = multipart(fields, file: pcm16, boundary: boundary)
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await session.data(for: request) } catch {
+            throw cancelOr(error)
+        }
+        guard let status = (response as? HTTPURLResponse)?.statusCode else { throw Failure.notAnswering("no response") }
+        guard status == 200 else { throw failure(status: status, body: data) }
+        guard let text = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["text"] as? String else {
+            throw Failure.notAnswering("unreadable")
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func multipart(_ fields: [(String, String)], file: Data, boundary: String) -> Data {
+        var body = Data()
+        for (name, value) in fields {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"request.pcm\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+        body.append(file)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return body
     }
 
     // MARK: Speaking

@@ -41,6 +41,8 @@ final class VoiceRemote {
             // The first chunk finds out what would refuse the segment, before the phone sends the rest. A busy voice session does not: the words go on
             // the next request.
             if seq == 0, let refusal = refusal(model, forAsk: false) { return .failure(refusal) }
+            // The segment may go to Scribe (this Mac's switch): the connection is opened while the rest of it is still being said.
+            if seq == 0, Settings.shared.transcribesInElevenLabs { Speaker.shared.warmUp() }
             switch uploads.add(id: id, seq: seq, last: ask.last == true, rate: ask.rate, audio: audio, now: now) {
             case .refused(let why):
                 return .failure(why)
@@ -72,6 +74,31 @@ final class VoiceRemote {
         }
     }
 
+    /// A segment's words, and the timing line's account of which transcriber's they are.
+    private struct Heard {
+        let result: Result<String, Error>
+        let how: String
+    }
+
+    /// Apple's pass and Scribe's, started together by `segment`, and the choice between them: Scribe is waited for past the deadline only if Apple failed.
+    private static func words(apple: Task<String, Error>, scribe: ScribeRun.Run?, whyNot: String, began: Date) async -> Heard {
+        let appleResult = await apple.result
+        let appleTook = Date().timeIntervalSince(began)
+        let appleAttempt: Transcription.Attempt
+        var waiting = max(0, Transcription.deadline - appleTook)
+        switch appleResult {
+        case .success(let text): appleAttempt = .text(text, took: appleTook)
+        case .failure(let error):
+            appleAttempt = .failed(kind: (error as? Failure)?.kind ?? "transcriber")
+            waiting = ScribeRun.patience
+        }
+        let decided = await ScribeRun.decide(apple: appleAttempt, scribe: scribe, whyNot: whyNot, within: waiting)
+        switch decided.choice {
+        case .scribe(let text), .apple(let text, _): return Heard(result: .success(text), how: ", " + decided.log)
+        case .failed: return Heard(result: appleResult, how: ", " + decided.log)
+        }
+    }
+
     /// Why a new ask or segment can't begin, in words for the user; nil when it can. What would refuse the voice session itself is asked of it, before
     /// anything is uploaded or transcribed. Only an ask is refused for another request in flight.
     private func refusal(_ model: LauncherModel, forAsk: Bool) -> String? {
@@ -94,19 +121,24 @@ final class VoiceRemote {
     /// A segment is on its way: its words are made at once, and added to its device's request in the order the segments came.
     private func segment(_ id: String, ask: PeerVoiceAsk, run: String, device: String, pcm: Data, model: LauncherModel) {
         let began = Date()
-        let transcription = Task { try await Self.transcribe(pcm) }
+        // Apple's pass and, with this Mac's switch on, Scribe's start together (ADR 0047).
+        let apple = Task { try await Self.transcribe(pcm) }
+        let scribe = ScribeRun.start { pcm }
+        let whyNot = ScribeRun.whyNot
+        let transcription = Task { await Self.words(apple: apple, scribe: scribe, whyNot: whyNot, began: began) }
         let before = applied[device]
         applied[device] = Task {
-            let words = await transcription.result
+            let heard = await transcription.value
             await before?.value
             guard !Task.isCancelled else { return ledger.finish(id, now: Date()) }
-            addToRequest(id, words: words, ask: ask, run: run, device: device, model: model, began: began)
+            addToRequest(id, words: heard.result, how: heard.how, ask: ask, run: run, device: device, model: model, began: began)
         }
     }
 
     /// A segment's words, or why there are none, added to the request being collected for `device`. The newest segment of a request is left open, so the
     /// cap's timer can take the request on it; the one before it is closed.
-    private func addToRequest(_ id: String, words: Result<String, Error>, ask: PeerVoiceAsk, run: String, device: String, model: LauncherModel, began: Date) {
+    private func addToRequest(_ id: String, words: Result<String, Error>, how: String, ask: PeerVoiceAsk, run: String, device: String, model: LauncherModel,
+                              began: Date) {
         func add(_ event: PeerVoiceEvent) { ledger.add(event, to: id, now: Date()) }
         let text: String
         switch words {
@@ -114,13 +146,13 @@ final class VoiceRemote {
             text = heard
         case .failure(let error):
             let failure = error as? Failure ?? .transcriber("transcriber")
-            NSLog("Varnick: voice mode segment timing: failed, \(failure.kind) after \(Date().timeIntervalSince(began).secondsText)")
+            NSLog("Varnick: voice mode segment timing: failed, \(failure.kind) after \(Date().timeIntervalSince(began).secondsText)\(how)")
             return add(PeerVoiceEvent(.failed, text: failure.line, failure: failure.kind))
         }
         let beganBefore = collector.began(of: device)
         let step = collector.add(text, device: device, run: run, now: Date(), canTake: canTake(model))
         let unchanged = collector.began(of: device) == beganBefore
-        NSLog("Varnick: voice mode segment timing: \(step.kind) after \(Date().timeIntervalSince(began).secondsText)")
+        NSLog("Varnick: voice mode segment timing: \(step.kind) after \(Date().timeIntervalSince(began).secondsText)\(how)")
         let previous = holders[device]?.id
         func hold(_ request: String, _ event: PeerVoiceEvent) {
             if let previous, previous != id { ledger.finish(previous, now: Date()) }

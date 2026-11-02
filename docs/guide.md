@@ -270,6 +270,12 @@ permissions) and pick one of your account's voices in the same Voice list. That 
 ElevenLabs ([privacy and security](privacy-and-security.md#elevenlabs)). The installed voice you had stays as the
 Fallback voice and speaks when ElevenLabs fails or takes more than 1.5 seconds to start.
 
+To have ElevenLabs hear your requests too, add the Speech to Text permission to the key and turn on Settings > Listening
+> Transcribe requests with ElevenLabs on that Mac (off by default). The audio of each request, from Hey Varnick at that
+Mac and from Voice mode on a phone using it, then goes to ElevenLabs' Scribe v2 as well as to Apple's transcriber, whose
+text is used if Scribe's is slow or fails. List the names Varnick gets wrong under Names to listen for, one a line.
+It is billed by the minute and ElevenLabs keeps what it hears ([privacy and security](privacy-and-security.md#elevenlabs)).
+
 ## Point at the screen
 
 With Hey Varnick answering with Varnick's own steps (Settings › Experimental › Answer with Varnick's own steps), Settings › Experimental › **Point at the screen** lets you ask about what is in front of

@@ -243,8 +243,9 @@ final class Speaker {
 
     /// Opens the connection to ElevenLabs when "Hey Varnick" is heard, so it is warm by the time the answer is written.
     func warmUp() {
-        guard Settings.shared.speaksInElevenLabs else { return }
-        let voice = Settings.shared.elevenLabsVoice
+        // Also for transcription (ADR 0047): the request's lines go to Scribe over the same kept connection, with no voice to warm it by.
+        guard Settings.shared.speaksInElevenLabs || Settings.shared.transcribesInElevenLabs else { return }
+        let voice = Settings.shared.speaksInElevenLabs ? Settings.shared.elevenLabsVoice : ""
         Task { await ElevenLabs.warm(voice: voice) }
     }
 

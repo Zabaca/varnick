@@ -270,7 +270,10 @@ public enum VoiceAudio {
         return (0..<(bytes.count / 2)).map { Float(Int16(bitPattern: UInt16(bytes[2 * $0]) | UInt16(bytes[2 * $0 + 1]) << 8)) / 32768 }
     }
 
-    /// The loudest sample of 16-bit PCM, 0 to 1: an utterance of silence isn't sent to the transcriber.
+    /// An utterance whose loudest sample is under this (of 1) is silence, and is sent to no transcriber: the phone's mic reads exact zeros when muted.
+    public static let silenceFloor: Float = 0.002
+
+    /// The loudest sample of 16-bit PCM, 0 to 1.
     public static func peak(ofPCM16 data: Data) -> Float {
         floats(fromPCM16: data).reduce(0) { max($0, abs($1)) }
     }

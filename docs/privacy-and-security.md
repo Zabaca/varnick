@@ -13,7 +13,9 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
   and make your prompts searchable, and keeps the last thing Claude wrote after each prompt (cut at 1,000
   characters), which only the search by meaning reads.
 - **What you say and hear, while Listening is on.** It records the microphone and the Mac's system audio and
-  writes what it transcribes, on this Mac, to the day's transcript file.
+  writes what it transcribes, on this Mac, to the day's transcript file. The one exception is the audio of a
+  spoken request, with Settings › Listening › Transcribe requests with ElevenLabs on (off by default): see
+  [ElevenLabs](#elevenlabs).
 - **Saved audio, only with Settings › Listening › Save audio on (off by default).** It also keeps the sound itself,
   other people on calls included and the mic while Varnick speaks, as mono AAC (32 kbps) m4a files in
   `~/Library/Application Support/Varnick/recordings/` (layout: the guide's Listening section). They are never sent
@@ -118,6 +120,30 @@ lines private, leave the voice on one installed on this Mac, which is the defaul
   voice you chose before, on this Mac.
 - **The key** is kept in the macOS Keychain and goes only to ElevenLabs, in a request header, and no redirect is
   followed. Varnick never reads it from the environment or a file, and never logs it or what it speaks.
+
+Settings › Listening › **Transcribe requests with ElevenLabs** is a second, separate consent, off by default and
+kept per Mac. With it on and a key saved, the audio of each spoken request is also sent to ElevenLabs' speech to
+text (Scribe v2), and Apple's transcriber on this Mac still runs on it, whose text is used when Scribe's is slow,
+fails or can't be reached.
+
+- **What you say.** The audio of a request, as you say it. At this Mac that is the line holding "Hey Varnick" and
+  each line after it until "over", and in Voice mode every line the microphone hears that becomes a request: so
+  anything else the microphone heard in those seconds goes too, a passenger or a television included. On your
+  phone, with Voice mode on a Mac that has the switch on, it is every stretch of speech the phone sends from Start,
+  which is everything said since then that the Mac has not yet taken, a radio or the car's speakers included. The
+  Mac holds the last minute of its microphone in memory for this, only while the switch, a saved key, Listening and
+  Hey Varnick are on and the voice session answers, and drops it when any goes off; it is never written to disk.
+- **What is never sent.** Anything before "Hey Varnick" at this Mac (the audio of that line is cut from the word "Hey"), the Mac's own audio (what its speakers play),
+  and Listening's transcript of your day. Listening's transcript stays Apple's text and stays on your Mac.
+- **The names.** The list in Settings › Listening › Names to listen for, and "Varnick", go with each piece of audio
+  so Scribe listens for them.
+- **ElevenLabs keeps it.** ElevenLabs keeps request data under its privacy policy, and turning that off (zero
+  retention) is for enterprise customers only, so your plan can't. It is billed by the second of audio sent,
+  silence included, from your plan's monthly allowance, which spoken answers also use.
+- **The key needs the Speech to Text permission** as well as Text to Speech and Voices Read. Without it, or with an
+  empty allowance, Apple's text is used and the note under the switch says why.
+- **Not logged.** The log holds which text was used, why Apple's was if it was, and how long each took. Never the
+  audio, either text, a name from your list or the key.
 
 ### Anthropic, through Text generation
 
@@ -647,7 +673,7 @@ Voice mode (the Phone page, on a Mac's page; it needs Hey Varnick turned on at t
 
 - **The microphone is the phone's, asked for when you tap Start.** The page sends audio only between Start and End, and only the stretches of speech (it listens for speech and sends from the first word to a pause, with the 300 ms before the first word, which it keeps in memory while it listens), never continuously. A request ends only when you say "over", so everything said since Start that the Mac has not yet taken is sent as it is said, one stretch after each pause. The browser's own microphone indicator is on the whole time.
 - **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.
-- **The audio goes to the Mac over the tailnet and nowhere else.** The Mac turns it into text on-device (Listening's transcriber) and does not keep the audio; it holds the text of a request you have not yet ended with "over" in memory until you do, or until the cap (ADR 0044) sends it as it stands, and drops it when you start Voice mode again; the finished request goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
+- **The audio goes to the Mac over the tailnet and nowhere else, unless that Mac has Transcribe requests with ElevenLabs on:** then the Mac also sends each stretch of speech to ElevenLabs (see [ElevenLabs](#elevenlabs)), which keeps it, and the phone follows the Mac's switch. Otherwise the Mac turns it into text on-device (Listening's transcriber) and does not keep the audio; it holds the text of a request you have not yet ended with "over" in memory until you do, or until the cap (ADR 0044) sends it as it stands, and drops it when you start Voice mode again; the finished request goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
 - **Nothing of the exchange is kept on the phone,** though the view shows the Voice session's earlier exchanges, read from the Mac when it opens (above), and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
 - **With Car mode on (a switch on the Voice view, off until you turn it on), the microphone is opened without echo cancellation,** so sound from the car's speakers, music or Varnick's own reply, can reach it and can be heard as speech; the page still ignores the microphone while a reply plays and for 0.5 s after.
 - **A quiet tone plays on the phone for as long as Voice mode runs,** to keep the page from being frozen while it is in the background.
