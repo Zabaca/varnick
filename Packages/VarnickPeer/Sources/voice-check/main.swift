@@ -783,6 +783,24 @@ waiting.cancel()
 let (cancelGot, cancelTook) = await waiting.value
 expect("attempt: a cancelled wait returns at once", cancelGot == .pending && cancelTook < 1.5, "\(cancelGot) after \(cancelTook) s")
 
+// MARK: Where the wake word begins
+
+func started(_ name: String, _ offset: Int, _ runs: [Transcription.TimedRun], is expected: Double?) {
+    let got = Transcription.audioStart(ofCharacter: offset, in: runs)
+    expect("word start: " + name, got == expected, "got \(String(describing: got)), wanted \(String(describing: expected))")
+}
+
+typealias Timed = Transcription.TimedRun
+let words = [Timed(text: "Hey", start: 1.0, end: 1.3), Timed(text: " Varnick", start: 1.3, end: 1.9), Timed(text: " what", start: 1.9, end: 2.2)]
+started("the first word starts at its run", 0, words, is: 1.0)
+started("a word after a space starts at its run, not a quarter in", 4, words, is: 1.3)
+started("the space itself is the run's start", 3, words, is: 1.3)
+started("a later word", 12, words, is: 1.9)
+started("hey after another word is its own run's start", 4, [Timed(text: "and", start: 0.2, end: 0.5), Timed(text: " hey", start: 0.5, end: 0.9)], is: 0.5)
+started("inside a run of several words it is interpolated", 4, [Timed(text: "hey varnick", start: 1.0, end: 2.1)], is: 1.0 + 4.0 / 11.0 * 1.1)
+started("a run with no time gives nothing", 0, [Timed(text: "Hey", start: nil, end: nil)], is: nil)
+started("past the end gives nothing", 20, words, is: nil)
+
 // MARK: A Mac request made from its lines
 
 /// A stand-in for the wake rule: "hey varnick" (any case) at the start, then what follows.

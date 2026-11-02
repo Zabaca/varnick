@@ -245,22 +245,22 @@ final class SpokenRequests: ObservableObject {
         }
         request.lastEnd = phrase.end
         request.lastArrived = arrived
-        request.lines.append(line(of: phrase))
+        request.lines.append(line(of: phrase, first: false))
         phase = .collecting(request)
         if ended || request.text.count >= SpokenText.maxRequestCharacters || phrase.end.timeIntervalSince(request.began) > Self.maxSeconds {
             dispatch()
         }
     }
 
-    /// A final result of a request for the voice session, with its audio sent to Scribe at once when that is on (ADR 0047). Audio is cut from the wake
-    /// word when the result has one, so nothing said before it is sent.
-    private func line(of phrase: MicPhrase) -> Line {
+    /// A final result of a request for the voice session, with its audio sent to Scribe at once when that is on (ADR 0047). The request's first
+    /// result is cut from its wake word, so nothing said before it is sent; a later one is all after it.
+    private func line(of phrase: MicPhrase, first: Bool) -> Line {
         var run: ScribeRun.Run?
         var whyNot = ScribeRun.whyNot
         if Settings.shared.transcribesInElevenLabs {
             whyNot = "no audio"
             if let range = phrase.audio, let window = Listener.shared.micWindow {
-                let wakes = SpokenText.request(in: phrase.text) != nil
+                let wakes = first && SpokenText.request(in: phrase.text) != nil
                 if let wake = phrase.wakeStart, wakes {
                     let from = max(range.lowerBound, wake)
                     run = ScribeRun.start { await window.pcm16(from: from, to: range.upperBound, padBefore: false) }
@@ -347,7 +347,7 @@ final class SpokenRequests: ObservableObject {
         // A new request takes the last one's arrow away at once.
         ArrowOverlay.shared.hide()
         let request = Request(text: String(text.prefix(SpokenText.maxRequestCharacters)), began: phrase.start, lastEnd: phrase.end,
-                              lastArrived: arrived, collecting: arrived, lines: endsOnOver ? [line(of: phrase)] : [])
+                              lastArrived: arrived, collecting: arrived, lines: endsOnOver ? [line(of: phrase, first: true)] : [])
         phase = .collecting(request)
         stopSpeculating()
         speculate(on: request.text)

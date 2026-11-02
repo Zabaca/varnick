@@ -102,6 +102,37 @@ public enum Transcription {
         }
     }
 
+    // MARK: Where a word begins
+
+    /// One run of a result's text with its audio time range, if it has one.
+    public struct TimedRun: Equatable {
+        public var text: String
+        public var start: Double?
+        public var end: Double?
+
+        public init(text: String, start: Double?, end: Double?) {
+            self.text = text
+            self.start = start
+            self.end = end
+        }
+    }
+
+    /// When the character at `offset` of the runs' joined text began: the start of its run when it is the first character there that is not a space (a
+    /// run's span includes the space before its word), else interpolated by position inside the run. Nil when its run has no time.
+    public static func audioStart(ofCharacter offset: Int, in runs: [TimedRun]) -> Double? {
+        var lower = 0
+        for run in runs {
+            let length = run.text.count
+            defer { lower += length }
+            guard offset < lower + length else { continue }
+            guard let start = run.start, let end = run.end, start.isFinite, end.isFinite, length > 0 else { return nil }
+            let leading = run.text.prefix { $0.isWhitespace }.count
+            if offset - lower <= leading { return start }
+            return start + Double(offset - lower) / Double(length) * (end - start)
+        }
+        return nil
+    }
+
     // MARK: The names
 
     /// The most keyterms a request carries, so ElevenLabs' 20 s minimum for requests with over 100 never applies.

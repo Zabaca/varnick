@@ -7,8 +7,8 @@ import VarnickPeer
 enum ScribeRun {
     typealias Run = Task<Transcription.Attempt, Never>
 
-    /// How long Scribe is waited for when Apple failed; the request's own timeout is the limit.
-    static let patience: TimeInterval = 10
+    /// How long Scribe is waited for when Apple failed: its request's timeout and 2 s for the key read and the cut.
+    static let patience: TimeInterval = ElevenLabs.transcriptionTimeout + 2
 
     /// Why `start` returns nil now, for the timing line.
     static var whyNot: String { Settings.shared.transcribeRequests ? "no key" : "off" }

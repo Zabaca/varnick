@@ -173,7 +173,7 @@ enum ElevenLabs {
     /// The shortest audio Scribe takes, in bytes of 16 kHz 16-bit mono (100 ms).
     static let minimumTranscriptionBytes = 3_200
     /// A request not answered by then is given up.
-    private static let transcriptionTimeout: TimeInterval = 8
+    static let transcriptionTimeout: TimeInterval = 8
 
     /// Scribe v2's text for `pcm16` (16 kHz mono 16-bit), told to expect English and to listen for `keyterms`. Throws a `Failure` or `CancellationError`.
     static func transcribe(pcm16: Data, keyterms: [String], key: String) async throws -> String {

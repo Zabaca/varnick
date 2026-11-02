@@ -5,6 +5,7 @@ import CoreMedia
 import Foundation
 import Speech
 import Synchronization
+import VarnickPeer
 
 /// The language Listening transcribes in, and screen text recognition reads (ADR 0021).
 let listeningLanguage = "en-US"
@@ -518,17 +519,12 @@ private final class Capture {
         }
     }
 
-    /// When the character at `offset` began, on the analyzer's clock, from the audio time ranges of the result's words (interpolated inside a run of
-    /// several); nil when its run has none, so the caller sends nothing rather than guess.
+    /// When the character at `offset` began on the analyzer's clock (`Transcription.audioStart`); nil when its word has no audio time, so nothing is sent.
     private static func audioStart(of text: AttributedString, atCharacter offset: Int) -> Double? {
-        for run in text.runs {
-            let lower = text.characters.distance(from: text.startIndex, to: run.range.lowerBound)
-            let length = text.characters.distance(from: run.range.lowerBound, to: run.range.upperBound)
-            guard offset < lower + length else { continue }
-            guard let range = run.audioTimeRange, length > 0, range.start.seconds.isFinite, range.end.seconds.isFinite else { return nil }
-            return range.start.seconds + Double(max(0, offset - lower)) / Double(length) * (range.end.seconds - range.start.seconds)
+        let runs = text.runs.map { run in
+            Transcription.TimedRun(text: String(text[run.range].characters), start: run.audioTimeRange?.start.seconds, end: run.audioTimeRange?.end.seconds)
         }
-        return nil
+        return Transcription.audioStart(ofCharacter: offset, in: runs)
     }
 
     /// Any non-zero byte. A denied System Audio Recording permission delivers exact zeros.
