@@ -9,6 +9,22 @@ export const chunkSamples = 16000;
 export const maxUtteranceMs = 30000;
 
 // ---------------------------------------------------------------------------------------------------------------
+// Car mode
+
+/** Where the page keeps the Car mode switch (localStorage, per origin): "1" for on, anything else off. */
+export const carModeKey = "voice.carMode";
+
+/** Car mode is kept as the phone set it, and is off until the phone turns it on. */
+export const parseCarMode = (stored) => stored === "1";
+
+/**
+ * What the microphone is asked for. Echo cancellation puts Android Chrome into call mode, which cannot use the car's Bluetooth music link, so audio jumps to
+ * the phone's speaker; Car mode leaves it off (noise suppression and gain control do not trigger call mode). The page ignores the mic while a reply plays
+ * (half-duplex), which is what makes that tolerable.
+ */
+export const micConstraints = (carMode) => ({ audio: { echoCancellation: !carMode, noiseSuppression: true, autoGainControl: true } });
+
+// ---------------------------------------------------------------------------------------------------------------
 // Where a segment ends
 
 /** Named, so a hand test can tune them. A segment ends after this much quiet once it has begun. It is not the end of the request: that is "over". */

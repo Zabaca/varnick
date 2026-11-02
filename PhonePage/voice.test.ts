@@ -7,8 +7,8 @@ import {
   askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeExchanges, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
 import {
-  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
-  lowestThreshold, maxUtteranceMs, omittedLine,
+  applyEvents, calibrationFrames, carModeKey, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
+  lowestThreshold, maxUtteranceMs, micConstraints, omittedLine, parseCarMode,
   minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
   toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
@@ -691,5 +691,20 @@ describe("the Voice session's earlier exchanges", () => {
     const view = applyEvents(newView(), [{ kind: "heard", text: "new" }, { kind: "taken" }]);
     expect(view.exchange).toEqual([{ who: "you", text: "new" }]);
     expect(earlier.lines).toEqual([{ who: "you", text: "old" }]);
+  });
+});
+
+describe("Car mode", () => {
+  test("is off until the phone turns it on, and only the kept \"1\" is on", () => {
+    expect(carModeKey).toBe("voice.carMode");
+    expect(parseCarMode(null)).toBe(false);
+    expect(parseCarMode("0")).toBe(false);
+    expect(parseCarMode("true")).toBe(false);
+    expect(parseCarMode("1")).toBe(true);
+  });
+
+  test("asks for the microphone without echo cancellation, and changes nothing else", () => {
+    expect(micConstraints(false)).toEqual({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    expect(micConstraints(true)).toEqual({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
   });
 });
