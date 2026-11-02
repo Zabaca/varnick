@@ -10,8 +10,8 @@
 
 import { element, getJSON, postJSON } from "/dom.js";
 import {
-  applyEvents, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, pauseNote, preRollMs, Segments, serial,
-  settled, shortSpeechMs, stateLine, Utterance,
+  applyEvents, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
+  settled, shortSpeechMs, singleFlight, stateLine, Utterance,
 } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -29,24 +29,31 @@ const toneGain = 0.02;
 const toneSettleMs = 700;
 const pollMs = 1000;
 
+/** localStorage may be empty, blocked or throw (private windows): the page works without it, and Car mode is off. */
+const storedCarMode = () => { try { return localStorage.getItem(carModeKey); } catch { return null; } };
+const keepCarMode = (on) => { try { localStorage.setItem(carModeKey, on ? "1" : "0"); } catch { /* nothing kept */ } };
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function openVoice({ host, done, openSession }) {
   closeVoice();
   current = {
-    host, done, openSession, closed: false, running: false, view: newView(), note: "", earlier: earlierView(null),
+    host, done, openSession, closed: false, running: false, view: newView(), note: "", earlier: earlierView(null), carMode: parseCarMode(storedCarMode()), streamCar: false,
     ctx: null, stream: null, node: null, osc: null, lock: null, held: false,
     endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
     // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, and the one line their chunks are sent in.
     run: null, segments: new Segments(), send: serial(), polling: false, releaseTimer: null,
   };
   const v = current;
+  v.bring = singleFlight(() => buildAudio(v));
   $("voice").hidden = false;
   $("voice-host").textContent = host;
   $("voice-log").replaceChildren();
   $("voice-start").onclick = () => void start(v);
   $("voice-end").onclick = () => end(v);
   $("voice-back").onclick = () => end(v);
+  $("voice-car").checked = v.carMode;
+  $("voice-car").onchange = (event) => setCarMode(v, event.target.checked);
   $("voice-open").onclick = () => { if (v.view.session) v.openSession(v.view.session); };
   v.onVisibility = () => { if (document.visibilityState === "visible") { void wake(v); void ensureLive(v); } };
   v.onFreeze = () => { v.frozenAt = Date.now(); };
@@ -156,6 +163,23 @@ async function start(v) {
   setState(v, "listening");
 }
 
+/**
+ * Car mode changes how the microphone is opened, so a live mode opens it again at once (`ensureLive`: `buildAudio` sees the stream was opened for the other
+ * setting); what was half heard is dropped. A switch moved before the mode is live, or while the microphone is being asked for, is met by `openMic`.
+ */
+function setCarMode(v, on) {
+  if (v.closed || v.carMode === on) return;
+  v.carMode = on;
+  keepCarMode(on);
+  if (!v.running) return;
+  v.ignoreUntil = Date.now() + 500;
+  v.utt = null;
+  v.ring = [];
+  v.endpoint.reset();
+  v.dead.reset();
+  void ensureLive(v);
+}
+
 function micError(error) {
   const name = error?.name ?? "";
   if (name === "NotAllowedError" || name === "SecurityError") return "The microphone is blocked. Allow it for this page in the browser's site settings, then tap Start.";
@@ -164,8 +188,10 @@ function micError(error) {
   return "Voice mode couldn't start the microphone.";
 }
 
-/** The audio graph: the context, the microphone stream, the worklet that reads it, and the tone. Built again where a part has gone. */
-async function bring(v) {
+/** The audio graph: the context, the microphone stream, the worklet that reads it, and the tone. Built again where a part has gone. One build at a time. */
+const bring = (v) => v.bring();
+
+async function buildAudio(v) {
   if (!v.ctx || v.ctx.state === "closed") {
     // Asked for 16 kHz so the browser resamples; the worklet averages down from whatever it got.
     try { v.ctx = new AudioContext({ sampleRate: 16000, latencyHint: "interactive" }); } catch { v.ctx = new AudioContext(); }
@@ -175,10 +201,17 @@ async function bring(v) {
   }
   if (v.ctx.state !== "running") await v.ctx.resume();
   const live = v.stream?.getAudioTracks()[0];
-  if (!live || live.readyState !== "live") {
+  // A stream opened for the other Car mode setting is as good as gone.
+  if (!live || live.readyState !== "live" || v.streamCar !== v.carMode) {
     v.node?.disconnect();
     v.node = null;
-    v.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    v.stream?.getTracks().forEach((track) => track.stop());
+    v.stream = null;
+    const opened = await openMic((constraints) => navigator.mediaDevices.getUserMedia(constraints), v);
+    // The view closed while the microphone was being asked for: the stream was stopped, and there is nothing to build.
+    if (!opened) return;
+    v.stream = opened.stream;
+    v.streamCar = opened.car;
   }
   if (!v.node) {
     const track = v.stream.getAudioTracks()[0];

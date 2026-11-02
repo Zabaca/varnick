@@ -9,6 +9,46 @@ export const chunkSamples = 16000;
 export const maxUtteranceMs = 30000;
 
 // ---------------------------------------------------------------------------------------------------------------
+// Car mode
+
+/** Where the page keeps the Car mode switch (localStorage, per origin): "1" for on, anything else off. */
+export const carModeKey = "voice.carMode";
+
+/** Car mode is kept as the phone set it, and is off until the phone turns it on. */
+export const parseCarMode = (stored) => stored === "1";
+
+/** What the microphone is asked for; why Car mode drops echo cancellation is in docs/agents/where-it-breaks.md, Voice mode on the phone. */
+export const micConstraints = (carMode) => ({ audio: { echoCancellation: !carMode, noiseSuppression: true, autoGainControl: true } });
+
+const stopStream = (stream) => stream.getTracks().forEach((track) => track.stop());
+
+/**
+ * Opens the microphone as `state.carMode` asks. The switch can move while the request is out: a stream opened for the old setting is stopped and the
+ * microphone asked for again, and a view that closed meanwhile has the new stream stopped (answers null), so none is left open. `open(constraints)` is getUserMedia.
+ */
+export async function openMic(open, state) {
+  for (;;) {
+    const asked = state.carMode;
+    const stream = await open(micConstraints(asked));
+    if (state.closed) {
+      stopStream(stream);
+      return null;
+    }
+    if (state.carMode === asked) return { stream, car: asked };
+    stopStream(stream);
+  }
+}
+
+/** One run of `task` at a time: a call while it runs gets the run's own promise, so a second caller never starts a second microphone. */
+export function singleFlight(task) {
+  let flight = null;
+  return () => {
+    flight ??= task().finally(() => { flight = null; });
+    return flight;
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Where a segment ends
 
 /** Named, so a hand test can tune them. A segment ends after this much quiet once it has begun. It is not the end of the request: that is "over". */

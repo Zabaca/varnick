@@ -252,6 +252,9 @@ body.in-voice { height: var(--page-height, 100dvh); overflow: hidden; display: f
 .voice-state { margin: 0; font-size: 18px; font-weight: 600; text-align: center; }
 #voice-start { min-height: 52px; font-size: 17px; }
 #voice-open { min-height: 48px; }
+.voice-car { min-height: 56px; padding: 4px 0; font-size: 17px; font-weight: 600; }
+.voice-car input { flex: none; width: 28px; height: 28px; }
+.voice-car small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
 
 /* The Outline fills the screen: the header and tools, the list scrolling, and the keys above the keyboard when a bullet is being edited. */
 body.in-outline { max-width: none; padding: 0 16px; height: var(--page-height, 100dvh); overflow: hidden; display: flex; flex-direction: column; }

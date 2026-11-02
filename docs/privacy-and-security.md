@@ -478,7 +478,7 @@ Peers pair over SSH, with your own keys (ADR 0007). The boundary is:
   matching `Origin`, and websockets are checked against it.
 - **Installing it as an app keeps no session content on the phone.** The page's service worker answers a page load that failed
   on the network with a note naming the host, and nothing else: it caches no reply, and every other request goes to the host as
-  before. Every reply is still `no-store`. The only things the page stores on the phone are whether you dismissed the install offer and, once you set it, whether the Outline shows completed bullets.
+  before. Every reply is still `no-store`. The only things the page stores on the phone (localStorage, per host) are whether you dismissed the install offer; what New session remembers (the last project and agent started, each project's agent, and the host's list of project folders, which the page shows before the host answers); and, once you set them, whether the Outline shows completed bullets (`outline.completed`) and whether Voice mode's Car mode is on (`voice.carMode`).
   The manifest, the icons and the worker are served only to a listed device, like every file of the page.
 - **Notifications go through Apple's or Google's push service,** the only request the page server makes outside the tailnet, and
   only after you turn them on in the page, for that host. A push carries ids and the kind of notice (done, needs permission, an
@@ -649,6 +649,7 @@ Voice mode (the Phone page, on a Mac's page; it needs Hey Varnick turned on at t
 - **Each chunk is briefly visible on the Mac as the argument of a relay process** (a request is one base64 argument), to anyone on that Mac who can list processes. It is not logged or kept.
 - **The audio goes to the Mac over the tailnet and nowhere else.** The Mac turns it into text on-device (Listening's transcriber) and does not keep the audio; it holds the text of a request you have not yet ended with "over" in memory until you do, or until the cap (ADR 0044) sends it as it stands, and drops it when you start Voice mode again; the finished request goes to the Voice session, and from there to Anthropic as ADR 0042 says. The reply's audio is made on the Mac, by the installed voice or, if you chose one, by ElevenLabs (which then receives what the phone is told, as everything Varnick speaks).
 - **Nothing of the exchange is kept on the phone,** though the view shows the Voice session's earlier exchanges, read from the Mac when it opens (above), and the page server logs the method, path, status, device and time of a request, never the audio, the words or the answer. The Mac's log holds durations and kinds. The session's transcript on the Mac is a session's, found by search like any.
+- **With Car mode on (a switch on the Voice view, off until you turn it on), the microphone is opened without echo cancellation,** so sound from the car's speakers, music or Varnick's own reply, can reach it and can be heard as speech; the page still ignores the microphone while a reply plays and for 0.5 s after.
 - **A quiet tone plays on the phone for as long as Voice mode runs,** to keep the page from being frozen while it is in the background.
 - **A question the session asks is answered in the session's terminal,** opened from the page with Take over, as any session is.
 

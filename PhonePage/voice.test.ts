@@ -7,8 +7,8 @@ import {
   askFields, audioFields, maxChunkBytes, maxChunkText, parseAskBody, parseAudioBody, parseStatusQuery, shapeExchanges, shapeStatus, shapeTaken, statusFields,
 } from "./voice";
 import {
-  applyEvents, calibrationFrames, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
-  lowestThreshold, maxUtteranceMs, omittedLine,
+  applyEvents, calibrationFrames, carModeKey, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
+  lowestThreshold, maxUtteranceMs, micConstraints, omittedLine, openMic, parseCarMode, singleFlight,
   minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
   toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
@@ -691,5 +691,92 @@ describe("the Voice session's earlier exchanges", () => {
     const view = applyEvents(newView(), [{ kind: "heard", text: "new" }, { kind: "taken" }]);
     expect(view.exchange).toEqual([{ who: "you", text: "new" }]);
     expect(earlier.lines).toEqual([{ who: "you", text: "old" }]);
+  });
+});
+
+describe("Car mode", () => {
+  test("is off until the phone turns it on, and only the kept \"1\" is on", () => {
+    expect(carModeKey).toBe("voice.carMode");
+    expect(parseCarMode(null)).toBe(false);
+    expect(parseCarMode("0")).toBe(false);
+    expect(parseCarMode("true")).toBe(false);
+    expect(parseCarMode("1")).toBe(true);
+  });
+
+  test("asks for the microphone without echo cancellation, and changes nothing else", () => {
+    expect(micConstraints(false)).toEqual({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    expect(micConstraints(true)).toEqual({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
+  });
+});
+
+describe("opening the microphone for Car mode", () => {
+  const stream = () => {
+    const made = { stopped: 0, getTracks: () => [{ stop: () => { made.stopped++; } }] };
+    return made;
+  };
+  const opener = (onOpen: (n: number) => void = () => {}) => {
+    const streams: ReturnType<typeof stream>[] = [];
+    const asked: boolean[] = [];
+    const open = async (constraints: { audio: { echoCancellation: boolean } }) => {
+      asked.push(constraints.audio.echoCancellation);
+      onOpen(asked.length);
+      await Promise.resolve();
+      const made = stream();
+      streams.push(made);
+      return made;
+    };
+    return { open, streams, asked };
+  };
+
+  test("keeps the stream when the switch did not move while it was asked for", async () => {
+    const o = opener();
+    const state = { carMode: true, closed: false };
+    const got = await openMic(o.open, state);
+    expect(got).toEqual({ stream: o.streams[0], car: true });
+    expect(o.asked).toEqual([false]);
+    expect(o.streams[0].stopped).toBe(0);
+  });
+
+  test("a switch moved while the request is out stops that stream and asks again, so a toggle during Start is applied", async () => {
+    const state = { carMode: false, closed: false };
+    const o = opener((n) => { if (n === 1) state.carMode = true; });
+    const got = await openMic(o.open, state);
+    expect(o.asked).toEqual([true, false]);
+    expect(o.streams[0].stopped).toBe(1);
+    expect(got).toEqual({ stream: o.streams[1], car: true });
+    expect(o.streams[1].stopped).toBe(0);
+  });
+
+  test("a quick double toggle ends on the setting it was left at, with the others stopped", async () => {
+    const state = { carMode: false, closed: false };
+    const o = opener((n) => { if (n === 1) state.carMode = true; if (n === 2) state.carMode = false; });
+    const got = await openMic(o.open, state);
+    expect(o.asked).toEqual([true, false, true]);
+    expect(o.streams.map((s) => s.stopped)).toEqual([1, 1, 0]);
+    expect(got).toMatchObject({ car: false });
+  });
+
+  test("a view that closed meanwhile has the stream stopped and is given nothing, so no microphone is left open after End", async () => {
+    const state = { carMode: false, closed: false };
+    const o = opener((n) => { if (n === 1) state.closed = true; });
+    expect(await openMic(o.open, state)).toBeNull();
+    expect(o.streams.map((s) => s.stopped)).toEqual([1]);
+  });
+
+  test("one run at a time: a second call while it runs is the same run, and a call after it settles starts another", async () => {
+    let runs = 0;
+    const flight = singleFlight(async () => { runs++; await Promise.resolve(); return runs; });
+    const [a, b] = [flight(), flight()];
+    expect(a).toBe(b);
+    expect(await a).toBe(1);
+    expect(runs).toBe(1);
+    expect(await flight()).toBe(2);
+  });
+
+  test("a run that fails lets the next call try again", async () => {
+    let runs = 0;
+    const flight = singleFlight(async () => { runs++; if (runs === 1) throw new Error("no mic"); return runs; });
+    await expect(flight()).rejects.toThrow("no mic");
+    expect(await flight()).toBe(2);
   });
 });
