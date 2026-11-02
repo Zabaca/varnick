@@ -33,6 +33,13 @@ final class Listener: ObservableObject {
     var onMicPhrase: ((MicPhrase) -> Void)?
     /// The running `Capture` (macOS 26 only, so not typed as one).
     private var capture: AnyObject?
+    /// The last minute of the running capture's microphone, held only while `windowWanted` (ADR 0047); nil when nothing is capturing.
+    private(set) var micWindow: MicWindow?
+    /// Whether requests' lines go to ElevenLabs, so the window should hold audio: `SpokenRequests` sets it from the settings it depends on. Turning it
+    /// off empties the window at once.
+    var windowWanted = false {
+        didSet { micWindow?.setOn(windowWanted) }
+    }
     private var starting: Task<Void, Never>?
     /// Bumped on every start and stop, so a capture's late events can't touch a newer one.
     private var generation = 0
@@ -73,8 +80,10 @@ final class Listener: ObservableObject {
         state = .starting("Starting…")
         // Read here, so a change in Settings takes effect the next time Listening starts or restarts (a device change restarts it).
         let saveAudio = Settings.shared.saveAudio
+        let window = MicWindow(isOn: windowWanted)
+        micWindow = window
         starting = Task { [weak self] in
-            let capture = Capture(saveAudio: saveAudio)
+            let capture = Capture(saveAudio: saveAudio, window: window)
             capture.onEvent = { event in Task { @MainActor in self?.handle(event, from: generation) } }
             do {
                 guard await AVCaptureDevice.requestAccess(for: .audio) else {
@@ -136,6 +145,8 @@ final class Listener: ObservableObject {
 
     private func endCapture(discarding: Bool) {
         generation += 1
+        micWindow?.setOn(false)
+        micWindow = nil
         starting?.cancel()
         starting = nil
         pendingRestart?.cancel()
@@ -225,12 +236,14 @@ enum CaptureEvent {
     case failed(String)
 }
 
-/// One mic result: its text and when its audio began and ended. Volatile results come before the final one.
+/// One mic result: its text and when its audio began and ended. Volatile results come before the final one. `audio` is the same range in seconds on the
+/// analyzer's own clock, which `MicWindow` is indexed by.
 struct MicPhrase {
     let text: String
     let start: Date
     let end: Date
     let isFinal: Bool
+    var audio: ClosedRange<Double>? = nil
 }
 
 /// One run of listening: the mic through AVAudioEngine and the Mac's output through a Core
@@ -262,7 +275,13 @@ private final class Capture {
     /// Off once a discarding stop begins: nothing heard after Stop reaches the transcript.
     private let writes = Atomic(true)
 
-    init(saveAudio: Bool) { self.saveAudio = saveAudio }
+    /// The mic's last minute, fed from the mic's callback while it is on (ADR 0047); the system source never feeds it.
+    private let window: MicWindow
+
+    init(saveAudio: Bool, window: MicWindow) {
+        self.saveAudio = saveAudio
+        self.window = window
+    }
 
     var heardSystemAudio: Bool { heardSystem.load(ordering: .relaxed) }
 
@@ -462,8 +481,10 @@ private final class Capture {
                     if source == .mic, SpeechSpans.shared.covers(start) { continue }
                     let text = String(result.text.characters)
                     if source == .mic, !text.isEmpty {
+                        let audio = result.range.start.seconds.isFinite && result.range.end.seconds.isFinite
+                            && result.range.end.seconds >= result.range.start.seconds ? result.range.start.seconds...result.range.end.seconds : nil
                         onEvent(.micPhrase(MicPhrase(text: text, start: start, end: clock.date(at: result.range.end.seconds),
-                                                     isFinal: result.isFinal)))
+                                                     isFinal: result.isFinal, audio: audio)))
                     }
                     if result.isFinal { Transcript.append(source, text, at: start) }
                 }
@@ -482,12 +503,14 @@ private final class Capture {
             }
         }
 
+        let micWindow = source == .mic ? window : nil
         return { buffer in
             guard let out = AudioConversion.convert(buffer, using: converter, to: format) else { return }
             clock.fed(seconds: Double(out.frameLength) / format.sampleRate)
             feed.yield(AnalyzerInput(buffer: out))
             // `out` is this call's own buffer, never touched again here, so it is handed over, not copied.
             saved?.write(out)
+            micWindow?.feed(out)
         }
     }
 

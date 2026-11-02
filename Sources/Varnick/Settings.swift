@@ -278,6 +278,13 @@ final class Settings: ObservableObject {
     /// Keeps what the mic and the Mac's audio hear, while Listening is on, as audio files on this Mac (`SavedAudio`); off until
     /// turned on.
     @Published var saveAudio: Bool { didSet { defaults.set(saveAudio, forKey: "saveAudio") } }
+    /// Has ElevenLabs' Scribe v2 turn the audio of a spoken request into text, beside Apple's transcriber, whose text is used when Scribe's isn't back in
+    /// time (ADR 0047); off until turned on. This Mac's Hey Varnick and the Voice mode of a phone on this Mac's page both follow it. Absent reads off.
+    @Published var transcribeRequests: Bool { didSet { defaults.set(transcribeRequests, forKey: "transcribeRequests") } }
+    /// The names Scribe is told to listen for, one a line, after "Varnick" (`Transcription.keyterms`).
+    @Published var transcriptionNames: String { didSet { defaults.set(transcriptionNames, forKey: "transcriptionNames") } }
+    /// The last Scribe failure, shown under the switch; in memory only, cleared by the next text Scribe returns.
+    @Published private(set) var transcriptionNote: String?
     /// Lets a spoken request point at the screen: Varnick reads the focused window's controls and draws an arrow (ADR 0019); off
     /// until turned on. `screenPointingOn` says whether its other conditions hold too.
     @Published var pointAtScreen: Bool { didSet { defaults.set(pointAtScreen, forKey: "pointAtScreen") } }
@@ -334,6 +341,10 @@ final class Settings: ObservableObject {
     /// Whether Varnick's lines go to ElevenLabs: a voice is chosen and a key is saved. Otherwise the installed voice speaks and
     /// nothing is sent.
     var speaksInElevenLabs: Bool { !elevenLabsVoice.isEmpty && elevenLabsKeyInKeychain }
+
+    /// Whether the audio of a spoken request is sent to ElevenLabs' Scribe v2 beside Apple's transcriber (ADR 0047): the switch is on and a key is
+    /// saved. Voice mode on the phone follows this Mac's switch.
+    var transcribesInElevenLabs: Bool { transcribeRequests && elevenLabsKeyInKeychain }
 
     /// The judge the next search uses; nil is no filter. VARNICK_EVAL_FILTER (typesafe, local, off) overrides
     /// both settings, so `--search-eval` can compare filters without writing them.
@@ -451,6 +462,8 @@ final class Settings: ObservableObject {
             .flatMap { try? JSONDecoder().decode([ElevenLabs.Voice].self, from: $0) } ?? []
         heyVarnick = defaults.bool(forKey: "heyVarnick")
         saveAudio = defaults.bool(forKey: "saveAudio")
+        transcribeRequests = defaults.bool(forKey: "transcribeRequests")
+        transcriptionNames = defaults.string(forKey: "transcriptionNames") ?? ""
         pointAtScreen = defaults.bool(forKey: "pointAtScreen")
         answerFromWeb = defaults.bool(forKey: "answerFromWeb")
         semanticSearch = defaults.object(forKey: "semanticSearch") as? Bool ?? true
@@ -530,12 +543,14 @@ final class Settings: ObservableObject {
             Keychain.delete(ElevenLabs.keyAccount)
             elevenLabsKeyInKeychain = false
             elevenLabsNote = nil
+            transcriptionNote = nil
             return
         }
         do {
             try Keychain.save(key, for: ElevenLabs.keyAccount)
             elevenLabsKeyInKeychain = true
             elevenLabsNote = nil
+            transcriptionNote = nil
             Task { await refreshElevenLabsVoices() }
         } catch {
             elevenLabsKeyError = error.localizedDescription
@@ -557,6 +572,11 @@ final class Settings: ObservableObject {
             guard !Task.isCancelled, elevenLabsKeyInKeychain else { return }
             noteElevenLabs((error as? ElevenLabs.Failure)?.note ?? "ElevenLabs not answering", fromList: true)
         }
+    }
+
+    /// Sets, or with nil clears, `transcriptionNote`.
+    func noteTranscription(_ note: String?) {
+        if transcriptionNote != note { transcriptionNote = note }
     }
 
     /// Sets, or with nil clears, `elevenLabsNote`.
@@ -847,6 +867,29 @@ struct SettingsView: View {
                                     InstalledVoicePicker(settings: settings)
                                 }
                             }
+                            SettingRow(title: "Transcribe requests with ElevenLabs",
+                                       detail: "Sends the audio of each request, from Hey Varnick here and from Voice mode on a phone using this Mac, to ElevenLabs' Scribe v2 as well as Apple's transcriber, whose text is used when Scribe's is slow or fails. Anything else the microphone hears in those seconds goes too, ElevenLabs keeps it under its policy, and it is billed by the minute; the key needs the Speech to Text permission, and docs/privacy-and-security.md (ElevenLabs) has the rest.") {
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if !settings.elevenLabsKeyInKeychain {
+                                        Button("Add an ElevenLabs key in Settings › Models") { sectionID = SettingsSection.models.rawValue }
+                                            .buttonStyle(.link)
+                                            .font(.system(size: 12))
+                                    }
+                                    if let note = settings.transcriptionNote {
+                                        Text(note).font(.system(size: 12)).foregroundStyle(.orange).multilineTextAlignment(.trailing)
+                                    }
+                                }
+                                Toggle("", isOn: $settings.transcribeRequests).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            if settings.transcribeRequests {
+                                SettingRow(title: "Names to listen for",
+                                           detail: "One a line: the names Varnick gets wrong. \"Varnick\" is always listened for.") {
+                                    TextField("Priya\nMount Wilson", text: $settings.transcriptionNames, axis: .vertical)
+                                        .textFieldStyle(.roundedBorder)
+                                        .lineLimit(2...6)
+                                        .frame(width: 200)
+                                }
+                            }
                             case .peers:
                             PeersSettingsView()
                             case .models:
@@ -989,7 +1032,7 @@ struct SettingsView: View {
                                 }
                             }
                             SettingRow(title: "ElevenLabs",
-                                       detail: "Speaks Hey Varnick's answers in an ElevenLabs voice, chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions, and is kept in the macOS Keychain. With it saved, Varnick asks ElevenLabs for your voices, sending only the key.") {
+                                       detail: "Speaks Hey Varnick's answers in an ElevenLabs voice and can transcribe your requests, both chosen in Settings › Listening. The key needs the Text to Speech and Voices Read permissions, and Speech to Text for transcription, and is kept in the macOS Keychain. With it saved, Varnick asks ElevenLabs for your voices, sending only the key.") {
                                 if let error = settings.elevenLabsKeyError {
                                     Text(error).font(.system(size: 12)).foregroundStyle(.orange).lineLimit(1).truncationMode(.tail)
                                 }
