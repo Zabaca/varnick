@@ -11,7 +11,7 @@
 import { element, getJSON, postJSON } from "/dom.js";
 import {
   applyEvents, atBottom, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
-  settled, shortSpeechMs, singleFlight, stateLine, Utterance,
+  pinAfterScroll, settled, shortSpeechMs, singleFlight, stateLine, Utterance,
 } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -43,6 +43,8 @@ export function openVoice({ host, done, openSession }) {
     endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
     // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, and the one line their chunks are sent in.
     run: null, segments: new Segments(), send: serial(), polling: false, releaseTimer: null,
+    // The log follows its newest line while pinned; ownTop is where our own last scroll left it.
+    pinned: true, ownTop: 0, onLogScroll: null, logResize: null,
   };
   const v = current;
   v.bring = singleFlight(() => buildAudio(v));
@@ -66,7 +68,7 @@ export function openVoice({ host, done, openSession }) {
   void loadEarlier(v);
 }
 
-/** Scrolls the log to its newest line and remembers that it is there, and where, so the scroll event that follows is known for ours. */
+/** Scrolls the log to its newest line and remembers where that left it, so the scroll event that follows is known for ours. */
 function toEnd(v) {
   const log = $("voice-log");
   log.scrollTop = log.scrollHeight;
@@ -74,15 +76,10 @@ function toEnd(v) {
   v.ownTop = log.scrollTop;
 }
 
-/**
- * The log's height is what is left above the controls, so a change in them (the state line wrapping, a notice, the Open button, Car mode's note) resizes it after
- * `render` has scrolled, and the newest lines would sit under the controls. While the log shows its end it keeps showing it through a resize; scrolled up, it is left.
- * Only the phone's own scrolling decides which: our scroll's event arrives after the controls have changed, when the log no longer looks at its end.
- */
+/** Keeps the log at its end through a change in the controls below it; the mechanism is in docs/agents/where-it-breaks.md, Voice mode on the phone. */
 function watchLog(v) {
   const log = $("voice-log");
-  toEnd(v);
-  v.onLogScroll = () => { if (log.scrollTop !== v.ownTop) v.pinned = atBottom(log); };
+  v.onLogScroll = () => { v.pinned = pinAfterScroll(v.pinned, atBottom(log), log.scrollTop === v.ownTop); };
   log.addEventListener("scroll", v.onLogScroll, { passive: true });
   if (typeof ResizeObserver === "function") {
     v.logResize = new ResizeObserver(() => { if (v.pinned) toEnd(v); });
@@ -146,8 +143,10 @@ function render(v) {
   const lines = [...earlier, ...v.view.exchange.map((line) => element("p", `voice-line ${line.who}`, line.text))];
   // The request so far, still being built: it becomes a line of the exchange when the Mac has it whole.
   if (v.view.pending) lines.push(element("p", "voice-line you building", v.view.pending));
+  // A phone that scrolled up to reread is left there; a log at its end follows the newest line.
+  const follow = v.pinned;
   log.replaceChildren(...lines);
-  toEnd(v);
+  if (follow) toEnd(v);
   $("voice-state").textContent = stateLine[v.view.state];
   $("voice-start").hidden = v.running;
   $("voice-end").hidden = !v.running;

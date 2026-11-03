@@ -17,6 +17,12 @@ const bottomSlackPx = 4;
 /** Whether a scroll box (`scrollHeight`, `scrollTop`, `clientHeight`) shows its end, so the log keeps its newest line in view when the controls below it change height. */
 export const atBottom = ({ scrollHeight, scrollTop, clientHeight }) => scrollHeight - scrollTop - clientHeight <= bottomSlackPx;
 
+/**
+ * Whether the log follows its newest line after a scroll event. At the end it does, whoever scrolled (one scroll can return to the end from far up and land
+ * where our own last scroll left it); a scroll that left the end is the phone's, unless it is ours, which is the log shrinking under controls that grew.
+ */
+export const pinAfterScroll = (pinned, atEnd, atOwnTop) => (atEnd ? true : atOwnTop ? pinned : false);
+
 // ---------------------------------------------------------------------------------------------------------------
 // Car mode
 
