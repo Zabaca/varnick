@@ -2,7 +2,8 @@
 problem: spoken-answers-sound-robotic
 title: Transcribe the request again with ElevenLabs' Scribe v2 after "Hey Varnick"
 summary: Unmeasured, and only worth building if a measurement shows it pays. Apple's transcriber still listens, wakes Varnick and writes the transcript. Once a spoken request has begun, Varnick also sends just that request's audio, kept in memory, to ElevenLabs' Scribe v2 batch speech to text. When Scribe's text comes back in time and differs from Apple's, Varnick answers Scribe's text instead. Nothing shows that Apple mishears requests today; the wake rule was measured on synthesized speech only, and recordings of a real voice are still pending. The request's audio, the user's voice and anything else the mic heard in those seconds, goes to ElevenLabs.
-status: proposed
+status: abandoned
+reason: replaced by spoken-requests-get-words-wrong option 01 (shipped 2026-11-02), which sends each request to Scribe v2 on both the phone and the Mac; the user abandoned this one on 2026-11-02
 ---
 
 ## Solution
