@@ -9,6 +9,21 @@ export const chunkSamples = 16000;
 export const maxUtteranceMs = 30000;
 
 // ---------------------------------------------------------------------------------------------------------------
+// The exchange's scroll
+
+/** Within this many pixels of the end counts as at the end: a fractional scrollTop (a zoomed or high-density screen) never reaches the exact sum. */
+const bottomSlackPx = 4;
+
+/** Whether a scroll box (`scrollHeight`, `scrollTop`, `clientHeight`) shows its end, so the log keeps its newest line in view when the controls below it change height. */
+export const atBottom = ({ scrollHeight, scrollTop, clientHeight }) => scrollHeight - scrollTop - clientHeight <= bottomSlackPx;
+
+/**
+ * Whether the log follows its newest line after a scroll event. At the end it does, whoever scrolled (one scroll can return to the end from far up and land
+ * where our own last scroll left it); a scroll that left the end is the phone's, unless it is ours, which is the log shrinking under controls that grew.
+ */
+export const pinAfterScroll = (pinned, atEnd, atOwnTop) => (atEnd ? true : atOwnTop ? pinned : false);
+
+// ---------------------------------------------------------------------------------------------------------------
 // Car mode
 
 /** Where the page keeps the Car mode switch (localStorage, per origin): "1" for on, anything else off. */

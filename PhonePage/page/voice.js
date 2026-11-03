@@ -10,8 +10,8 @@
 
 import { element, getJSON, postJSON } from "/dom.js";
 import {
-  applyEvents, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
-  settled, shortSpeechMs, singleFlight, stateLine, Utterance,
+  applyEvents, atBottom, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
+  pinAfterScroll, settled, shortSpeechMs, singleFlight, stateLine, Utterance,
 } from "/voicerules.js";
 
 const $ = (id) => document.getElementById(id);
@@ -43,6 +43,8 @@ export function openVoice({ host, done, openSession }) {
     endpoint: new Endpointer(), dead: new DeadMic(), ring: [], utt: null, lastBlock: 0, ignoreUntil: 0, frozenAt: 0, noted: 0,
     // One Voice mode run (its id goes with every segment), the segments sent and not yet answered, and the one line their chunks are sent in.
     run: null, segments: new Segments(), send: serial(), polling: false, releaseTimer: null,
+    // The log follows its newest line while pinned; ownTop is where our own last scroll left it.
+    pinned: true, ownTop: 0, onLogScroll: null, logResize: null,
   };
   const v = current;
   v.bring = singleFlight(() => buildAudio(v));
@@ -61,8 +63,28 @@ export function openVoice({ host, done, openSession }) {
   document.addEventListener("visibilitychange", v.onVisibility);
   document.addEventListener("freeze", v.onFreeze);
   document.addEventListener("resume", v.onResume);
+  watchLog(v);
   render(v);
   void loadEarlier(v);
+}
+
+/** Scrolls the log to its newest line and remembers where that left it, so the scroll event that follows is known for ours. */
+function toEnd(v) {
+  const log = $("voice-log");
+  log.scrollTop = log.scrollHeight;
+  v.pinned = true;
+  v.ownTop = log.scrollTop;
+}
+
+/** Keeps the log at its end through a change in the controls below it; the mechanism is in docs/agents/where-it-breaks.md, Voice mode on the phone. */
+function watchLog(v) {
+  const log = $("voice-log");
+  v.onLogScroll = () => { v.pinned = pinAfterScroll(v.pinned, atBottom(log), log.scrollTop === v.ownTop); };
+  log.addEventListener("scroll", v.onLogScroll, { passive: true });
+  if (typeof ResizeObserver === "function") {
+    v.logResize = new ResizeObserver(() => { if (v.pinned) toEnd(v); });
+    v.logResize.observe(log);
+  }
 }
 
 export function closeVoice() {
@@ -74,6 +96,8 @@ export function closeVoice() {
   document.removeEventListener("freeze", v.onFreeze);
   document.removeEventListener("resume", v.onResume);
   clearTimeout(v.releaseTimer);
+  $("voice-log").removeEventListener("scroll", v.onLogScroll);
+  v.logResize?.disconnect();
   stopAudio(v);
   void v.lock?.release().catch(() => {});
   v.lock = null;
@@ -119,8 +143,10 @@ function render(v) {
   const lines = [...earlier, ...v.view.exchange.map((line) => element("p", `voice-line ${line.who}`, line.text))];
   // The request so far, still being built: it becomes a line of the exchange when the Mac has it whole.
   if (v.view.pending) lines.push(element("p", "voice-line you building", v.view.pending));
+  // A phone that scrolled up to reread is left there; a log at its end follows the newest line.
+  const follow = v.pinned;
   log.replaceChildren(...lines);
-  log.scrollTop = log.scrollHeight;
+  if (follow) toEnd(v);
   $("voice-state").textContent = stateLine[v.view.state];
   $("voice-start").hidden = v.running;
   $("voice-end").hidden = !v.running;
