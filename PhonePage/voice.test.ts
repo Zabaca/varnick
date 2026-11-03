@@ -8,7 +8,7 @@ import {
 } from "./voice";
 import {
   applyEvents, calibrationFrames, carModeKey, chunkSamples, cut, DeadMic, deadMicMs, earlierFailed, earlierHeading, earlierView, Endpointer, floorTimes, fromBase64, hint,
-  lowestThreshold, maxUtteranceMs, micConstraints, omittedLine, openMic, parseCarMode, singleFlight,
+  atBottom, lowestThreshold, maxUtteranceMs, micConstraints, omittedLine, openMic, parseCarMode, singleFlight,
   minSpeechMs, newView, noiseRunMs, pauseMs, pauseNote, pollFailures, preRollMs, requestCapMs, Segments, serial, settled, shortSpeechMs, silenceMs, stateLine,
   toBase64, uploadRate, Utterance,
 } from "./page/voicerules.js";
@@ -778,5 +778,18 @@ describe("opening the microphone for Car mode", () => {
     const flight = singleFlight(async () => { runs++; if (runs === 1) throw new Error("no mic"); return runs; });
     await expect(flight()).rejects.toThrow("no mic");
     expect(await flight()).toBe(2);
+  });
+});
+
+describe("the exchange kept at its newest line", () => {
+  test("is at the bottom when the rest to scroll is under a few pixels, and not when the phone has scrolled up", () => {
+    expect(atBottom({ scrollHeight: 900, scrollTop: 500, clientHeight: 400 })).toBe(true);
+    expect(atBottom({ scrollHeight: 900, scrollTop: 497, clientHeight: 400 })).toBe(true);
+    expect(atBottom({ scrollHeight: 900, scrollTop: 300, clientHeight: 400 })).toBe(false);
+  });
+
+  test("is at the bottom when everything fits, and a fraction of a pixel counts as none", () => {
+    expect(atBottom({ scrollHeight: 300, scrollTop: 0, clientHeight: 400 })).toBe(true);
+    expect(atBottom({ scrollHeight: 900.4, scrollTop: 499.8, clientHeight: 400 })).toBe(true);
   });
 });

@@ -10,7 +10,7 @@
 
 import { element, getJSON, postJSON } from "/dom.js";
 import {
-  applyEvents, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
+  applyEvents, atBottom, carModeKey, DeadMic, earlierFailed, earlierHeading, earlierView, Endpointer, fromBase64, hint, minSpeechMs, newView, omittedLine, openMic, parseCarMode, pauseNote, preRollMs, Segments, serial,
   settled, shortSpeechMs, singleFlight, stateLine, Utterance,
 } from "/voicerules.js";
 
@@ -61,8 +61,33 @@ export function openVoice({ host, done, openSession }) {
   document.addEventListener("visibilitychange", v.onVisibility);
   document.addEventListener("freeze", v.onFreeze);
   document.addEventListener("resume", v.onResume);
+  watchLog(v);
   render(v);
   void loadEarlier(v);
+}
+
+/** Scrolls the log to its newest line and remembers that it is there, and where, so the scroll event that follows is known for ours. */
+function toEnd(v) {
+  const log = $("voice-log");
+  log.scrollTop = log.scrollHeight;
+  v.pinned = true;
+  v.ownTop = log.scrollTop;
+}
+
+/**
+ * The log's height is what is left above the controls, so a change in them (the state line wrapping, a notice, the Open button, Car mode's note) resizes it after
+ * `render` has scrolled, and the newest lines would sit under the controls. While the log shows its end it keeps showing it through a resize; scrolled up, it is left.
+ * Only the phone's own scrolling decides which: our scroll's event arrives after the controls have changed, when the log no longer looks at its end.
+ */
+function watchLog(v) {
+  const log = $("voice-log");
+  toEnd(v);
+  v.onLogScroll = () => { if (log.scrollTop !== v.ownTop) v.pinned = atBottom(log); };
+  log.addEventListener("scroll", v.onLogScroll, { passive: true });
+  if (typeof ResizeObserver === "function") {
+    v.logResize = new ResizeObserver(() => { if (v.pinned) toEnd(v); });
+    v.logResize.observe(log);
+  }
 }
 
 export function closeVoice() {
@@ -74,6 +99,8 @@ export function closeVoice() {
   document.removeEventListener("freeze", v.onFreeze);
   document.removeEventListener("resume", v.onResume);
   clearTimeout(v.releaseTimer);
+  $("voice-log").removeEventListener("scroll", v.onLogScroll);
+  v.logResize?.disconnect();
   stopAudio(v);
   void v.lock?.release().catch(() => {});
   v.lock = null;
@@ -120,7 +147,7 @@ function render(v) {
   // The request so far, still being built: it becomes a line of the exchange when the Mac has it whole.
   if (v.view.pending) lines.push(element("p", "voice-line you building", v.view.pending));
   log.replaceChildren(...lines);
-  log.scrollTop = log.scrollHeight;
+  toEnd(v);
   $("voice-state").textContent = stateLine[v.view.state];
   $("voice-start").hidden = v.running;
   $("voice-end").hidden = !v.running;
