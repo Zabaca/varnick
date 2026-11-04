@@ -1,4 +1,4 @@
-// The Phone page's home: the host's open tabs, each a row, and its Recent, which lists closed tabs, from /api/home. A tab row opens the tab
+// The Phone page's home: the host's open tabs, grouped by turn (Needs you, Working, Stopped), each a row, and its Recent, which lists closed tabs, from /api/home. A tab row opens the tab
 // (tab.js) at `#t=<tab>`, so Back returns here; a session started or found without its tab opens at `#s=<name>` (session.js). Everything the
 // host sent goes in with textContent, never as markup.
 
@@ -14,7 +14,7 @@ import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
 import { closeVoice, openVoice } from "/voice.js";
-import { isVoiceSession, paneSummary, parseTabHash, tabHash, tabTitle, voiceLine, voiceMark } from "/tabrules.js";
+import { groupTabs, isVoiceSession, paneSummary, parseTabHash, stateLine, tabHash, tabTitle, voiceLine, voiceMark } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const refreshButton = $("refresh");
@@ -50,13 +50,24 @@ function row(title, folder, agent, session) {
   return { item, body };
 }
 
-/** An open tab's row: a link that opens it, with what it holds and who is in control. */
-function tabRow(tab, linkAutomation = false) {
+/** The state lines on the home (`stateLine`) and when the host answered: the ages count on from that moment between refreshes. */
+let stateLines = [];
+let answeredAt = Date.now();
+const stateText = (state) => stateLine(state, Math.max(0, Math.floor((Date.now() - answeredAt) / 1000)));
+setInterval(() => { for (const { line, state } of stateLines) line.textContent = stateText(state) ?? ""; }, 15000);
+
+/** An open tab's row: a link that opens it, with what it holds and who is in control. Given its state, it also says what Claude is doing and for how long. */
+function tabRow(tab, linkAutomation = false, state = null) {
   const first = tab.panes.find((pane) => pane.kind === "claude") ?? tab.panes[0];
   const item = element("li");
   const link = element("a", "row-link");
   link.href = tabHash(tab.tab, null);
   link.append(element("div", "title", tabTitle(tab)));
+  if (state && state.word !== null) {
+    const line = element("div", `tab-state ${state.group}`, stateText(state));
+    stateLines.push({ line, state });
+    link.append(line);
+  }
   // The host's Voice session: told apart from the user's own tabs, and what it runs with.
   if (isVoiceSession(tab)) link.append(element("div", "voice-mark", voiceMark), element("div", "voice-line", voiceLine));
   const meta = element("div", "meta");
@@ -92,6 +103,24 @@ function fill(container, part, emptyText, build) {
   }
 }
 
+/** The open tabs in groups by turn (`groupTabs`), each under its own heading; a group with no tabs isn't drawn. */
+function fillTabs(container, part) {
+  if (part.error !== undefined || part.rows.length === 0) {
+    fill(container, part, "No tabs are open.", () => element("li"));
+    return;
+  }
+  container.replaceChildren();
+  for (const group of groupTabs(part.rows)) {
+    container.append(element("h3", "group-heading", group.heading));
+    const list = element("ul");
+    for (const { tab, state } of group.tabs) {
+      for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
+      list.append(tabRow(tab, false, state));
+    }
+    container.append(list);
+  }
+}
+
 function show(home) {
   $("host").textContent = home.host.name;
   $("device").textContent = `You are ${home.device.name}`;
@@ -104,10 +133,9 @@ function show(home) {
   // Automations are a Mac's files, edited through its running app: a headless host's are edited from a Mac's Settings.
   $("automations-open").hidden = home.host.headless === true;
   titles.clear();
-  fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
-    for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
-    return tabRow(tab);
-  });
+  stateLines = [];
+  answeredAt = Date.now();
+  fillTabs($("sessions"), home.tabs);
   // Runs nobody opened: their own section, there only while there are some (a host before protocol 29 sends none).
   const runs = home.runs?.rows ?? [];
   $("runs-section").hidden = runs.length === 0;

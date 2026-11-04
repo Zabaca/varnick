@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle, isVoiceSession, voiceLine, voiceMark, voiceNote,
+  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle, isVoiceSession, voiceLine, voiceMark, voiceNote, groupTabs, stateLine, tabState, turnWords,
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
@@ -343,5 +343,99 @@ describe("the host's Voice session (option 02 of voice-mode-forgets-the-exchange
     const tabJS = page("tab.js");
     expect(tabJS).toContain("voice: isVoiceSession(t.data)");
     expect(tabJS).toContain("markVoice(isVoiceSession(t.data))");
+  });
+});
+
+describe("open tabs grouped by turn", () => {
+  const live = (turn: string | null, turnAge: number | null, fields: Record<string, unknown> = {}) => claude(a, { turn, turnAge, ...fields });
+  const page = (file: string) => readFileSync(new URL(`./page/${file}`, import.meta.url), "utf8");
+  const tabOf = (id: string, panes: Record<string, unknown>[], fields: Record<string, unknown> = {}) => ({ tab: id, name: id, panes, ...fields });
+
+  test("the turns that need the user, that work, and the rest", () => {
+    for (const turn of ["permission", "question", "plan", "input", "failed"]) expect(tabState(tabOf("x", [live(turn, 5)])).group).toBe("needs");
+    for (const turn of ["working", "background"]) expect(tabState(tabOf("x", [live(turn, 5)])).group).toBe("working");
+    expect(tabState(tabOf("x", [live("waiting", 5)])).group).toBe("stopped");
+  });
+
+  test("a tab with no turn, no Claude pane or no running Claude pane is stopped, with no word and no age", () => {
+    const none = { group: "stopped", word: null, age: null };
+    expect(tabState(tabOf("x", [live(null, null)]))).toEqual(none);
+    expect(tabState(tabOf("x", [terminal(a), other(b, "web")]))).toEqual(none);
+    expect(tabState(tabOf("x", [live("working", 5, { running: false })]))).toEqual(none);
+    expect(tabState(tabOf("x", [live("napping", 5)]))).toEqual(none);
+  });
+
+  test("the words are the domain's, with how long the pane has been in the turn", () => {
+    const line = (turn: string, age: number | null) => stateLine(tabState(tabOf("x", [live(turn, age)])));
+    expect(line("plan", 120)).toBe("Needs you: plan · 2m");
+    expect(line("permission", 30)).toBe("Needs you: permission · 30s");
+    expect(line("question", 3600)).toBe("Needs you: question · 1h");
+    expect(line("input", 61)).toBe("Needs you: input · 1m");
+    expect(line("failed", 540)).toBe("Stopped on an error · 9m");
+    expect(line("working", 12)).toBe("Working · 12s");
+    expect(line("background", 60)).toBe("Background work · 1m");
+    expect(line("waiting", 2400)).toBe("Done · 40m");
+    expect(line("waiting", null)).toBe("Done");
+    expect(stateLine(tabState(tabOf("x", [terminal(a)])))).toBeNull();
+    expect(Object.keys(turnWords).sort()).toEqual(["background", "failed", "input", "permission", "plan", "question", "waiting", "working"]);
+  });
+
+  test("the age keeps counting from when the host answered", () => {
+    const state = tabState(tabOf("x", [live("working", 50)]));
+    expect(stateLine(state, 0)).toBe("Working · 50s");
+    expect(stateLine(state, 15)).toBe("Working · 1m");
+    expect(stateLine(state, 3600)).toBe("Working · 1h");
+    expect(stateLine(tabState(tabOf("x", [live("working", 2)])), 1)).toBe("Working · just now");
+    expect(stateLine(tabState(tabOf("x", [live("waiting", 3 * 86400)])))).toBe("Done · 3d");
+  });
+
+  test("a tab of several panes takes the most urgent pane's state and age", () => {
+    const panes = [claude(a, { turn: "waiting", turnAge: 10 }), claude(b, { turn: "working", turnAge: 400 }), claude(c, { turn: "plan", turnAge: 900 }), terminal("dddddddd-0000-4000-8000-0000000000d1")];
+    expect(tabState(tabOf("x", panes))).toEqual({ group: "needs", word: "Needs you: plan", age: 900 });
+    expect(tabState(tabOf("x", panes.slice(0, 2)))).toEqual({ group: "working", word: "Working", age: 400 });
+  });
+
+  test("within the most urgent group, the pane that changed latest", () => {
+    const panes = [claude(a, { turn: "question", turnAge: 600 }), claude(b, { turn: "failed", turnAge: 60 })];
+    expect(tabState(tabOf("x", panes))).toEqual({ group: "needs", word: "Stopped on an error", age: 60 });
+  });
+
+  test("three groups in order, each newest first, tabs with no age last in the host's order, an empty group left out", () => {
+    const tabs = [
+      tabOf("done-old", [live("waiting", 4000)]),
+      tabOf("plan", [live("plan", 120)]),
+      tabOf("no-claude", [terminal(a)]),
+      tabOf("work-old", [live("working", 300)]),
+      tabOf("failed", [live("failed", 10)]),
+      tabOf("work-new", [live("background", 12)]),
+      tabOf("done-new", [live("waiting", 40)]),
+      tabOf("no-age", [live("waiting", null)]),
+    ];
+    const groups = groupTabs(tabs);
+    expect(groups.map((group) => [group.heading, group.tabs.map((entry) => entry.tab.tab)])).toEqual([
+      ["Needs you", ["failed", "plan"]],
+      ["Working", ["work-new", "work-old"]],
+      ["Stopped", ["done-new", "done-old", "no-claude", "no-age"]],
+    ]);
+    expect(groupTabs([tabOf("w", [live("working", 3)])]).map((group) => group.heading)).toEqual(["Working"]);
+    expect(groupTabs([])).toEqual([]);
+  });
+
+  test("equal ages keep the host's order", () => {
+    const groups = groupTabs([tabOf("first", [live("working", 5)]), tabOf("second", [live("working", 5)])]);
+    expect(groups[0].tabs.map((entry) => entry.tab.tab)).toEqual(["first", "second"]);
+  });
+
+  test("the Voice session sits in the group of its turn", () => {
+    const groups = groupTabs([tabOf("v", [live("plan", 5)], { voice: true }), tabOf("w", [live("working", 5)])]);
+    expect(groups.map((group) => group.tabs[0].tab.tab)).toEqual(["v", "w"]);
+  });
+
+  test("the home page draws the groups with a heading each and keeps the empty line", () => {
+    const app = page("app.js");
+    expect(app).toContain("groupTabs(");
+    expect(app).toContain("stateLine(");
+    expect(app).toContain("No tabs are open.");
+    expect(page("app.css")).toContain(".tab-state");
   });
 });

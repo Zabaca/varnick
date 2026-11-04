@@ -55,6 +55,13 @@ li { background: var(--panel); border: 1px solid var(--line); border-radius: 10p
 .voice-mark { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .voice-line { font-size: 13px; color: var(--warn); }
 
+/* Open tabs in three groups by turn, each under a small heading; a row says what Claude is doing and for how long. */
+.group-heading { margin: 16px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.group-heading:first-child { margin-top: 0; }
+.tab-state { margin-top: 2px; font-size: 13px; color: var(--muted); }
+.tab-state.needs { color: var(--warn); font-weight: 600; }
+.tab-state.working { color: var(--accent); }
+
 /* A tab of several sessions: its name over a list of its sessions, which are boxed as rows are. */
 li.tab-group { padding: 8px; }
 .tab-name { margin: 0 4px 8px; font-size: 13px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }

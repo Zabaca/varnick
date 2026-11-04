@@ -183,3 +183,77 @@ export const voiceNote = "Voice mode and Hey Varnick type into this session. Tak
 
 /** Whether the tab is marked as the host's Voice session. */
 export const isVoiceSession = (tab) => tab?.voice === true;
+
+// ---------------------------------------------------------------------------------------------------------------
+// Open tabs by turn
+
+/** Each turn (`Turn.swift`) in the words of a Notice, and the group it puts a tab in: the user is wanted, Claude is busy, or nothing is going on. */
+export const turnWords = {
+  permission: { group: "needs", word: "Needs you: permission" },
+  question: { group: "needs", word: "Needs you: question" },
+  plan: { group: "needs", word: "Needs you: plan" },
+  input: { group: "needs", word: "Needs you: input" },
+  failed: { group: "needs", word: "Stopped on an error" },
+  working: { group: "working", word: "Working" },
+  background: { group: "working", word: "Background work" },
+  waiting: { group: "stopped", word: "Done" },
+};
+
+/** The groups in the order the home draws them, most urgent first. */
+export const tabGroupList = [
+  { key: "needs", heading: "Needs you" },
+  { key: "working", heading: "Working" },
+  { key: "stopped", heading: "Stopped" },
+];
+
+const groupRank = (key) => tabGroupList.findIndex((group) => group.key === key);
+
+/**
+ * A tab's state: the group it sits in, the word for it and the seconds since its pane's turn began (as of the host's answer). A tab holding
+ * several Claude panes has its most urgent running pane's, and the latest to change among those equally urgent. A tab with no running Claude
+ * pane, or none with a turn the page knows, is stopped, with no word and no age.
+ */
+export function tabState(tab) {
+  let best = null;
+  for (const pane of tab.panes) {
+    const known = pane.kind === "claude" && pane.running === true ? turnWords[pane.turn] : undefined;
+    if (!known) continue;
+    const age = typeof pane.turnAge === "number" ? pane.turnAge : null;
+    const state = { group: known.group, word: known.word, age };
+    if (best === null || groupRank(state.group) < groupRank(best.group) || (state.group === best.group && (age ?? Infinity) < (best.age ?? Infinity))) best = state;
+  }
+  return best ?? { group: "stopped", word: null, age: null };
+}
+
+/** "just now", "12s", "2m", "1h", "3d": how long, in one unit. */
+export function duration(seconds) {
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+/** "Needs you: plan · 2m", or null for a tab with no state word. `elapsed` is the seconds since the host answered, so a row keeps counting between refreshes. */
+export function stateLine(state, elapsed = 0) {
+  if (state.word === null) return null;
+  return state.age === null ? state.word : `${state.word} · ${duration(state.age + elapsed)}`;
+}
+
+/**
+ * The open tabs in the groups the home draws: Needs you, Working, Stopped, each with its tabs latest state change first (a tab with no age
+ * after those that have one, the host's order otherwise). A group with no tabs is left out.
+ */
+export function groupTabs(tabs) {
+  const entries = tabs.map((tab, index) => ({ tab, state: tabState(tab), index }));
+  return tabGroupList
+    .map(({ key, heading }) => ({
+      key,
+      heading,
+      tabs: entries
+        .filter((entry) => entry.state.group === key)
+        .sort((x, y) => (x.state.age ?? Infinity) - (y.state.age ?? Infinity) || x.index - y.index)
+        .map(({ tab, state }) => ({ tab, state })),
+    }))
+    .filter((group) => group.tabs.length > 0);
+}
