@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle, isVoiceSession, voiceLine, voiceMark, voiceNote, groupTabs, stateLine, tabState, turnWords,
+  addressHost, choosePane, closeQuestion, doneQuestion, framedAddress, isLocalAddress, isOpenable, offersAdd, offersClose, offersDone, offersRestart, offersTake, paneLabel, readyToShow, restartQuestion, showsSwitcher, paneNote, paneSummary, parseTabHash, samePanes, tabHash, tabTitle, isVoiceSession, voiceLine, voiceMark, voiceNote, groupTabs, homePollMs, pollsHome, stateLine, tabState, turnWords,
 } from "./page/tabrules.js";
 import { addable, addBody, entryPath, kindShown, kindsOffered, relativeTo } from "./page/addrules.js";
 import { parseEndBody, parseTabBody } from "./terminal";
@@ -380,13 +380,24 @@ describe("open tabs grouped by turn", () => {
     expect(Object.keys(turnWords).sort()).toEqual(["background", "failed", "input", "permission", "plan", "question", "waiting", "working"]);
   });
 
-  test("the age keeps counting from when the host answered", () => {
-    const state = tabState(tabOf("x", [live("working", 50)]));
-    expect(stateLine(state, 0)).toBe("Working · 50s");
-    expect(stateLine(state, 15)).toBe("Working · 1m");
-    expect(stateLine(state, 3600)).toBe("Working · 1h");
-    expect(stateLine(tabState(tabOf("x", [live("working", 2)])), 1)).toBe("Working · just now");
-    expect(stateLine(tabState(tabOf("x", [live("waiting", 3 * 86400)])))).toBe("Done · 3d");
+  test("the age is as of the host's answer, in one unit", () => {
+    const line = (turn: string, age: number) => stateLine(tabState(tabOf("x", [live(turn, age)])));
+    expect(line("working", 2)).toBe("Working · just now");
+    expect(line("working", 50)).toBe("Working · 50s");
+    expect(line("working", 75)).toBe("Working · 1m");
+    expect(line("working", 3600)).toBe("Working · 1h");
+    expect(line("waiting", 3 * 86400)).toBe("Done · 3d");
+  });
+
+  test("the home asks the host again every 10 seconds, only while it is in view and no ask is out, so an age never counts past a turn the host has left", () => {
+    expect(homePollMs).toBe(10_000);
+    expect(pollsHome({ visible: true, homeShown: true, loading: false })).toBe(true);
+    expect(pollsHome({ visible: false, homeShown: true, loading: false })).toBe(false);
+    expect(pollsHome({ visible: true, homeShown: false, loading: false })).toBe(false);
+    expect(pollsHome({ visible: true, homeShown: true, loading: true })).toBe(false);
+    const app = page("app.js");
+    expect(app).toContain("pollsHome({");
+    expect(app).toContain("homePollMs");
   });
 
   test("a tab of several panes takes the most urgent pane's state and age", () => {

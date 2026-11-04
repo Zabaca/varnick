@@ -234,11 +234,17 @@ export function duration(seconds) {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-/** "Needs you: plan · 2m", or null for a tab with no state word. `elapsed` is the seconds since the host answered, so a row keeps counting between refreshes. */
-export function stateLine(state, elapsed = 0) {
+/** "Needs you: plan · 2m", or null for a tab with no state word. The age is as of the host's answer, so the home asks again (`pollsHome`) rather than count on. */
+export function stateLine(state) {
   if (state.word === null) return null;
-  return state.age === null ? state.word : `${state.word} · ${duration(state.age + elapsed)}`;
+  return state.age === null ? state.word : `${state.word} · ${duration(state.age)}`;
 }
+
+/** How often the home asks the host again while it is shown, so a row never reads a turn the host has left. */
+export const homePollMs = 10_000;
+
+/** Whether the timer asks for the home now: the page is in view, the home is the view, and an ask isn't already out. */
+export const pollsHome = ({ visible, homeShown, loading }) => visible && homeShown && !loading;
 
 /**
  * The open tabs in the groups the home draws: Needs you, Working, Stopped, each with its tabs latest state change first (a tab with no age
