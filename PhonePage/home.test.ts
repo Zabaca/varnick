@@ -119,6 +119,24 @@ describe("a pane", () => {
   });
 });
 
+describe("a Claude pane's turn (for the open tabs' groups)", () => {
+  const shape = (fields: Record<string, unknown>) => shapePane({ id: paneA, kind: "claude", running: true, ...fields }, device)!;
+
+  test("is the host's turn word and the seconds since it began", () => {
+    expect(shape({ turn: "plan", turnAge: 125 })).toMatchObject({ turn: "plan", turnAge: 125 });
+    expect(shape({ turn: "failed", turnAge: 0 })).toMatchObject({ turn: "failed", turnAge: 0 });
+  });
+
+  test("is none when the host says none, or says something that isn't a turn", () => {
+    for (const fields of [{}, { turn: "" }, { turn: 3 }, { turn: "napping", turnAge: 5 }]) expect(shape(fields)).toMatchObject({ turn: null, turnAge: null });
+    for (const turnAge of [undefined, "5", -1, 1.5, Number.NaN]) expect(shape({ turn: "working", turnAge }).turnAge).toBeNull();
+  });
+
+  test("only a Claude pane has one", () => {
+    expect(shapePane({ id: paneA, kind: "terminal", running: true, turn: "working", turnAge: 4 }, device)).toMatchObject({ turn: null, turnAge: null });
+  });
+});
+
 describe("runs", () => {
   const home = (list: Record<string, unknown>[]) =>
     shapeHome({ host: { name: "linux box", headless: true }, loopback: false, device, tabs: ok({ tabs: list }), recent: ok({ recent: [] }), hosts: [] });

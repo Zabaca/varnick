@@ -1,4 +1,4 @@
-// The Phone page's home: the host's open tabs, each a row, and its Recent, which lists closed tabs, from /api/home. A tab row opens the tab
+// The Phone page's home: the host's open tabs, grouped by turn (Needs you, Working, Stopped), each a row, and its Recent, which lists closed tabs, from /api/home. A tab row opens the tab
 // (tab.js) at `#t=<tab>`, so Back returns here; a session started or found without its tab opens at `#s=<name>` (session.js). Everything the
 // host sent goes in with textContent, never as markup.
 
@@ -14,7 +14,7 @@ import { closeNotices, startPush } from "/push.js";
 import { closeSession, openSession } from "/session.js";
 import { closeTab, openTab } from "/tab.js";
 import { closeVoice, openVoice } from "/voice.js";
-import { isVoiceSession, paneSummary, parseTabHash, tabHash, tabTitle, voiceLine, voiceMark } from "/tabrules.js";
+import { groupTabs, homePollMs, isVoiceSession, paneSummary, parseTabHash, pollsHome, stateLine, tabHash, tabTitle, voiceLine, voiceMark } from "/tabrules.js";
 
 const $ = (id) => document.getElementById(id);
 const refreshButton = $("refresh");
@@ -50,13 +50,16 @@ function row(title, folder, agent, session) {
   return { item, body };
 }
 
-/** An open tab's row: a link that opens it, with what it holds and who is in control. */
-function tabRow(tab, linkAutomation = false) {
+/** An open tab's row: a link that opens it, with what it holds and who is in control. Given its state, it also says what Claude is doing and for how long. */
+function tabRow(tab, linkAutomation = false, state = null) {
   const first = tab.panes.find((pane) => pane.kind === "claude") ?? tab.panes[0];
   const item = element("li");
   const link = element("a", "row-link");
   link.href = tabHash(tab.tab, null);
   link.append(element("div", "title", tabTitle(tab)));
+  if (state && state.word !== null) {
+    link.append(element("div", `tab-state ${state.group}`, stateLine(state)));
+  }
   // The host's Voice session: told apart from the user's own tabs, and what it runs with.
   if (isVoiceSession(tab)) link.append(element("div", "voice-mark", voiceMark), element("div", "voice-line", voiceLine));
   const meta = element("div", "meta");
@@ -92,6 +95,24 @@ function fill(container, part, emptyText, build) {
   }
 }
 
+/** The open tabs in groups by turn (`groupTabs`), each under its own heading; a group with no tabs isn't drawn. */
+function fillTabs(container, part) {
+  if (part.error !== undefined || part.rows.length === 0) {
+    fill(container, part, "No tabs are open.", () => element("li"));
+    return;
+  }
+  container.replaceChildren();
+  for (const group of groupTabs(part.rows)) {
+    container.append(element("h3", "group-heading", group.heading));
+    const list = element("ul");
+    for (const { tab, state } of group.tabs) {
+      for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
+      list.append(tabRow(tab, false, state));
+    }
+    container.append(list);
+  }
+}
+
 function show(home) {
   $("host").textContent = home.host.name;
   $("device").textContent = `You are ${home.device.name}`;
@@ -104,10 +125,7 @@ function show(home) {
   // Automations are a Mac's files, edited through its running app: a headless host's are edited from a Mac's Settings.
   $("automations-open").hidden = home.host.headless === true;
   titles.clear();
-  fill($("sessions"), home.tabs, "No tabs are open.", (tab) => {
-    for (const pane of tab.panes) if (pane.session) titles.set(pane.session, pane.title);
-    return tabRow(tab);
-  });
+  fillTabs($("sessions"), home.tabs);
   // Runs nobody opened: their own section, there only while there are some (a host before protocol 29 sends none).
   const runs = home.runs?.rows ?? [];
   $("runs-section").hidden = runs.length === 0;
@@ -224,9 +242,17 @@ function failed(message) {
   }
 }
 
-async function load() {
+let loading = false;
+
+/**
+ * Asks the host for the home and draws it. `polled` is the timer's own ask, which leaves the Refresh button alone and draws with the lists'
+ * aria-live off, so a screen reader isn't read the whole home every `homePollMs`; a manual or navigation load announces as before.
+ */
+async function load(polled = false) {
   const mine = ++generation;
-  refreshButton.disabled = true;
+  loading = true;
+  if (!polled) refreshButton.disabled = true;
+  for (const id of ["sessions", "runs", "recent"]) $(id).setAttribute("aria-live", polled ? "off" : "polite");
   try {
     const response = await fetch("/api/home", { cache: "no-store", headers: { accept: "application/json" } });
     if (mine !== generation) return;
@@ -236,9 +262,18 @@ async function load() {
   } catch {
     if (mine === generation) failed("The host didn't answer. Check that you're on the tailnet, then Refresh.");
   } finally {
-    if (mine === generation) refreshButton.disabled = false;
+    if (mine === generation) {
+      refreshButton.disabled = false;
+      loading = false;
+    }
   }
 }
+
+// The groups follow the host while the home is open: Claude finishing, or asking, moves a tab. One home is two relays of the device's
+// four (`perDeviceLimit` in relay.ts) and the open tab view asks one every 5 seconds, so every 10 seconds is well inside the cap.
+setInterval(() => {
+  if (pollsHome({ visible: document.visibilityState === "visible", homeShown: !$("home").hidden, loading })) load(true);
+}, homePollMs);
 
 /** `#s=<session>`: a pane's zmx session name, which has a lowercase uuid (`Zmx.paneID`). */
 const sessionHash = /^#s=(varnick-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;

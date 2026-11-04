@@ -38,7 +38,13 @@ export interface HomePane {
   proxyNote: string | null;
   /** A Claude pane's standing message (option 04), for the push worker's notification. The page shows nothing of it: a tap lands on the terminal. */
   message: HomeMessage | null;
+  /** A Claude pane's turn (`Turn`'s word) and the seconds since it began, as of the host's answer: what groups the open tabs. Null for the other kinds, and for a word this page doesn't know. */
+  turn: string | null;
+  turnAge: number | null;
 }
+
+/** The turn words this page groups by: `Turn.swift`'s, the same set `turnWords` in tabrules.js words. */
+const turnNames = new Set(["working", "waiting", "permission", "question", "plan", "input", "background", "failed"]);
 
 /** A message's words as the worker shows them: the title one line of at most 80 characters, the body at most 300 (`PaneMessage` cuts the same). */
 export interface HomeMessage {
@@ -139,6 +145,7 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
   const mine = running && same(pane.control, device.id);
   const controller = mine ? "this phone" : optional(pane.controlName) ?? "another device";
   const clients = typeof pane.clients === "number" ? pane.clients : 0;
+  const turn = kind === "claude" && typeof pane.turn === "string" && turnNames.has(pane.turn) ? pane.turn : null;
   return {
     id: pane.id.toLowerCase(),
     kind,
@@ -157,6 +164,8 @@ export function shapePane(pane: Record<string, unknown>, device: Device): HomePa
     proxy: httpsAddress(pane.proxy),
     proxyNote: optional(pane.proxyNote),
     message: kind === "claude" ? shapeMessage(pane.message) : null,
+    turn,
+    turnAge: turn !== null && typeof pane.turnAge === "number" && Number.isInteger(pane.turnAge) && pane.turnAge >= 0 ? pane.turnAge : null,
   };
 }
 
