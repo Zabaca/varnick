@@ -334,7 +334,10 @@ Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031
 - **change what the panel shows and press keys in it,** while it is open and you are not typing in it;
 - **search your Claude sessions, browsing history and bookmarks, read other sessions' prompts and Claude's text, and open what they find,** which goes to Anthropic with the session (below);
 - **open panes beside its own:** a terminal, a Claude session that draws on your Claude subscription, a custom app whose code runs outside
-  Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below).
+  Claude Code's permission checks, a page that loads with your cookies for that site, or a file, and close the ones it opened (the limits are below);
+- **start a Claude session in any of your projects, in a new tab of its own** (`tab_open`): a repository under Settings › Claude › Project folders, behind your work, on your Claude subscription,
+  with your Skip permissions setting only when the session that opened it was itself started skipping permission checks. Varnick reads that session's name, and the opener's, from the small file Claude Code keeps
+  for each running session, and tells the new session who opened it, adding the opener's name, session id and project to its system prompt, so they go to Anthropic with it.
 
 The same holds in a tab that the phone or another Mac is driving: a session there can read every terminal screen, the board, and what this
 Mac's panel shows, including, when the Outline shows, its zoom path, its filter and the start of the bullet the caret is in, search and read sessions, and open panes in the tab for that machine. It

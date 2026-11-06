@@ -395,6 +395,13 @@ phone controls, too: the pane is added for that machine and shows there within a
 or terminal pane that machine has open at that moment. The reads work there as anywhere; what presses keys or
 changes the view does not (docs/agents/where-it-breaks.md, Panel access, has the list). Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
+A third, **`tab_open`**, starts a Claude session in one of your projects (a repository under Settings › Claude › Project folders, as `#project` finds it), in a new tab at the end of the strip,
+behind your work: the panel, the tab you are on and your keyboard stay as they were, and the panel may be hidden. It is an ordinary tab, so you can watch it, type into it
+and mark it Done apart from the session that opened it. It follows `pane_open`'s permission rule: it skips permission checks only while Skip permissions is on and the session that
+opened it was started skipping them. The session that opened it gets the new session's name, so it can send it work with `SendMessage`, and the new session is told which session opened it
+(its id and name, in one paragraph added to its system prompt, not to your prompt) so it can send its result back; that stops applying once you `/clear` the tab or move it to another conversation.
+A folder Claude Code hasn't trusted yet is refused: open a session there once and accept. It starts only in a project of yours, never in a worktree, a folder inside a project or Home.
+
 Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
 your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,
 this Mac's open sessions first), each result marked Claude session, page or bookmark, and a session with its project, Mac, when it was used, its tab and whether that is Open, Closed or Done,

@@ -2,7 +2,7 @@
 problem: sessions-cant-start-sessions-in-other-projects
 title: Option 01, with the new session told which session opened it and how to reach it, apart from its prompt
 summary: As option 01, but Varnick adds a short paragraph to the new session's system prompt, outside the prompt the caller wrote. It names the session that opened it by its session id (which never changes) and its `SendMessage` name at the open (read from Claude Code's file for the caller's own conversation, as option 01 reads the new one's) and its project, says it may send that session its result when it finishes or a question only that session can answer, and says what to do when the name has gone stale. The prompt goes to Claude as written. The opener and its name are saved with the pane and passed at every start of it, until the pane moves to another conversation.
-status: accepted
+status: shipped
 ---
 
 ## Solution

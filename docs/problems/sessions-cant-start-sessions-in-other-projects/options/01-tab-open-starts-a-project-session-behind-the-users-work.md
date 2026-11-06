@@ -2,7 +2,7 @@
 problem: sessions-cant-start-sessions-in-other-projects
 title: "`tab_open` starts a Claude session in a Project, in a new tab behind the user's work, and answers with the name `SendMessage` takes"
 summary: One more tool in the pane tools' set, so every Claude session in a Varnick pane gets it and the voice session, runs and headless hosts don't. It takes a project (as `#` names it, or its folder), an optional agent from that project and an optional first message, and opens a new tab at the end of the strip with one Claude pane there, started at once. The tab is not brought up: the panel, the tab on screen and the keyboard stay as they were. Permission checks follow `pane_open`'s rule unchanged. The reply gives the new pane's `s` id and the session's name as `ListAgents` and `SendMessage` know it, which Varnick reads from Claude Code's own file for the session id Varnick gave it, waiting up to 12 s. The new session is not told who opened it.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -103,3 +103,10 @@ status: accepted
 - **Open questions:**
   1. May a caller that skips ask for a session that doesn't (a `permissions: ask` argument, which can only ever lower)? Recommended: not now; option 05 is the stricter policy if the user wants it.
   2. Should the reply also give the `uds:` socket address, which `SendMessage` accepts and which a rename should not change? Recommended: no. The socket is named for the claude process (inferred from its form), so a Restart of the pane would change it, and the name is what `ListAgents` shows.
+
+Follow-ups from the review (2026-11-06, verdict merge), for this option and option 04, built together:
+
+- **should-fix:** the 12 s wait for the name is counted from inside the call, not from when the request arrived, so the controller lookup before it is not counted. If that takes over a second and the name never shows, the reply lands after the relay's 15 s timeout: the caller sees a timeout although the tab opened, and may call again and open a second tab. Count from the request's arrival.
+- **should-fix:** in Wrap mode, a new tab that starts a new row in the strip grows its header and resizes every pane, the one on screen included, as a paired Mac's new tab already does. Run the hand check in Wrap mode too, then accept and document it or stop the strip resizing panes for a tab added behind.
+- **should-fix:** the hand check after a restart (the full list in where-it-breaks, "By hand after a restart (tab_open)") is still owed.
+- **nits:** the comment on the pane tool set still names only `pane_open` and `pane_close`; where-it-breaks' "What the tools do not promise" doesn't yet cover `tab_open`, whose open question (a project's own settings making a helper skip permissions) now reaches every project; the privacy doc leaves out the opener's tab title, which the fallback paragraph sends; the session-file read takes the first match by session id without checking that its process is alive (the paragraph's lookup rule recovers).

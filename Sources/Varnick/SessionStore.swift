@@ -100,6 +100,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Optional so older records load.
     var openedBy: UUID?
 
+    /// The session that opened this one with `tab_open` (option 04 of `sessions-cant-start-sessions-in-other-projects`), as it was at the open. Every
+    /// start of the pane appends its paragraph to the system prompt until the pane moves to another conversation, which clears this
+    /// (`ClaudeSession.checkConversation`). Optional so older records load; an older build ignores it and starts the pane without the paragraph.
+    var opener: OpenerNote?
+
     /// Whether claude was last started skipping permissions (set by every real start, not an attach): `pane_open` gives a helper Skip only if its
     /// caller's is true. Optional so older records load; nil counts as no.
     var skippedAtStart: Bool?

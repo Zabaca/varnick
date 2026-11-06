@@ -653,7 +653,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                                                     outlineAppend: record.automation != nil && record.taskRun == nil && !isVoice
                                                                                         && OutlineAppendTool.isNamed(in: record.allowedTools ?? [])),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
-                                                 voice: isVoice)
+                                                 voice: isVoice, appendSystemPrompt: record.opener?.paragraph)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.
@@ -1280,6 +1280,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         left.title = left.titleRecord?.name ?? left.transcriptTitle ?? ""
         record.titleRecord = nil
         record.conversation = conversation
+        // The conversation that follows was not opened by that session (the running process keeps its paragraph; the next start passes none).
+        record.opener = nil
         onConversationChange(left, record.conversationID)
     }
 
