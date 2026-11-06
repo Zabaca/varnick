@@ -65,3 +65,12 @@ The switch is in the automation editor (Settings › Automations, for this Mac a
 - Task Runs that no automation started, and their own notice: they are started by hand or by a session, and are not the menu's problem.
 - Clearing or grouping the Done notices of runs that do tell (a "clear all" in the menu).
 - A run ended at its limit still tells no one (ADR 0040, Consequences); unchanged.
+
+## Further Notes
+
+Follow-ups from the review (2026-11-06, verdict merge):
+
+- **should-fix:** an older-build Mac can never save an edit to a headless host's automation that has the switch on. Its editor copy drops the field, so the host's stale check (which compares the switch) refuses the save every time. Leave the switch out of the stale comparison, or compare it only when the incoming value differs from the base.
+- **should-fix:** a quiet run taken over from the phone stays quiet on the phone until the next once-a-minute check notices the takeover. A turn that ends before that check pushes no Done. Have the push watcher ignore the quiet mark when a device is in control, or call the opened hook when the takeover first shows.
+- **should-fix:** the hand check after a restart (the Mac notifier, the editor switch, the headless start and listing, a real push) is still owed.
+- **nits:** the tick's local `switches` shadows `switches(for:)`; one concept has seven names, and the file key `notifyDone` matches the global Settings key; `automation_edit` says "Off when absent" where an absent field keeps the current value (as `enabled` does); a switch-only change saved to an older relay is a silent no-op; the `x ? true : nil` shape repeats in four places; the TypeScript half of the quiet rule lives in the push watcher, outside `pushrule.test.ts`'s guard.
