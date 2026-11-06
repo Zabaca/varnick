@@ -277,6 +277,7 @@ extension HeadlessPeerHost {
                                               starting: true, tabName: current.name)
                 session.automation = current.id.uuidString.lowercased()
                 session.runUnopened = true
+                session.quietDone = current.quietsDone(manual: manual) ? true : nil
                 session.dontAsk = permissions.dontAsk ? true : nil
                 session.allowedTools = current.allowedTools.isEmpty ? nil : current.allowedTools
                 claimed = (run, session)

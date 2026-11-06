@@ -64,16 +64,17 @@ export function cadenceOf(kind, before) {
   }
 }
 
-/** A new automation's form: Home, no agent, daily at 9:00, following Varnick's setting, on, the default limit. */
+/** A new automation's form: Home, no agent, daily at 9:00, following Varnick's setting, on, the default limit, no Done notice for a run that just finishes. */
 export const blankDraft = () => ({
   name: "", prompt: "", folder: null, agent: null, cadence: cadenceOf("daily"),
-  permissions: "varnick_setting", allowedTools: "", workingLimit: limits.workingDefault, enabled: true,
+  permissions: "varnick_setting", allowedTools: "", workingLimit: limits.workingDefault, enabled: true, tellWhenDone: false,
 });
 
 /** The form for an automation the Mac listed. Allowed tools are one rule a line. */
 export const draftOf = (automation) => ({
   name: automation.name, prompt: automation.prompt, folder: automation.folder, agent: automation.agent, cadence: { ...automation.cadence },
   permissions: automation.permissions, allowedTools: automation.allowedTools.join("\n"), workingLimit: automation.workingLimitMinutes, enabled: automation.enabled,
+  tellWhenDone: automation.tellWhenDone === true,
 });
 
 /** The allowed tool rules of a textarea: one a line, blanks dropped. */
@@ -114,6 +115,7 @@ export function saveBody(id, draft, original = null) {
     allowed_tools: rulesOf(draft.allowedTools),
     working_limit_minutes: Number(draft.workingLimit),
     enabled: draft.enabled,
+    tell_when_done: draft.tellWhenDone === true,
   };
   if (!id || original === null) return { kind: "save", ...(id ? { id } : {}), fields: all };
   const was = draftOf(original);
@@ -127,6 +129,7 @@ export function saveBody(id, draft, original = null) {
     allowed_tools: sameRules(all.allowed_tools, rulesOf(was.allowedTools)),
     working_limit_minutes: all.working_limit_minutes === Number(was.workingLimit),
     enabled: all.enabled === was.enabled,
+    tell_when_done: all.tell_when_done === was.tellWhenDone,
   };
   const fields = Object.fromEntries(Object.entries(all).filter(([name]) => !same[name]));
   return Object.keys(fields).length === 0 ? null : { kind: "save", id, fields };

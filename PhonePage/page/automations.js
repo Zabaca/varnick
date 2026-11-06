@@ -100,6 +100,7 @@ function renderDetail(s, automation) {
   fact(facts, "Permissions", permissionsText(automation, s.skip));
   if (automation.allowedTools.length > 0) fact(facts, "Allowed tools", automation.allowedTools.join(", "));
   fact(facts, "Working limit", `${automation.workingLimitMinutes} minutes`);
+  fact(facts, "When a run is done", automation.tellWhenDone ? "Tells you" : "No notification");
   view.append(facts);
 
   const actions = element("div", "auto-actions");
@@ -282,6 +283,7 @@ function updateFormFields(s) {
   $("auto-tools").value = s.draft.allowedTools;
   $("auto-limit").value = String(s.draft.workingLimit);
   $("auto-enabled").checked = s.draft.enabled;
+  $("auto-done").checked = s.draft.tellWhenDone;
   $("auto-project-filter").value = s.query;
   renderKinds(s);
   renderPermissions(s);
@@ -404,6 +406,7 @@ $("auto-prompt").addEventListener("input", (event) => { if (current) current.dra
 $("auto-tools").addEventListener("input", (event) => { if (current) current.draft.allowedTools = event.target.value; });
 $("auto-limit").addEventListener("input", (event) => { if (current) current.draft.workingLimit = event.target.value; });
 $("auto-enabled").addEventListener("change", (event) => { if (current) current.draft.enabled = event.target.checked; });
+$("auto-done").addEventListener("change", (event) => { if (current) current.draft.tellWhenDone = event.target.checked; });
 $("auto-project-filter").addEventListener("input", (event) => {
   if (!current) return;
   current.query = event.target.value;

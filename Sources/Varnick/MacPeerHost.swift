@@ -269,7 +269,7 @@ enum PeerOpenTabs {
                                                     takenAt: PaneFolder.modificationDate(PaneFolder.voiceTakenFile(for: record.id).path),
                                                     stopped: PaneFolder.hasStopped(for: record.id))
         return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, taskRun: record.taskRun != nil,
-                             automation: record.automation.map { $0.uuidString.lowercased() }, voiceListed: listed)
+                             automation: record.automation.map { $0.uuidString.lowercased() }, voiceListed: listed, quietDone: record.quietDone == true)
     }
 
     private static func pane(for record: SessionRecord, status: PeerSessionStatus?) -> PeerPane {

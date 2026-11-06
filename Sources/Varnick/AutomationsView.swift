@@ -39,6 +39,7 @@ struct AutomationsSettingsView: View {
                         current.permissions = saved.permissions
                         current.allowedTools = saved.allowedTools
                         current.workingLimitMinutes = saved.workingLimitMinutes
+                        current.tellsWhenDone = saved.tellsWhenDone
                         // A new cadence or zone starts from now: the slots before it are not caught up.
                         if resetsAnchor { current.lastSlot = Date() }
                     }
@@ -291,6 +292,9 @@ private struct AutomationEditor: View {
                     Text("\(draft.workingLimitMinutes) minutes").font(.system(size: 11.5).monospacedDigit())
                 }
                 .frame(width: 200)
+            }
+            field("Tell me when a run is done", detail: "Off, a run that finishes raises no notice here or on your phone until you open it; one that needs you, stops on an error or sends you a message still does. Run now always tells you.") {
+                Toggle("", isOn: $draft.tellsWhenDone).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             Text(warning)
                 .font(.system(size: 11.5)).foregroundStyle(.orange)

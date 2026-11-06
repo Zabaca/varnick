@@ -58,6 +58,7 @@ describe("the form", () => {
   test("starts in Home, daily at 9:00, following Varnick's setting and on", () => {
     const draft = blankDraft();
     expect(draft).toMatchObject({ folder: null, agent: null, cadence: { kind: "daily", hour: 9, minute: 0 }, permissions: "varnick_setting", enabled: true, workingLimit: limits.workingDefault });
+    expect(draft.tellWhenDone).toBe(false);
   });
 
   test("never offers Skip", () => {
@@ -114,6 +115,12 @@ describe("the form", () => {
       expect(saveBody(uuid, draft, off)).toEqual({ kind: "save", id: uuid, fields: { name: "Renamed" } });
     });
 
+    test("sends tell_when_done only when its box was changed", () => {
+      expect(body((draft) => { draft.prompt = "x"; })!.fields).not.toHaveProperty("tell_when_done");
+      expect(body((draft) => { draft.tellWhenDone = true; })).toEqual({ kind: "save", id: uuid, fields: { tell_when_done: true } });
+      expect(draftOf({ ...opened, tellWhenDone: true }).tellWhenDone).toBe(true);
+    });
+
     test("a changed folder is sent as the folder, Home as null, and a changed agent with it", () => {
       expect(body((draft) => { draft.folder = "/Users/me/Projects/y"; draft.agent = null; })).toEqual({ kind: "save", id: uuid, fields: { folder: "/Users/me/Projects/y", agent: null } });
       expect(body((draft) => { draft.folder = null; draft.agent = null; })).toEqual({ kind: "save", id: uuid, fields: { folder: null, agent: null } });
@@ -133,7 +140,7 @@ describe("the form", () => {
 
   test("a new automation sends every field, enabled included", () => {
     const sent = saveBody(null, { ...blankDraft(), name: "A", prompt: "B" });
-    expect(Object.keys(sent!.fields).sort()).toEqual(["agent", "allowed_tools", "cadence", "enabled", "folder", "name", "permissions", "prompt", "working_limit_minutes"]);
+    expect(Object.keys(sent!.fields).sort()).toEqual(["agent", "allowed_tools", "cadence", "enabled", "folder", "name", "permissions", "prompt", "tell_when_done", "working_limit_minutes"]);
   });
 
   test("a save sends the tools' field names, and what the server takes is what the page sends", () => {
@@ -142,7 +149,7 @@ describe("the form", () => {
       kind: "save", id: uuid,
       fields: {
         name: "Daily recap", prompt: "Run /daily-recap", folder: null, agent: null, cadence: { kind: "weekdays", hour: 15, minute: 0 }, permissions: "ask",
-        allowed_tools: ["WebSearch", "Bash(git status)"], working_limit_minutes: 30, enabled: true,
+        allowed_tools: ["WebSearch", "Bash(git status)"], working_limit_minutes: 30, enabled: true, tell_when_done: false,
       },
     });
     expect(parseFields(body.fields).ok).toBe(true);

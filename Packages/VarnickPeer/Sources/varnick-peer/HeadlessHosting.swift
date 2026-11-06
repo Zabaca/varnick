@@ -465,8 +465,10 @@ extension HeadlessPeerHost {
                 }
             }
             // A run nobody opened is marked (protocol 29), with its automation: the Macs keep it out of their lists and the phone lists it under Runs.
+            // The mark says when its Done is quiet, so the page server pushes none and the Mac holding its view raises none.
             let unopened = members.filter { $0.runUnopened == true }
-            let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first)
+            let mark = unopened.isEmpty ? nil : PeerRunMark(automation: unopened.compactMap(\.automation).first,
+                                                            quietDone: unopened.allSatisfy { $0.quietDone == true } ? true : nil)
             var tab = PeerTab(tab: id, name: record.name, layout: record.layout, panes: panes, run: mark)
             tab.settleControl()
             return tab

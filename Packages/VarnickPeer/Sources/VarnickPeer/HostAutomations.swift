@@ -203,6 +203,7 @@ public enum HostAutomationSave {
     private static func sameFields(_ a: Automation, _ b: Automation) -> Bool {
         a.name == b.name && a.task == b.task && a.input == b.input && a.cadence == b.cadence && a.timeZone == b.timeZone
             && a.permissions == b.permissions && a.allowedTools == b.allowedTools && a.workingLimitMinutes == b.workingLimitMinutes
+            && a.tellsWhenDone == b.tellsWhenDone
     }
 
     /// The list after a save. `sender` is the Mac that asked, which becomes the saver whatever the body says. A new automation's slots start from
@@ -246,6 +247,7 @@ public enum HostAutomationSave {
             current.permissions = automation.permissions
             current.allowedTools = automation.allowedTools
             current.workingLimitMinutes = automation.workingLimitMinutes
+            current.tellsWhenDone = automation.tellsWhenDone
             current.enabled = automation.enabled
             current.savedBy = sender
             if resets { current.lastSlot = now }

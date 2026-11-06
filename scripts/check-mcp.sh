@@ -197,7 +197,7 @@ if all(name in described for name in automation_tools):
     properties = create_schema.get("properties", {})
     if create_schema.get("required") != ["name", "prompt", "cadence"]:
         fail("automation_create requires %s, not name, prompt and cadence" % create_schema.get("required"))
-    for field in ("name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled"):
+    for field in ("name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled", "tell_when_done"):
         if field not in properties:
             fail("automation_create takes no %s" % field)
     if properties.get("cadence", {}).get("properties", {}).get("kind", {}).get("enum") != ["minutes", "hours", "daily", "weekdays", "weekly"]:
@@ -218,6 +218,9 @@ if all(name in described for name in automation_tools):
             fail("%s's description doesn't say an automation runs the Claude prompt Task" % name)
         if {"task", "input"} & set(described[name]["inputSchema"].get("properties", {})):
             fail("%s takes task or input, which arrive in slice 2" % name)
+    # "Tell me when a run is done" (option 01 of automation-runs-crowd-the-menu): a boolean, off when absent.
+    if properties.get("tell_when_done", {}).get("type") != "boolean":
+        fail("automation_create's tell_when_done is %s, not a boolean" % properties.get("tell_when_done"))
     limit = properties.get("working_limit_minutes", {})
     if (limit.get("minimum"), limit.get("maximum")) != (5, 1440):
         fail("automation_create's working limit is %s to %s, not 5 to 1440" % (limit.get("minimum"), limit.get("maximum")))

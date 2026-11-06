@@ -286,7 +286,7 @@ extension LauncherModel {
             // A mark with no automation (a run started by hand, or by a session) is held under the tab's own id.
             let automation = mark.automation.flatMap(UUID.init(uuidString:)) ?? id
             for pane in tab.sessions where pane.isClaude {
-                pane.markHostRun(of: automation)
+                pane.markHostRun(of: automation, quietDone: mark.quietDone == true)
                 pane.start()
             }
             changed = true

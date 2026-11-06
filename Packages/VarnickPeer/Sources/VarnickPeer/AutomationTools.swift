@@ -18,7 +18,7 @@ public enum AutomationTools {
     }
     public static let cadenceKinds = ["minutes", "hours", "daily", "weekdays", "weekly"]
     /// The arguments create and edit take; edit takes `id` besides.
-    public static let fieldNames = ["name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled"]
+    public static let fieldNames = ["name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled", "tell_when_done"]
 
     /// What the presets are, in the words a refusal of a cadence gives.
     public static var presets: String {
@@ -39,12 +39,13 @@ public enum AutomationTools {
         public var allowedTools: [String]?
         public var workingLimitMinutes: Int?
         public var enabled: Bool?
+        public var tellWhenDone: Bool?
 
         public init() {}
 
         public var isEmpty: Bool {
             name == nil && prompt == nil && cadence == nil && folder == nil && agent == nil && permissions == nil && allowedTools == nil
-                && workingLimitMinutes == nil && enabled == nil
+                && workingLimitMinutes == nil && enabled == nil && tellWhenDone == nil
         }
     }
 
@@ -127,6 +128,13 @@ public enum AutomationTools {
             case "true": fields.enabled = true
             case "false": fields.enabled = false
             default: problems.append("enabled is true or false")
+            }
+        }
+        if let text = given("tell_when_done") {
+            switch text.trimmingCharacters(in: .whitespaces).lowercased() {
+            case "true": fields.tellWhenDone = true
+            case "false": fields.tellWhenDone = false
+            default: problems.append("tell_when_done is true or false")
             }
         }
         // A folder taken from the calling session (create's, when none is given) may have gone since the session started.
@@ -263,12 +271,15 @@ public enum AutomationTools {
 
     // MARK: Changing
 
-    /// A new automation, as the editor's Add makes one: this Mac's zone, its slots starting from `now`, on unless the call said otherwise.
+    /// A new automation, as the editor's Add makes one: this Mac's zone, its slots starting from `now`, on unless the call said otherwise, and
+    /// telling when a run is done only when the call said so.
     public static func make(_ fields: Fields, in context: Context, now: Date, zone: TimeZone = .current) -> Automation {
-        Automation(name: fields.name ?? "", prompt: fields.prompt ?? "", folder: fields.folder ?? context.sessionFolder, agent: fields.agent ?? nil,
+        var automation = Automation(name: fields.name ?? "", prompt: fields.prompt ?? "", folder: fields.folder ?? context.sessionFolder, agent: fields.agent ?? nil,
                    cadence: fields.cadence ?? .daily(hour: 9, minute: 0), timeZone: zone.identifier, permissions: fields.permissions ?? nil,
                    allowedTools: fields.allowedTools ?? [], workingLimitMinutes: fields.workingLimitMinutes ?? Automation.defaultWorkingLimitMinutes,
                    enabled: fields.enabled ?? true, lastSlot: now, createdAt: now)
+        automation.tellsWhenDone = fields.tellWhenDone ?? false
+        return automation
     }
 
     /// Why a session may not edit this automation, nil when it may: one set to Skip is the user's choice for that prompt, and editing it would
@@ -298,6 +309,7 @@ public enum AutomationTools {
         set("allowed tools", fields.allowedTools, \.allowedTools)
         set("working limit", fields.workingLimitMinutes, \.workingLimitMinutes)
         set("on/off", fields.enabled, \.enabled)
+        set("tell when done", fields.tellWhenDone, \.tellsWhenDone)
         guard !changed.isEmpty else { return nil }
         let newZone = next.timeZone != zone.identifier
         next.timeZone = zone.identifier

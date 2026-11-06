@@ -290,8 +290,14 @@ public struct PeerPane: Codable, Equatable, Sendable {
 public struct PeerRunMark: Codable, Equatable, Sendable {
     /// The automation's id, a lowercase uuid.
     public var automation: String?
+    /// The run raises no Done while unopened (option 01 of `automation-runs-crowd-the-menu`): the host's page server pushes none for it, and the Mac that
+    /// holds a headless run's view raises none. Nil, which is left out of the wire, tells as before; an older host never sends it.
+    public var quietDone: Bool?
 
-    public init(automation: String? = nil) { self.automation = automation }
+    public init(automation: String? = nil, quietDone: Bool? = nil) {
+        self.automation = automation
+        self.quietDone = quietDone
+    }
 }
 
 /// Who a relay answers `tabs` for: what each may be told differs (`PeerTab.visible`).
@@ -321,13 +327,17 @@ public struct PeerTabRecord: Equatable, Sendable {
     public var automation: String?
     /// For an unopened voice session: whether it has taken a request (`VoiceSession.isListed`).
     public var voiceListed: Bool
+    /// The run's Done is quiet (the Mac's `SessionRecord.quietDone`), which the mark carries only while the run is unopened.
+    public var quietDone: Bool
 
-    public init(unopenedVoice: Bool = false, unopenedRun: Bool = false, taskRun: Bool = false, automation: String? = nil, voiceListed: Bool = false) {
+    public init(unopenedVoice: Bool = false, unopenedRun: Bool = false, taskRun: Bool = false, automation: String? = nil, voiceListed: Bool = false,
+                quietDone: Bool = false) {
         self.unopenedVoice = unopenedVoice
         self.unopenedRun = unopenedRun
         self.taskRun = taskRun
         self.automation = automation
         self.voiceListed = voiceListed
+        self.quietDone = quietDone
     }
 }
 
@@ -348,7 +358,7 @@ public enum PeerTabMarks {
     public static func choose(_ records: [PeerTabRecord]) -> Choice? {
         if records.contains(where: { ($0.unopenedRun && $0.taskRun) || ($0.unopenedVoice && !$0.voiceListed) }) { return nil }
         let runs = records.filter(\.unopenedRun)
-        return Choice(run: runs.isEmpty ? nil : PeerRunMark(automation: runs.compactMap(\.automation).first),
+        return Choice(run: runs.isEmpty ? nil : PeerRunMark(automation: runs.compactMap(\.automation).first, quietDone: runs.allSatisfy(\.quietDone) ? true : nil),
                       voice: records.contains(where: \.unopenedVoice) ? true : nil)
     }
 }

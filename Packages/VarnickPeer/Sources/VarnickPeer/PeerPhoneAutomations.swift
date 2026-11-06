@@ -100,6 +100,8 @@ public struct PeerPhoneAutomation: Codable, Equatable, Sendable {
     public var allowedTools: [String]
     public var workingLimitMinutes: Int
     public var enabled: Bool
+    /// "Tell me when a run is done" is on (`Automation.tellsWhenDone`).
+    public var tellWhenDone: Bool
     /// The zone the slots are in, an identifier.
     public var timeZone: String
     /// Unix seconds; nil while it is off or has none.
@@ -112,8 +114,8 @@ public struct PeerPhoneAutomation: Codable, Equatable, Sendable {
     public var editable: Bool
 
     public init(id: String, name: String, prompt: String, cadence: AutomationCadence, cadenceLabel: String, folder: String?, agent: String?,
-                permissions: String, allowedTools: [String], workingLimitMinutes: Int, enabled: Bool, timeZone: String, nextRun: Int?, going: Bool,
-                last: PeerPhoneLast?, mark: PeerPhoneMark?, editable: Bool) {
+                permissions: String, allowedTools: [String], workingLimitMinutes: Int, enabled: Bool, tellWhenDone: Bool, timeZone: String, nextRun: Int?,
+                going: Bool, last: PeerPhoneLast?, mark: PeerPhoneMark?, editable: Bool) {
         self.id = id
         self.name = name
         self.prompt = prompt
@@ -125,6 +127,7 @@ public struct PeerPhoneAutomation: Codable, Equatable, Sendable {
         self.allowedTools = allowedTools
         self.workingLimitMinutes = workingLimitMinutes
         self.enabled = enabled
+        self.tellWhenDone = tellWhenDone
         self.timeZone = timeZone
         self.nextRun = nextRun
         self.going = going
@@ -175,7 +178,7 @@ extension PhoneAutomations {
             id: automation.id.uuidString.lowercased(), name: automation.name, prompt: automation.prompt, cadence: automation.cadence,
             cadenceLabel: automation.cadence.label, folder: folder, agent: automation.agent,
             permissions: AutomationTools.permissionName(automation.permissions), allowedTools: automation.allowedTools,
-            workingLimitMinutes: automation.workingLimitMinutes, enabled: automation.enabled, timeZone: automation.timeZone,
+            workingLimitMinutes: automation.workingLimitMinutes, enabled: automation.enabled, tellWhenDone: automation.tellsWhenDone, timeZone: automation.timeZone,
             nextRun: automation.enabled ? next.map { Int($0.timeIntervalSince1970) } : nil, going: going, last: last,
             mark: automation.mark.map(mark), editable: AutomationTools.editRefusal(for: automation) == nil)
     }

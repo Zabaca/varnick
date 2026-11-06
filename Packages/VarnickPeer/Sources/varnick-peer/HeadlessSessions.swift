@@ -42,6 +42,9 @@ struct HeadlessSession: Codable, Equatable {
     var runUnopened: Bool?
     var dontAsk: Bool?
     var allowedTools: [String]?
+    /// The run raises no Done while unopened (option 01 of `automation-runs-crowd-the-menu`), decided at its start (`Automation.quietsDone`) and listed on
+    /// its tab's run mark. Optional, so an older relay reads the record as it did.
+    var quietDone: Bool?
 
     /// The tab the session is in, as a Mac names it.
     var tabID: String { tab ?? id }
