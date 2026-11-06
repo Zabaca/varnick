@@ -25,6 +25,12 @@ describe("the fields of a save", () => {
     expect(parseFields({ folder: null, agent: null })).toEqual({ ok: true, value: { folder: "", agent: "" } });
   });
 
+  test("tell_when_done goes as true or false text, and nothing else is taken for it", () => {
+    expect(parseFields({ tell_when_done: true })).toEqual({ ok: true, value: { tell_when_done: "true" } });
+    expect(parseFields({ tell_when_done: false })).toEqual({ ok: true, value: { tell_when_done: "false" } });
+    expect(parseFields({ tell_when_done: "true" }).ok).toBe(false);
+  });
+
   test("a field left out is left out, so an edit can send fewer", () => {
     expect(parseFields({ enabled: false })).toEqual({ ok: true, value: { enabled: "false" } });
     expect(parseFields({})).toEqual({ ok: true, value: {} });
@@ -125,6 +131,11 @@ describe("the host's reply", () => {
     expect(answered.body).toMatchObject({ ok: true, automations: [], problem: "Its automations file is from a newer Varnick" });
   });
 
+  test("says whether a run tells when it is done, off unless the Mac says true", () => {
+    const body = shapeListing(reply({ automations: [{ ...row, tellWhenDone: true }, { ...row, id: uuid(2) }, { ...row, id: uuid(3), tellWhenDone: "yes" }], timeZone: "UTC", skipPermissions: false })).body as any;
+    expect(body.automations.map((automation: { tellWhenDone: boolean }) => automation.tellWhenDone)).toEqual([true, false, false]);
+  });
+
   test("an automation set to Skip is listed and not editable", () => {
     const body = shapeListing(reply({ automations: [{ ...row, permissions: "skip" }], timeZone: "UTC", skipPermissions: false })).body as any;
     expect(body.automations[0]).toMatchObject({ permissions: "skip", editable: false });
@@ -149,7 +160,7 @@ describe("the host's reply", () => {
 
 describe("the Mac's own encoding", () => {
   // `PeerJSON.line` of a `PeerPhoneAutomationReply` (slot-check's rows: one on and going with a phone mark, one off and set to Skip, in a project's folder).
-  const encoded = {"automations":[{"agent":"reviewer","allowedTools":["WebSearch"],"cadence":{"hour":15,"kind":"weekdays","minute":0},"cadenceLabel":"Weekdays at 15:00","editable":true,"enabled":true,"going":true,"id":"f570ab71-fe73-4972-b02b-11fdf6475802","last":{"count":1,"slot":100,"state":"Done"},"mark":{"at":1793264400,"by":"Pixel","via":"phone","what":"Edited: prompt"},"name":"Daily recap","nextRun":1793372400,"permissions":"ask","prompt":"Run /daily-recap","timeZone":"UTC","workingLimitMinutes":30},{"agent":"reviewer","allowedTools":["WebSearch"],"cadence":{"hour":15,"kind":"weekdays","minute":0},"cadenceLabel":"Weekdays at 15:00","editable":false,"enabled":false,"folder":"/Users/u/Home","going":false,"id":"f570ab71-fe73-4972-b02b-11fdf6475802","mark":{"at":1793264400,"by":"Pixel","via":"phone","what":"Edited: prompt"},"name":"Daily recap","permissions":"skip","prompt":"Run /daily-recap","timeZone":"UTC","workingLimitMinutes":30}],"made":"f570ab71-fe73-4972-b02b-11fdf6475802","note":"Made","skipPermissions":false,"timeZone":"UTC"};
+  const encoded = {"automations":[{"agent":"reviewer","allowedTools":["WebSearch"],"cadence":{"hour":15,"kind":"weekdays","minute":0},"cadenceLabel":"Weekdays at 15:00","editable":true,"enabled":true,"going":true,"id":"f570ab71-fe73-4972-b02b-11fdf6475802","last":{"count":1,"slot":100,"state":"Done"},"mark":{"at":1793264400,"by":"Pixel","via":"phone","what":"Edited: prompt"},"name":"Daily recap","nextRun":1793372400,"permissions":"ask","prompt":"Run /daily-recap","tellWhenDone":false,"timeZone":"UTC","workingLimitMinutes":30},{"agent":"reviewer","allowedTools":["WebSearch"],"cadence":{"hour":15,"kind":"weekdays","minute":0},"cadenceLabel":"Weekdays at 15:00","editable":false,"enabled":false,"folder":"/Users/u/Home","going":false,"id":"f570ab71-fe73-4972-b02b-11fdf6475802","mark":{"at":1793264400,"by":"Pixel","via":"phone","what":"Edited: prompt"},"name":"Daily recap","permissions":"skip","prompt":"Run /daily-recap","tellWhenDone":false,"timeZone":"UTC","workingLimitMinutes":30}],"made":"f570ab71-fe73-4972-b02b-11fdf6475802","note":"Made","skipPermissions":false,"timeZone":"UTC"};
 
   test("is read whole: every field the page draws survives", () => {
     const answered = shapeListing({ ok: true, reply: { v: V, ok: true, phoneAutomations: encoded } });
@@ -158,7 +169,7 @@ describe("the Mac's own encoding", () => {
     expect(body.automations).toHaveLength(2);
     expect(body.automations[0]).toMatchObject({
       name: "Daily recap", prompt: "Run /daily-recap", cadence: { kind: "weekdays", hour: 15, minute: 0 }, cadenceLabel: "Weekdays at 15:00", folder: null, agent: "reviewer", permissions: "ask",
-      allowedTools: ["WebSearch"], workingLimitMinutes: 30, enabled: true, timeZone: "UTC", nextRun: 1793372400, going: true, editable: true,
+      allowedTools: ["WebSearch"], workingLimitMinutes: 30, enabled: true, tellWhenDone: false, timeZone: "UTC", nextRun: 1793372400, going: true, editable: true,
       last: { state: "Done", detail: null, slot: 100, count: 1 }, mark: { what: "Edited: prompt", by: "Pixel", via: "phone", at: 1793264400 },
     });
     expect(body.automations[1]).toMatchObject({ folder: "/Users/u/Home", permissions: "skip", enabled: false, nextRun: null, last: null, editable: false });

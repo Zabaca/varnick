@@ -310,6 +310,37 @@ anchored.record(claudeRun(behind.id, slot: at("2026-10-15 09:20"), state: .runni
 expect("a Run now is not a slot of the clock", anchored.anchor(for: behind) == at("2026-10-15 09:15"), show(anchored.anchor(for: behind)))
 expect("an older Run leaves the last slot as it is", TaskRunList().anchor(for: sample) == sample.anchor && anchored.anchor(for: sample) == sample.anchor)
 
+// "Tell me when a run is done": off for every automation unless it is switched on, written only when on, and decided at each run's start.
+expect("an automation starts with Done notices off", !sample.tellsWhenDone)
+var telling = sample
+telling.tellsWhenDone = true
+let doneFile = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-done-\(getpid()).json")
+try? AutomationFile.write([sample, telling], to: doneFile)
+let doneText = String(decoding: (try? Data(contentsOf: doneFile)) ?? Data(), as: UTF8.self)
+expect("only one that tells writes the field, so one left off is written as before", doneText.components(separatedBy: "\"notifyDone\"").count == 2, doneText)
+expect("both read back as they were", AutomationFile.read(at: doneFile) == .loaded([sample, telling]))
+try? Data(doneText.replacingOccurrences(of: "\"notifyDone\" : true,", with: "").utf8).write(to: doneFile)
+expect("a file saved before the switch reads every automation as off", AutomationFile.read(at: doneFile).automations.allSatisfy { !$0.tellsWhenDone })
+try? FileManager.default.removeItem(at: doneFile)
+expect("a slot's run of one that is off is quiet", sample.quietsDone(manual: false))
+expect("a Run now of it tells", !sample.quietsDone(manual: true))
+expect("one that is on tells either way", !telling.quietsDone(manual: false) && !telling.quietsDone(manual: true))
+// On the notifier's side, a quiet run is the "is done" switch off for that pane alone; the other kinds and the global switch are as they were.
+let globalSwitches = NoticeSwitches()
+expect("a quiet run's switches have Done off and the rest as given", globalSwitches.quietingDone(true) == NoticeSwitches(done: false)
+       && globalSwitches.quietingDone(false) == globalSwitches)
+expect("the global switch off stays off for a run that tells", NoticeSwitches(done: false).quietingDone(false).done == false)
+expect("a quiet run's finished turn raises nothing and clears what stood",
+       NoticeRule.decide(from: .working, to: .waiting, inControl: true, onScreen: false, switches: globalSwitches.quietingDone(true)) == .clear)
+expect("its dialog, its error and its message still raise",
+       NoticeRule.decide(from: .working, to: .permission, inControl: true, onScreen: false, switches: globalSwitches.quietingDone(true)) == .raise(.needsYou(.permission))
+       && NoticeRule.decide(from: .working, to: .failed, inControl: true, onScreen: false, switches: globalSwitches.quietingDone(true)) == .raise(.failed(nil))
+       && NoticeRule.decide(message: PaneMessage(title: "X draft waiting", id: 2), from: nil, first: false, inControl: true, onScreen: false,
+                            switches: globalSwitches.quietingDone(true)) == .raise(.message("X draft waiting")))
+expect("and a message that stands keeps its place when the quiet Done comes",
+       NoticeRule.merge(NoticeRule.decide(from: .working, to: .waiting, inControl: true, onScreen: false, switches: globalSwitches.quietingDone(true)),
+                        standing: .message("X draft waiting")) == NoticeDecision.none)
+
 // The automations file is at version 2.
 do {
     try AutomationFile.write([sample], to: file)
@@ -580,6 +611,18 @@ expect("turning it on starts the slots from now", switchedOn?.enabled == true &&
 let switchedOff = AutomationTools.switching(current, on: false, now: now)
 expect("turning it off keeps the slot", switchedOff?.enabled == false && switchedOff?.lastSlot == current.lastSlot)
 
+// "Tell me when a run is done" (option 01 of `automation-runs-crowd-the-menu`): off unless a call says true, and an edit that changes it says so.
+expect("a create leaves Done notices off", !AutomationTools.make(made!, in: toolsContext, now: now).tellsWhenDone)
+expect("tell_when_done true turns them on", AutomationTools.make(fields(plus(["tell_when_done": "true"]))!, in: toolsContext, now: now).tellsWhenDone
+       && !AutomationTools.make(fields(plus(["tell_when_done": " False "]))!, in: toolsContext, now: now).tellsWhenDone)
+expect("anything but true or false is refused, naming the field", problems(plus(["tell_when_done": "yes"])) == ["tell_when_done is true or false"])
+expect("it is one of the fields", AutomationTools.fieldNames.contains("tell_when_done"))
+let doneOn = edited(["tell_when_done": "true"], current)
+expect("an edit turns it on and names it alone", doneOn?.automation.tellsWhenDone == true && doneOn?.changed == ["tell when done"]
+       && doneOn.map { AutomationTools.markText(edited: $0.changed, to: $0.automation) } == "Edited: tell when done")
+expect("an edit to the value it has changes nothing", edited(["tell_when_done": "false"], current) == nil)
+expect("an edit of it alone keeps the slots", doneOn?.automation.lastSlot == current.lastSlot)
+
 // The mark rides on the automation, and the file is at version 2 and reads without it.
 let markedFile = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-mark-\(getpid()).json")
 var marked = current
@@ -848,6 +891,15 @@ disabledNew.id = UUID()
 disabledNew.enabled = false
 disabledNew.folder = "/nowhere"
 expect("a disabled automation is saved without its start being checked", !saved(HostAutomationSave.save(disabledNew, into: [], sender: hostMac, now: hostNow, in: hostEnvironment)).isEmpty)
+// "Tell me when a run is done" is an editor field there too: saved with the others, and not mistaken for a switch of the row.
+var tellingCopy = editorsCopy
+tellingCopy.tellsWhenDone = true
+let tellingSaved = saved(HostAutomationSave.save(tellingCopy, base: editorsCopy, into: [editorsCopy], sender: hostMac, now: hostNow, in: hostEnvironment)).first
+expect("an edit of it alone is saved, keeping the slots", tellingSaved?.tellsWhenDone == true && tellingSaved?.lastSlot == editorsCopy.lastSlot)
+var tellingMoved = editorsCopy
+tellingMoved.tellsWhenDone = true
+expect("a copy older than the host's change of it is refused", refused(HostAutomationSave.save(staleEdit, base: editorsCopy, into: [tellingMoved], sender: hostMac, now: hostNow, in: hostEnvironment))
+    == [HostAutomationSave.staleRefusal])
 
 // The `automations` value: same versions, and a newer automations or runs version is read as newer, with empty lists, never as a failure to decode.
 let listing = HostAutomations(automations: [host], runs: [TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .done)], timerAge: 30, skipPermissions: true)
@@ -1048,6 +1100,9 @@ expect("a project's folder is kept", PhoneAutomations.row(phoneSource, homeFolde
 phoneSource.permissions = .skip
 let skipRow = PhoneAutomations.row(phoneSource, homeFolder: "/x", next: nil, going: false, last: nil)
 expect("an automation set to Skip is not editable from the phone, and says skip", skipRow.permissions == "skip" && !skipRow.editable && phoneRow.editable)
+expect("the phone is told whether a run tells when done", !phoneRow.tellWhenDone
+       && PhoneAutomations.row({ var a = phoneSource; a.tellsWhenDone = true; return a }(), homeFolder: "/x", next: nil, going: false, last: nil).tellWhenDone)
+expect("and may send it as a field", PhoneAutomations.shapeProblems(["tell_when_done": "true"]).isEmpty)
 let phoneReply = PeerPhoneAutomationReply(automations: [phoneRow, skipRow], note: "Made", made: phoneRow.id, timeZone: "UTC", skipPermissions: false)
 expect("the reply round trips", PeerJSON.decode(PeerPhoneAutomationReply.self, from: PeerJSON.line(phoneReply)) == phoneReply)
 expect("the fields of a save are the tools' names, and never skip",

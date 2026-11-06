@@ -75,6 +75,13 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// board's Runs tab or a notice. Cleared when the tab is shown, or taken over (`ClaudeTab.isHiddenRun`).
     var runUnopened: Bool?
 
+    /// A run that raises no Done while unopened (option 01 of `automation-runs-crowd-the-menu`): set at its start from the automation's "Tell me when a
+    /// run is done" and whether it was Run now (`Automation.quietsDone`), or for a headless host's run from its tab's mark, and kept for the record's life.
+    /// Optional so older records load; nil, every pane but such a run, tells as before.
+    var quietDone: Bool?
+    /// Its Done is quiet now: only while nobody has opened it, so an opened run raises Done like any session.
+    var quietsDone: Bool { quietDone == true && runUnopened == true }
+
     /// The Task's Run whose step this pane is (option 01 of `work-cant-be-saved-or-chained`, slice 2a), for the whole life of the record. Like
     /// `automation`, it keeps the pane's MCP server to `notify` and `task_result`, and it hides the tab while `runUnopened`. Optional so older records
     /// load, and an older build ignores it.

@@ -99,7 +99,7 @@ final class SessionNotifier: ObservableObject {
         // A standing message folds a Done into itself, and an error or Needs you replaces it (`NoticeRule.merge`).
         var decision = NoticeRule.merge(
             NoticeRule.decide(from: old?.turn, to: new.turn, failure: new.failure, interrupted: new.interrupted, sameTurn: sameTurn,
-                              inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
+                              inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: switches(for: pane)),
             standing: notices.first { $0.id == pane.id }?.kind)
         // A Task step's pane raises Needs you and Messages only: its Done and its errors are the step's outcome, and the Run's own notice says how
         // the Run ended.
@@ -132,6 +132,12 @@ final class SessionNotifier: ObservableObject {
             unsettled[pane.id] = nil
             raise(kind, for: pane)
         }
+    }
+
+    /// Settings › Notifications' switches for a pane, with "is done" off for a run whose Done is quiet while nobody has opened it (option 01 of
+    /// `automation-runs-crowd-the-menu`).
+    private func switches(for pane: ClaudeSession) -> NoticeSwitches {
+        Settings.shared.noticeSwitches.quietingDone(pane.record.quietsDone)
     }
 
     func clear(_ id: UUID) {
@@ -167,7 +173,7 @@ final class SessionNotifier: ObservableObject {
             guard let turn = pane.turn else { continue }
             let decision = NoticeRule.merge(
                 NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
-                                  inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: Settings.shared.noticeSwitches),
+                                  inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: switches(for: pane)),
                 standing: notices.first { $0.id == id }?.kind)
             if case .raise(let kind) = decision, pane.record.taskRun == nil, !model.voiceSession.suppressesDone(pane) { raise(kind, for: pane) }
         }
@@ -278,7 +284,7 @@ final class SessionNotifier: ObservableObject {
             if notice.runLine != nil { return switches.allows(notice.kind) }
             // The notice of a run nobody opened outlives its ended process: choosing it resumes the conversation.
             guard let pane = model.claudePane(notice.id) else { return model.endedRun(notice.id) != nil && switches.allows(notice.kind) }
-            return switches.allows(notice.kind) && pane.away == nil && !model.isOnScreen(pane)
+            return switches.quietingDone(pane.record.quietsDone).allows(notice.kind) && pane.away == nil && !model.isOnScreen(pane)
         }
         if kept != notices { notices = kept }
     }

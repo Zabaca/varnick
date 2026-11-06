@@ -234,6 +234,9 @@ export class PushWatcher {
     this.busy = false;
     for (const tab of tabs) {
       if (typeof tab.tab !== "string") continue;
+      // A run nobody opened whose Done is quiet (option 01 of automation-runs-crowd-the-menu): its finished turn is no notice, as the Mac's "is done"
+      // switch off for that pane is. The mark goes when the run is opened, and so does the quiet. An older host never sends it.
+      const quietDone = isObject(tab.run) && tab.run.quietDone === true;
       for (const pane of objects(tab.panes)) {
         if (pane.kind !== "claude" || pane.running !== true || typeof pane.id !== "string") continue;
         const id = pane.id.toLowerCase();
@@ -256,13 +259,15 @@ export class PushWatcher {
         const between = before !== undefined && before.turn === pane.turn && since - before.since > sameTurnMs;
         if (between) this.world.log(`push watch: a turn ran between two looks (${pane.turn} again, ${Math.round((since - before!.since) / 1000)} s later)`);
         // A standing message folds a Done into itself, and an error or Needs you replaces it; otherwise the turn's decision alone.
-        const turnDecision = decide({
+        const decided = decide({
           old: between ? "working" : before?.turn ?? null,
           next: pane.turn,
           failure: pane.turn === "failed" && typeof pane.failure === "string" ? failureWord(pane.failure) : null,
           interrupted: pane.esc === true,
           sameTurn: !between && before !== undefined && Math.abs(before.since - since) <= sameTurnMs,
         });
+        // A quiet Done clears what stood, as the switch-off row of the table does, so a message folds no Done for anyone.
+        const turnDecision: Decision = quietDone && decided.action === "raise" && decided.notice.kind === "done" ? { action: "clear" } : decided;
         const decision = merge(turnDecision, this.standing.get(id)?.notice);
         if (turnDecision.action === "raise" && turnDecision.notice.kind === "done" && decision.action === "none") {
           // Folded into the message, for the subscriptions that allow messages; the others still get the Done (`effective`).

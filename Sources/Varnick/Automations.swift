@@ -402,6 +402,7 @@ extension LauncherModel {
         record.allowedTools = automation.allowedTools.isEmpty ? nil : automation.allowedTools
         record.automation = automation.id
         record.runUnopened = true
+        record.quietDone = automation.quietsDone(manual: manual) ? true : nil
         // Named after the automation, so a notice's menu line and the phone's notification say "Morning summary".
         record.titleRecord = TitleRecord(conversation: record.conversationID, name: automation.name)
         let session = makeSession(record, resuming: false, query: "")

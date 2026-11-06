@@ -50,6 +50,8 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
     duringAsk: null as (() => void) | null,
     /** While set, a send waits for it (a retry waiting out a Retry-After). */
     hold: null as Promise<void> | null,
+    /** The tab's run mark (protocol 29), when it is a run nobody opened. */
+    run: null as Record<string, unknown> | null,
   };
   const world: PushWorld = {
     now: () => now,
@@ -71,7 +73,7 @@ function rig(options: { subscribed?: Array<{ device: string; switches?: Partial<
         const messageField = message ? { message: { title: message.title, ...(message.body ? { body: message.body } : {}), id: message.at } } : {};
         return { kind: "claude", running: true, ...rest, ...messageField, turnAge: Math.floor((ran - state.began.get(p.id)!.at) / 1000) };
       });
-      const answer = { result: { ok: true as const, reply: { tabs: [{ tab, panes }] } }, startedAt };
+      const answer = { result: { ok: true as const, reply: { tabs: [{ tab, panes, ...(state.run ? { run: state.run } : {}) }] } }, startedAt };
       // What happens after the relay has read the files and before the answer is back.
       state.duringAsk?.();
       return answer;
@@ -1527,5 +1529,71 @@ describe("Claude Code's presence marker follows the subscriptions", () => {
     const r = rig({ listed: [tablet] });
     await r.watcher.tick();
     expect(r.state.marker.at(-1)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// A run whose Done is quiet (option 01 of automation-runs-crowd-the-menu)
+
+describe("a run whose Done is quiet", () => {
+  let writes = 100;
+  const quiet = { automation: "11111111-0000-4000-8000-000000000001", quietDone: true };
+  async function say(r: ReturnType<typeof rig>, title = "X draft waiting") {
+    r.state.panes[0] = { ...r.state.panes[0], message: { title, at: r.now() } };
+    r.state.dates.set(pane, (writes += 1));
+    await r.advance(tickMs);
+  }
+
+  test("a finished turn of a tab whose run mark says so pushes nothing and leaves no notice", async () => {
+    const r = rig();
+    r.state.run = quiet;
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends).toEqual([]);
+    expect(r.watcher.noticeFor(pane)).toBeUndefined();
+  });
+
+  test("a run mark without it tells as before", async () => {
+    const r = rig();
+    r.state.run = { automation: quiet.automation };
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
+  });
+
+  test("its dialog and its error are still pushed", async () => {
+    for (const [word, extra, kind] of [["permission", {}, "permission"], ["failed", { failure: "rate_limit" }, "failed"]] as const) {
+      const r = rig();
+      r.state.run = quiet;
+      await finishTurn(r, word, extra);
+      await r.advance(doneSettleMs * 3);
+      expect(r.state.sends.map((s) => s.payload.kind)).toEqual([kind]);
+    }
+  });
+
+  test("its message is still pushed, and the Done after it reaches no subscription, Messages off or on", async () => {
+    const r = rig({ subscribed: [{ device: phone }, { device: tablet, switches: { messages: false } }] });
+    r.state.run = quiet;
+    await r.watcher.tick();
+    await say(r);
+    await r.advance(urgentSettleMs * 2);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[phone, "message"]]);
+    await finishTurn(r);
+    await r.advance(doneSettleMs * 6);
+    expect(r.state.sends.map((s) => [s.device, s.payload.kind])).toEqual([[phone, "message"]]);
+  });
+
+  test("once the run is opened the mark goes, and its next Done is pushed like any pane's", async () => {
+    const r = rig();
+    r.state.run = quiet;
+    await finishTurn(r);
+    r.state.run = null;
+    r.state.panes[0] = { ...r.state.panes[0], turn: "working" };
+    r.state.dates.set(pane, 2);
+    await r.advance(tickMs);
+    await finishTurn(r);
+    r.state.dates.set(pane, 3);
+    await r.advance(doneSettleMs * 3);
+    expect(r.state.sends.map((s) => s.payload.kind)).toEqual(["done"]);
   });
 });

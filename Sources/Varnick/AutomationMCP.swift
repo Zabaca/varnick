@@ -84,6 +84,7 @@ enum AutomationMCP {
             "working_limit_minutes": ["type": "integer", "minimum": AutomationTools.workingLimits.lowerBound, "maximum": AutomationTools.workingLimits.upperBound,
                                       "description": "A run still working after this is ended, its conversation kept. \(Automation.defaultWorkingLimitMinutes) when absent."],
             "enabled": ["type": "boolean", "description": "On when absent. Turning one on starts its slots from now."],
+            "tell_when_done": ["type": "boolean", "description": "Whether a run that just finishes tells the user Done (a notice on the Mac, a push to the phone) while nobody has opened it. Off when absent: a run that needs the user, stops on an error or sends a message with notify tells them either way, so leave it off unless they ask to hear when each run ends."],
         ]
     }
 

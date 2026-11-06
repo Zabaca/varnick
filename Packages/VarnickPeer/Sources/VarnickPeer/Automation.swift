@@ -18,6 +18,9 @@ public struct Automation: Codable, Identifiable, Equatable {
     public var allowedTools: [String]
     /// How long a run's turn may work, or run background work, before it is ended.
     public var workingLimitMinutes: Int
+    /// "Tell me when a run is done" (option 01 of `automation-runs-crowd-the-menu`): true only when on, and left out of the file otherwise, so every
+    /// automation saved before it, or left at the default, reads as off. Read and set through `tellsWhenDone`.
+    public var notifyDone: Bool?
     public var enabled: Bool
     /// The newest slot a check has fired or recorded for. Slots after it are the next check's to judge, with the newest Run's slot if that is newer.
     public var lastSlot: Date?
@@ -76,6 +79,16 @@ public struct Automation: Codable, Identifiable, Equatable {
     }
 
     public var zone: TimeZone { TimeZone(identifier: timeZone) ?? .current }
+
+    /// Whether a run that finishes raises Done while nobody has opened it. Off by default.
+    public var tellsWhenDone: Bool {
+        get { notifyDone == true }
+        set { notifyDone = newValue ? true : nil }
+    }
+
+    /// Whether a run started now raises no Done while unopened, decided at its start and kept on its record: a slot's run of an automation with the
+    /// switch off is quiet, and a Run now never is, since the user started it by hand and waits to see it end.
+    public func quietsDone(manual: Bool) -> Bool { !tellsWhenDone && !manual }
 
     /// Fires only when its Task is the Claude prompt (the only one an automation can name yet), its input fits, and the cadence is one the presets have.
     public var isRunnable: Bool {

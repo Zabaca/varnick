@@ -27,6 +27,14 @@ public struct NoticeSwitches: Equatable, Sendable {
         self.messages = messages
     }
 
+    /// The switches for one pane: a run whose Done is quiet (option 01 of `automation-runs-crowd-the-menu`) has "is done" off, the rest as given. The
+    /// table is unchanged, so a quiet Done clears what stood as the switch turned off does, and the phone's copy of the table needs no change.
+    public func quietingDone(_ quiet: Bool) -> NoticeSwitches {
+        var switches = self
+        if quiet { switches.done = false }
+        return switches
+    }
+
     public func allows(_ kind: NoticeKind) -> Bool {
         switch kind {
         case .needsYou: needsMe

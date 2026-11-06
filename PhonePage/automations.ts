@@ -26,7 +26,7 @@ export type ActBody =
 
 const idOf = (value: unknown): string | null => (typeof value === "string" && uuidPattern.test(value) ? value.toLowerCase() : null);
 const permissionNames: readonly string[] = permissionChoices.map((choice: { value: string }) => choice.value);
-const fieldNames = ["name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled"];
+const fieldNames = ["name", "prompt", "cadence", "folder", "agent", "permissions", "allowed_tools", "working_limit_minutes", "enabled", "tell_when_done"];
 
 /** Control characters other than a prompt's own line breaks and tabs, and a name's or path's any. */
 const hasControl = (text: string, allowLines: boolean): boolean => {
@@ -94,6 +94,10 @@ export function parseFields(value: unknown): Parsed<Record<string, string>> {
     if (typeof value.enabled !== "boolean") return refuse("On is true or false");
     out.enabled = String(value.enabled);
   }
+  if (value.tell_when_done !== undefined) {
+    if (typeof value.tell_when_done !== "boolean") return refuse("Tell me when a run is done is true or false");
+    out.tell_when_done = String(value.tell_when_done);
+  }
   return { ok: true, value: out };
 }
 
@@ -157,6 +161,8 @@ export interface Automation {
   allowedTools: string[];
   workingLimitMinutes: number;
   enabled: boolean;
+  /** "Tell me when a run is done" is on: off for a Mac that doesn't say. */
+  tellWhenDone: boolean;
   timeZone: string;
   nextRun: number | null;
   going: boolean;
@@ -212,6 +218,7 @@ function shapeAutomation(row: Record<string, unknown>): Automation | null {
     allowedTools: Array.isArray(row.allowedTools) ? row.allowedTools.flatMap((rule) => (typeof rule === "string" ? [line(rule, limits.rule * 2) ?? ""] : [])).slice(0, 200) : [],
     workingLimitMinutes: workingLimit,
     enabled: row.enabled,
+    tellWhenDone: row.tellWhenDone === true,
     timeZone: line(row.timeZone, 60) ?? "",
     nextRun: whole(row.nextRun),
     going: row.going === true,

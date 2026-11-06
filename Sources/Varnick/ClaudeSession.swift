@@ -1652,10 +1652,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     /// A view of a run a headless host started for this Mac (`LauncherModel.adoptHostRuns`): marked as the automation's, and unopened, so the hidden-tab
-    /// rule keeps its tab out of sight until it is opened.
-    func markHostRun(of automation: UUID) {
+    /// rule keeps its tab out of sight until it is opened, and quiet when its Done is (`PeerRunMark.quietDone`).
+    func markHostRun(of automation: UUID, quietDone: Bool) {
         record.automation = automation
         record.runUnopened = true
+        record.quietDone = quietDone ? true : nil
     }
 
     /// Record with the current label, for saving.

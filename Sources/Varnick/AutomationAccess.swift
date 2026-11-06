@@ -231,6 +231,7 @@ final class AutomationAccess {
                 "allowed_tools": automation.allowedTools,
                 "working_limit_minutes": automation.workingLimitMinutes,
                 "enabled": automation.enabled,
+                "tell_when_done": automation.tellsWhenDone,
                 "time_zone": automation.timeZone,
                 "next_run": automation.enabled ? date(AutomationSlot.next(automation.cadence, zone: automation.zone, after: Date())) : NSNull(),
                 "run_going": going,

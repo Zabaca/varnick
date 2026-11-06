@@ -104,6 +104,14 @@ expect("tab: an automation's unopened run keeps its run mark and no voice mark",
 expect("tab: an unopened run of no automation is a mark with none", PeerTabMarks.choose([PeerTabRecord(unopenedRun: true)]) == PeerTabMarks.Choice(run: PeerRunMark(), voice: nil))
 expect("tab: a Task's unopened step is left out", PeerTabMarks.choose([taskStep]) == nil)
 expect("tab: a pane beside the voice session doesn't change its choice", PeerTabMarks.choose([voiceAfter, voiceOpened]) == PeerTabMarks.Choice(run: nil, voice: true))
+// A run whose Done is quiet says so on its mark (option 01 of `automation-runs-crowd-the-menu`), and one that tells leaves the field out.
+let quietRun = PeerTabRecord(unopenedRun: true, automation: "11111111-0000-4000-8000-000000000001", quietDone: true)
+expect("tab: a quiet run's mark says its Done is quiet",
+       PeerTabMarks.choose([quietRun]) == PeerTabMarks.Choice(run: PeerRunMark(automation: "11111111-0000-4000-8000-000000000001", quietDone: true), voice: nil))
+expect("tab: a run that tells has no quiet field", PeerTabMarks.choose([automationRun])?.run?.quietDone == nil)
+expect("tab: a quiet record that was opened marks nothing", PeerTabMarks.choose([PeerTabRecord(quietDone: true)]) == PeerTabMarks.Choice(run: nil, voice: nil))
+expect("tab: the field is left out of the wire when nil, so an older reader sees the mark it knew",
+       !PeerJSON.line(PeerRunMark(automation: "a")).contains("quietDone") && PeerJSON.decode(PeerRunMark.self, from: PeerJSON.line(PeerRunMark(automation: "a", quietDone: true)))?.quietDone == true)
 
 // A working turn whose request was given up on (the deadline, or a cancel) is busy, not replaceable: a new session would end it.
 func decideAbandoned(_ name: String, _ turn: PaneTurn?, abandoned: TimeInterval?, at seconds: TimeInterval, is expected: VoiceSession.Decision) {
