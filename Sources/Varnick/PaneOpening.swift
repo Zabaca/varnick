@@ -3,7 +3,7 @@ import Foundation
 import VarnickPeer
 
 // `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`), the running Varnick's half: a session adds a pane beside its own, in its own
-// tab on this Mac, and closes the ones it opened. The request is Panel access's (`PanelRequest`) and `PanelAccess.run` routes it here after its own checks;
+// tab on this Mac, and closes the ones it opened (`tab_open` is `TabOpening`'s). The request is Panel access's (`PanelRequest`) and `PanelAccess.run` routes it here after its own checks;
 // the relay half is `PaneMCP`. The rules are in docs/agents/where-it-breaks.md, Panel access. Option 04 adds the tab another machine controls.
 
 extension PanelAccess {
@@ -28,11 +28,13 @@ extension PanelAccess {
             case .here, .nobody: break
             }
         }
-        if controller == nil, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
+        // `tab_open` changes no layout of the calling tab, so a lock on it does not stop it.
+        if controller == nil, request.tool != PaneMCP.tabOpen, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
         do {
             switch request.tool {
             case PaneMCP.open: return try open(request.args, model, tab: tab, caller: session, controller: controller)
             case PaneMCP.close: return try await close(request.args, model, tab: tab, caller: session, controller: controller)
+            case PaneMCP.tabOpen: return try await tabOpen(request.args, model, tab: tab, caller: session, controller: controller)
             default: throw PanelRefusal.unknownTool(request.tool)
             }
         } catch let refusal as PanelRefusal where controller != nil {
@@ -135,7 +137,7 @@ extension PanelAccess {
         return URL(fileURLWithPath: given).standardizedFileURL.path
     }
 
-    private static func prompt(_ args: PanelArguments) throws -> String {
+    static func prompt(_ args: PanelArguments) throws -> String {
         let text = args["prompt"] ?? ""
         guard text.utf8.count <= longestPrompt else { throw PanelRefusal.bad("prompt is at most \(longestPrompt) bytes") }
         return text

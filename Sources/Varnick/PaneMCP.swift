@@ -1,7 +1,8 @@
 import Foundation
 
 // Pane tools for sessions (option 01 of `panes-open-only-by-hand-at-a-mac`), the relay half: what `Varnick --mcp --panes` lists. Their calls travel as
-// Panel access's requests (`PanelRequest`, no new request type) and are answered by `PanelAccess`, in `PaneOpening`. The server never reads or acts.
+// Panel access's requests (`PanelRequest`, no new request type) and are answered by `PanelAccess`, in `PaneOpening` (`tab_open`, option 01 of
+// `sessions-cant-start-sessions-in-other-projects`, in `TabOpening`). The server never reads or acts.
 
 /// The kinds `pane_open` takes, in the order its schema lists them.
 enum OpenedPaneKind: String, CaseIterable {
@@ -18,12 +19,13 @@ enum OpenedPanePlace: String, CaseIterable {
 enum PaneMCP {
     static let open = "pane_open"
     static let close = "pane_close"
+    static let tabOpen = "tab_open"
 
-    /// The two tools, as `tools/list` gives them.
-    static var tools: [[String: Any]] { [openTool, closeTool] }
+    /// The three tools, as `tools/list` gives them.
+    static var tools: [[String: Any]] { [openTool, closeTool, tabOpenTool] }
 
     /// The names `tools` lists: the only ones a call may use.
-    static let names: Set<String> = [open, close]
+    static let names: Set<String> = [open, close, tabOpen]
 
     private static func tool(_ name: String, summary: String, properties: [String: Any], required: [String] = []) -> [String: Any] {
         var schema: [String: Any] = ["type": "object", "properties": properties]
@@ -60,4 +62,24 @@ enum PaneMCP {
             + "user has focused since: the first time the user focuses a pane a session opened, it is theirs. In a tab that another Mac or the phone controls it closes the pane there too (the controller sees it go), but not a Claude or terminal pane that machine has open right now.",
         properties: ["id": ["type": "string", "description": "The pane's id (s…) from pane_open."]],
         required: ["id"])
+
+    private static let tabOpenTool = tool(tabOpen,
+        summary: "Opens a new tab at the end of the strip with one Claude session in one of the user's Projects (a repository under Settings > Claude > Project folders, "
+            + "named as the panel's #project word names it), started at once, and answers the new pane's id (s…) and the session's name as SendMessage and ListAgents know it. "
+            + "The tab is not brought up: the panel, the tab on screen and the keyboard stay as they were, and the panel may be hidden. It is an ordinary tab: the user can "
+            + "watch it in the strip and on the board, type into it, answer it and mark it Done, which closes it alone; it raises its own notices and lists these tools too. "
+            + "`project` is the folder's name, or group/name when two projects share a name, or the Project's absolute path; a worktree, a folder inside a project, the "
+            + "home folder and any other folder are refused, and so is a folder Claude Code has not trusted yet (the user opens a session there once and accepts). "
+            + "A new session never skips permission checks when this session does not; otherwise it asks before its tools in its own tab. Its first message is `prompt`, "
+            + "or it waits for one. It is told which session opened it and how to reach it (that session's id and name), so it can send its result back; it is told "
+            + "nothing else. Open only what the user asked for or the work plainly needs: a Claude session draws on the user's Claude subscription and memory, and "
+            + "nothing limits how many are opened. To work with it, send it work with SendMessage to the name in the reply; with notify_when_idle you get one notice "
+            + "when it has nothing left to do (only from this session's main conversation, not from a subagent). Its name can change if it restarts or the user renames it: "
+            + "look it up again with `claude agents --json`. The name may be missing from the reply when the session was still starting; the tab is open all the same. "
+            + "pane_close does not close it (it is in another tab). This Mac's projects only.",
+        properties: [
+            "project": ["type": "string", "description": "The Project: its folder's name, or group/name when two projects share a name, or its absolute path."],
+            "agent": ["type": "string", "description": "A Claude Code agent found in that project's folder, as @name would find it there."],
+            "prompt": ["type": "string", "description": "The new session's first message, at most 20000 bytes. Left out, the session waits for one."],
+        ], required: ["project"])
 }

@@ -198,14 +198,19 @@ public enum ClaudeCommand {
     /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
     /// start like `taskResult`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
+    /// `appendSystemPrompt` is the paragraph a session opened with `tab_open` is told who opened it (`OpenerNote`), kept on the record and passed at every
+    /// start until the pane moves to another conversation; Claude Code records the system prompt with the conversation at its first request and resends
+    /// that record on a resume, so a later start's text matters only after a compaction.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
-                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false) -> [String] {
+                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
+                                 appendSystemPrompt: String? = nil) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
             + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
+            + (appendSystemPrompt.map { ["--append-system-prompt", $0] } ?? [])
             + (conversation.map { ["--resume", $0] }
                 ?? ["--session-id", sessionID] + (prompt.isEmpty ? [] : ["--", operand(prompt)]))
     }

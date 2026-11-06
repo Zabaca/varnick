@@ -347,13 +347,13 @@ if searching:
     if schema.get("required") != ["query"] or set(properties) != {"query", "project", "from", "to"} or any(properties.get(name, {}).get("type") != "string" for name in properties):
         fail("search is %s: string query (required), project, from and to" % schema)
 
-# The pane tools (option 01 of panes-open-only-by-hand-at-a-mac): their own set. Named alone it lists the two; with the others it comes last; with none named the server still
-# lists the screen tools alone. Their calls travel as Panel access's requests. NEVER call one of these tools here: with Varnick running, the call reaches
+# The pane tools (option 01 of panes-open-only-by-hand-at-a-mac, and tab_open from option 01 of sessions-cant-start-sessions-in-other-projects): their own set. Named alone it
+# lists the three; with the others it comes last; with none named the server still lists the screen tools alone. Their calls travel as Panel access's requests. NEVER call one of these tools here: with Varnick running, the call reaches
 # it and opens a real pane. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
-pane_tools = ["pane_open", "pane_close"]
+pane_tools = ["pane_open", "pane_close", "tab_open"]
 only_panes = listed(["--panes"])
 if only_panes != pane_tools:
-    fail("--panes lists %s, not pane_open and pane_close" % only_panes)
+    fail("--panes lists %s, not pane_open, pane_close and tab_open" % only_panes)
 if listed(["--screen", "--panel", "--panes"]) != screen + only_panel + pane_tools:
     fail("--screen --panel --panes lists %s, not the screen tools, Panel access's and the pane tools" % listed(["--screen", "--panel", "--panes"]))
 if listed(["--notify", "--search", "--panes"]) != ["notify"] + voice_tools + pane_tools:
@@ -378,6 +378,14 @@ if all(name in pane_described for name in pane_tools):
     close_schema = pane_described["pane_close"]["inputSchema"]
     if close_schema.get("required") != ["id"] or close_schema.get("properties", {}).get("id", {}).get("type") != "string":
         fail("pane_close is %s: a required string id" % close_schema)
+    tab_schema = pane_described["tab_open"]["inputSchema"]
+    tab_properties = tab_schema.get("properties", {})
+    if tab_schema.get("required") != ["project"] or set(tab_properties) != {"project", "agent", "prompt"} or any(tab_properties[name].get("type") != "string" for name in tab_properties):
+        fail("tab_open is %s: a required string project and optional string agent and prompt, nothing else (no folder, place or permission argument)" % tab_schema)
+    tab_description = pane_described["tab_open"]["description"]
+    for phrase in ("not brought up", "Project", "SendMessage", "never skips permission checks when this session does not", "Open only what the user asked for"):
+        if phrase not in tab_description:
+            fail("tab_open's description doesn't say %r" % phrase)
 
 # outline_append (ADR 0040's amendment of 2026-10-29): the one write an automation's run may make to the Outline, listed only when the app names
 # --outline-append, which it does for a run whose allowed tools name the tool. Named with --notify (a run's set) it lists notify then outline_append;
@@ -416,8 +424,8 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
                         ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
                         (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list"),
-                        ([], "pane_open"), ([], "pane_close"), (["--panel"], "pane_open"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
-                        (["--search"], "pane_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
+                        ([], "pane_open"), ([], "pane_close"), ([], "tab_open"), (["--panel"], "pane_open"), (["--panel"], "tab_open"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
+                        (["--search"], "pane_open"), (["--search"], "tab_open"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
                         ([], "outline_append"), (["--notify"], "outline_append"), (["--panel"], "outline_append"), (["--automations"], "outline_append"), (["--outline-append"], "notify"), (["--outline-append"], "outline_act"),
                         ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])

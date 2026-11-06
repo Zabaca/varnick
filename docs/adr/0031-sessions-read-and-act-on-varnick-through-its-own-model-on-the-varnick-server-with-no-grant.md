@@ -130,3 +130,17 @@ At the user's word (option 01 of `sessions-cant-search-sessions`), Panel access 
 - **Log.** The tool, the outcome's kind, counts and the time, never a word of a query, a name, an address or a conversation id.
 
 What the tools promise and what they do not is in docs/agents/where-it-breaks.md, Panel access; what leaves the Mac is in docs/privacy-and-security.md.
+
+## Amendment: a session opens a tab in another project, and is told who opened it (2026-11-06)
+
+At the user's word (options 01 and 04 of `sessions-cant-start-sessions-in-other-projects`), the pane tools gain `tab_open`. Until now a session could add a pane only beside its own, in its own tab and project; this adds a tab, in a project of the user's, and reads one more thing of Claude Code's.
+
+- **Which sessions get it.** The `--panes` set lists it after `pane_open` and `pane_close`, so the rule of the amendment of 2026-10-17 covers it with no change: every Claude session in a Varnick pane but the voice session, a run, a Task step and a headless host's session. No switch. A session gains it at its start.
+- **What it does.** It starts a Claude session in a Project (a git repository under Settings › Claude › Project folders, as the panel's `#project` finds it), in a new tab at the end of the strip, not brought up, with an optional agent from that project and an optional first message. A worktree, a folder inside a project, Home and a folder Claude Code has not trusted are refused. It adds a tab where `pane_open` adds a pane, so a session can now start a session in any project of the user's; it cannot start one anywhere else.
+- **Permissions are `pane_open`'s rule, unchanged.** The new session skips permission checks only while Skip permissions is on and the calling session was itself started skipping them; otherwise it asks before its tools in its own tab. `pane_open` itself is unchanged.
+- **What Varnick reads.** Claude Code keeps a small file for each running interactive session in its own `sessions` folder (undocumented, read on 2.1.319). Varnick reads from it only the name of the entry whose session id it asks for: the new session's, to give the caller the name `SendMessage` takes, and the caller's own, for the paragraph below. Nothing else in the file is kept.
+- **Who opened it.** Varnick appends one paragraph to the new session's system prompt (`--append-system-prompt`, never to the prompt the caller wrote): the opener's session id, its name at the open and its project, and what to do when the name has gone stale (look the id up with `claude agents --json`; if there is no such entry, say so and never send to a name the failure suggests). It is kept on the pane's record and passed at every start of the pane until the pane moves to another conversation (`/clear`, `/resume`). What reaches Anthropic grows by the opener's name and project.
+- **Same route.** The call is Panel access's request with a new tool name, so the request version stays and no peer protocol changes. It is answered in a tab another machine controls (`PanelAccess.answersControlled`) and opens the tab on this Mac, which that machine finds in this Mac's open tabs.
+- **Log.** The tool, the outcome's kind, whether the new session's name and the opener's were found, and the time; never a project, a prompt, an agent or a name.
+
+What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Panel access; what leaves the Mac is in docs/privacy-and-security.md.

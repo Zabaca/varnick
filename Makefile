@@ -82,7 +82,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice check-work apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice check-work check-open apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -201,6 +201,13 @@ check-voice:
 # check-slots; run from the checkout's root, where it finds the script.
 check-work:
 	@swift run --package-path Packages/VarnickPeer work-check $(CURDIR)/.claude/skills/work/work.sh
+
+# The pure parts of `tab_open` (`TabOpen`, `ClaudeSessionFile`, `OpenerNote`, Packages/VarnickPeer; option 01 of sessions-cant-start-sessions-in-other-projects)
+# and of the note option 04 gives the session it opens: which project a word means, a session's name picked out of sample session files by id (in a scratch
+# folder), the paragraph and its saved form, and where the appended system prompt goes in the claude command. No Varnick, no claude and no network. Built
+# the same way as check-slots.
+check-open:
+	@swift run --package-path Packages/VarnickPeer open-check
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.
