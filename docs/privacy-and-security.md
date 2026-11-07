@@ -411,6 +411,26 @@ they open draws on your Claude subscription. Whether it skips permission checks 
 docs/agents/where-it-breaks.md (Panel access). Varnick's log holds the tool, the kind of pane, the outcome and the time, never a prompt,
 an address or a path.
 
+### Anthropic, through Messages between sessions
+
+Settings › Claude › **Messages between sessions** (off by default; ADR 0031's amendment of 2026-11-07) lets a Claude session in a Varnick pane send text to another Claude pane on this Mac, with Varnick's `send` tool. Varnick delivers the
+text through a Claude Code channel it loads into each pane while the switch is on, and nothing outside your own machines can send one.
+
+- **The text goes to Anthropic with the receiving session,** as any text a session reads does, with the sending pane's id and its project's folder name (Home for the home folder). The sender's copy was already sent with its session.
+- **A message steers the receiver.** It runs as that session, with that session's permissions, and the receiver is told it is a request from another of your sessions, never your approval for something that needs you.
+  A session that asks before its tools cannot send to one that skips permission checks; a session that skips them can still steer another one that skips them, as `SendMessage` already lets it, so a page or a file
+  read by one skipping session can reach the others. One pane sends at most 10 messages a minute, so two sessions that keep thanking each other stop.
+- **It reaches only Claude sessions in Varnick's panes on this Mac.** Not the voice session, a run, a Task step, a terminal, a page, an app, a file, a session that is not running, or a pane of a tab another Mac hosts.
+- **Turning it on changes Claude Code's setup on this Mac, each step on your press of a button.** **Approve** adds one file of Varnick's to Claude Code's machine policy (`/Library/Application Support/ClaudeCode/managed-settings.d/`), behind the
+  system's administrator password dialog; it changes none of the entries already there, lists Varnick's channel and Anthropic's own approved channel plugins (a policy list replaces Anthropic's), and **Remove approval** takes it out.
+  **Allow** changes one value in Claude Code's own settings file (`DO_NOT_TRACK` set to `0`, or one of the other two tracking settings removed): Claude Code then sends Anthropic usage data and fetches its feature switches, which
+  it does not while those are set. A user who keeps usage data off cannot have messages. The approval names a plugin, not its code: any plugin folder named `varnick` loaded with both flags passes, which adds no reach to
+  whoever can already start `claude` on this Mac.
+- **The checklist's test** starts two short Claude sessions in Home, out of sight, on your Claude subscription. Their conversations stay in Home's Claude history, titled as Varnick's channel check.
+- **Varnick's log** holds the tool, the outcome's kind, the text's byte count and the receiver's turn, never a text, an id or a project. A queued message waits in the receiver's pane folder, readable by you alone, until the
+  session's channel takes it, and is dropped when the pane starts claude again.
+- **It rests on a Claude Code feature marked experimental,** which needs Anthropic's server-side switch for channels; off, panes start exactly as before.
+
 ### A model server you name
 
 With Server chosen for Search embeddings or Text generation (Settings › Models), Varnick sends the server the
