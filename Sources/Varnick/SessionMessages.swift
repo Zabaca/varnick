@@ -39,6 +39,13 @@ extension PanelAccess {
         }
 
         let destination = targetID.map { whereIs($0, in: model) } ?? Destination.nowhere
+        // On the session the id resolved to: a tab's card id can mean the caller's own session.
+        var resolved: UUID?
+        switch destination {
+        case .local(_, let session): resolved = session.id
+        case .remote(_, let pane): resolved = pane
+        case .nowhere: break
+        }
         var target: SendRules.Target?
         switch destination {
         case .local(let tab, let session):
@@ -54,7 +61,7 @@ extension PanelAccess {
 
         var limiter = sendRates[callerID] ?? SendRate()
         if let refusal = SendRules.decide(switchOn: Settings.shared.messagesBetweenSessions, text: text, rateAllowed: limiter.canSend(at: Date()),
-                                          toSelf: targetID == callerID, target: target, openerRefusal: openerRefusal, targetKnown: known,
+                                          toSelf: SendRules.isSelf(resolved: resolved, caller: callerID), target: target, openerRefusal: openerRefusal, targetKnown: known,
                                           senderSkips: sender.record.skippedAtStart == true) {
             throw PanelRefusal.notSent(refusal)
         }
@@ -110,11 +117,12 @@ extension PanelAccess {
         if let tab = model.boardPeerTabs.first(where: { $0.rows.contains { $0.paneID == target } }) { return .remote(host: tab.peer.id, pane: target) }
         if let host = remoteSenders[target] { return .remote(host: host, pane: target) }
         // A local tab's card id, or one of a tab a paired Mac hosts: the tab's one Claude session, else a pane id is needed.
-        if let tab = model.tabs.first(where: { $0.id == target }), tab.claudeSessions.count == 1, let session = tab.claudeSessions.first {
+        if let tab = model.tabs.first(where: { $0.id == target }), let only = SendRules.cardTarget(claudeSessions: tab.claudeSessions.map(\.id)),
+           let session = tab.claudeSessions.first(where: { $0.id == only }) {
             if let host = tab.host ?? session.record.host { return .remote(host: host, pane: session.id) }
             return .local(tab, session)
         }
-        if let tab = model.boardPeerTabs.first(where: { $0.id == target }), tab.rows.count == 1, let pane = tab.rows.first?.paneID {
+        if let tab = model.boardPeerTabs.first(where: { $0.id == target }), let pane = SendRules.cardTarget(claudeSessions: tab.rows.compactMap(\.paneID)), tab.rows.count == 1 {
             return .remote(host: tab.peer.id, pane: pane)
         }
         return .nowhere

@@ -347,6 +347,14 @@ public enum SendRules {
         return .pane(pane)
     }
 
+    /// The session a tab's card id means: its one Claude session; nil when the tab has none or several (then a pane id is needed).
+    public static func cardTarget(claudeSessions: [UUID]) -> UUID? {
+        claudeSessions.count == 1 ? claudeSessions[0] : nil
+    }
+
+    /// Whether a send is to the sender's own session. It is decided on the session the id resolved to, not the id as given: a tab's card id can mean the caller.
+    public static func isSelf(resolved: UUID?, caller: UUID) -> Bool { resolved == caller }
+
     /// Whether `to` is the word for the sender's opener.
     public static func isOpenerWord(_ text: String?) -> Bool {
         (text ?? "").trimmingCharacters(in: .whitespaces).lowercased() == "opener"

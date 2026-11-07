@@ -449,6 +449,16 @@ expect("a message the channel has not taken is told", SendRules.answer(.waiting,
 expect("a turn is classed for the sender", SendRules.delivery(for: .working) == .working && SendRules.delivery(for: .permission) == .waitingOnUser && SendRules.delivery(for: .question) == .waitingOnUser
        && SendRules.delivery(for: .waiting) == .waiting && SendRules.delivery(for: .background) == .waiting && SendRules.delivery(for: .failed) == .waiting && SendRules.delivery(for: nil) == .unknown)
 
+// A tab's card id means its one Claude session, and a send to the sender's own is refused whichever id named it.
+let callerPane = UUID(), otherPane = UUID()
+expect("a card with one Claude session means it", SendRules.cardTarget(claudeSessions: [otherPane]) == otherPane)
+expect("a card with none or several means none", SendRules.cardTarget(claudeSessions: []) == nil && SendRules.cardTarget(claudeSessions: [callerPane, otherPane]) == nil)
+expect("a card id that resolves to the caller's own session is a send to itself", SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: [callerPane]), caller: callerPane))
+expect("a card id that resolves to another session is not", !SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: [otherPane]), caller: callerPane))
+expect("a card id that resolves to nothing is not", !SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: []), caller: callerPane))
+expect("a send to itself is refused with the sender-itself words",
+       decide(toSelf: SendRules.isSelf(resolved: callerPane, caller: callerPane)) == .toSelf && decide(toSelf: SendRules.isSelf(resolved: otherPane, caller: callerPane)) == nil)
+
 // MARK: Between paired Macs (option 02)
 
 let crossing = SessionMessage.Queued(from: "s4", fromProject: "croft", text: "hello", fromMac: "Desk Mac")
