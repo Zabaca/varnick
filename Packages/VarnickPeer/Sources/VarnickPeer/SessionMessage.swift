@@ -40,19 +40,27 @@ public enum SessionMessage {
         /// The sender's project folder name, or Home.
         public var fromProject: String
         public var text: String
+        /// The sending Mac's name as the board shows it, when the sender is on another Mac (option 02 of `sessions-cant-reach-each-other-reliably`). Optional so a
+        /// queue file of option 01's loads.
+        public var fromMac: String?
 
-        public init(from: String, fromProject: String, text: String) {
+        public init(from: String, fromProject: String, text: String, fromMac: String? = nil) {
             self.from = from
             self.fromProject = fromProject
             self.text = text
+            self.fromMac = fromMac
         }
 
         private enum CodingKeys: String, CodingKey {
-            case from, fromProject = "from_project", text
+            case from, fromProject = "from_project", text, fromMac = "from_mac"
         }
 
         /// The attributes of the notification: letters, digits and underscores in their names, as Claude Code requires.
-        public var attributes: [String: String] { ["from": from, "from_project": fromProject] }
+        public var attributes: [String: String] {
+            var found = ["from": from, "from_project": fromProject]
+            if let fromMac { found["from_mac"] = fromMac }
+            return found
+        }
     }
 
     /// A project's name as the receiver is shown it: one line, cut, never empty.
@@ -214,7 +222,7 @@ public enum SendRules {
     }
 
     /// Why a send does nothing, in the order the decision checks. The words are the sender's to act on.
-    public enum Refusal: Equatable, Sendable {
+    public enum Refusal: String, Codable, Equatable, Sendable {
         case switchOff
         case empty
         case tooLong
@@ -231,6 +239,9 @@ public enum SendRules {
         case openerGone
         case openerMoved
         case skipRule
+        /// Option 02: the target's host is not ready for messages (its reason travels with the refusal), or is a headless host.
+        case hostNotReady
+        case headless
 
         /// The log's word, never an id, a project or a text.
         public var word: String {
@@ -251,6 +262,8 @@ public enum SendRules {
             case .openerGone: "opener gone"
             case .openerMoved: "opener moved"
             case .skipRule: "skip rule"
+            case .hostNotReady: "host not ready"
+            case .headless: "headless"
             }
         }
 
@@ -273,7 +286,7 @@ public enum SendRules {
             case .notClaude:
                 "That pane is not a Claude session (a terminal, a page, an app or a file), so it reads no message. Nothing was sent."
             case .otherMac:
-                "That pane is in a tab another Mac hosts. Messages between sessions reach only this Mac's panes. Nothing was sent."
+                "That pane is in a tab another Mac hosts. Turn on Also between my Macs under Messages between sessions in Settings to send there. Nothing was sent."
             case .notRunning:
                 "That session is not running (it ended, or is restarting), so it reads nothing until it runs again. Nothing was sent."
             case .cannotReceive:
@@ -288,6 +301,10 @@ public enum SendRules {
                 "The pane that opened this session now holds another conversation than the one that opened it, so the result would land where it wasn't asked for. Nothing was sent."
             case .skipRule:
                 "That session skips permission checks and this one does not, so this one may not send to it: a message runs as the receiver, with its permissions. Nothing was sent."
+            case .hostNotReady:
+                "That Mac hasn't approved messages yet: its Varnick shows how. Nothing was sent."
+            case .headless:
+                "That session is on a headless host, which does not receive messages. Nothing was sent."
             }
         }
     }
@@ -337,7 +354,7 @@ public enum SendRules {
 
     /// What the sender is told once the message is queued, from the receiver's turn then. A waiting receiver (or one that ended its turn with work left
     /// running, or on an error) starts a turn on it; a working one reads it when its current step ends; one waiting on the user reads it after they answer.
-    public enum Delivery: Equatable, Sendable {
+    public enum Delivery: String, Codable, Equatable, Sendable {
         case working
         case waitingOnUser
         case waiting

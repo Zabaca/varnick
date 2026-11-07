@@ -421,6 +421,10 @@ value in Claude Code's own settings file after saying what it means); this Mac a
 Claude Code's machine policy, changing none of what is there; **Remove approval** takes it out again); panes started before can join (**Restart them** restarts the ones that are waiting); and a test, in which
 Varnick starts two short sessions out of sight, one sends a word to the other and it answers. Off, new panes start as before and `send` is refused.
 
+**Also between my Macs**, under it, lets `send` reach the sessions `board_read` lists on your paired Macs (not a headless host's), over the link the Macs already use, and the receiver sees `from_mac`, the sending Mac. Each Mac turns it on
+itself; turning it on here asks the others, with a notice in their menu bar menu that opens the same checklist there (the administrator password is typed on that Mac), and shows one row for each paired Mac: ready, needs
+approval on that Mac, an older Varnick with an **Update** button, or not answering. A Mac that is not ready is skipped, and a send to it says why; nothing is held for a Mac that is asleep. Both Macs must run the same build.
+
 Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
 your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,
 this Mac's open sessions first), each result marked Claude session, page or bookmark, and a session with its project, Mac, when it was used, its tab and whether that is Open, Closed or Done,

@@ -58,6 +58,82 @@ final class MessagesSetup: ObservableObject {
         refresh()
     }
 
+    // MARK: Between Macs (option 02)
+
+    /// A paired Mac that asked this one to join messages between Macs (`messageAsk`), until this Mac is ready or the user dismisses it.
+    struct Ask: Identifiable, Equatable {
+        var id: String
+        var name: String
+    }
+
+    @Published private(set) var asks: [Ask] = []
+    /// The Macs this one asked to join since it last saw them ready, so a Mac is asked once, and again when it next answers after not having.
+    private var asked: Set<String> = []
+
+    /// What this Mac says of taking messages from other Macs: both switches on and the checklist passing, else the first thing that is not.
+    var hostState: PeerMessagesState {
+        MacMessages.state(messagesOn: Settings.shared.messagesBetweenSessions, macsOn: Settings.shared.messagesBetweenMacs, startsWithChannel: startsWithChannel,
+                          checklistReason: firstFailure)
+    }
+
+    /// The first failing row's words, cut to its first sentence, for the reason a paired Mac shows.
+    private var firstFailure: String? {
+        if case .failed(let why) = testResult { return Self.firstSentence(why) }
+        guard let line = lines.prefix(4).first(where: { $0.row.mark != .pass }) else { return nil }
+        return line.title + ": " + Self.firstSentence(line.row.text)
+    }
+
+    nonisolated static func firstSentence(_ text: String) -> String {
+        let end = text.range(of: ". ")?.lowerBound ?? text.endIndex
+        let sentence = String(text[..<end]).trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return sentence.count > 140 ? String(sentence.prefix(139)) + "…" : sentence
+    }
+
+    /// Stores what a hello tells the other Macs (the relay answers one with Varnick's state read from UserDefaults), and drops the asks this Mac now meets.
+    func publishReadiness() {
+        let state = hostState
+        let defaults = UserDefaults.standard
+        defaults.set(state.ready, forKey: Settings.messagesMacsReadyKey)
+        defaults.set(state.reason, forKey: Settings.messagesMacsReasonKey)
+        if state.ready, !asks.isEmpty {
+            asks = []
+            model?.notifier.clearMacAsks()
+        }
+    }
+
+    /// Also between my Macs was turned on or off. On, every paired Mac is asked again (they answer a hello with their readiness first); off, the asks are forgotten.
+    func macsSwitchChanged() {
+        publishReadiness()
+        if Settings.shared.messagesBetweenMacs {
+            asked = []
+            Task { await PeerManager.shared.refreshAll() }
+        } else {
+            asked = []
+        }
+    }
+
+    /// A paired Mac answered a hello: ask it to join when this Mac has Also between my Macs on and it is not ready (once, until it is seen ready).
+    func peerAnswered(_ peer: Peer) {
+        guard Settings.shared.messagesBetweenSessions, Settings.shared.messagesBetweenMacs, peer.info?.headless != true else { return }
+        let state = peer.info?.messages
+        if state?.ready == true { asked.remove(peer.id); return }
+        guard MacMessages.shouldAsk(link: .answered, state: state, alreadyAsked: asked.contains(peer.id)) else { return }
+        asked.insert(peer.id)
+        Task { await PeerManager.shared.askToJoinMessages(peer.id) }
+    }
+
+    /// A paired Mac asks this one to join. One standing ask for each Mac, in the menu and in Settings, until this Mac is ready or it is dismissed.
+    func noteAsk(from id: String, name: String) {
+        guard !hostState.ready else { return }
+        if !asks.contains(where: { $0.id == id }) { asks.append(Ask(id: id, name: name)) }
+        model?.notifier.raiseMacAsk(from: id, name: name)
+    }
+
+    func dismissAsk(_ id: String) {
+        asks.removeAll { $0.id == id }
+        model?.notifier.clearMacAsks(from: id)
+    }
+
     // MARK: Starting
 
     /// At launch: ends the test's sessions a quit left behind, writes the plugin folder and, while the switch is on, reads the rows.
@@ -69,6 +145,7 @@ final class MessagesSetup: ObservableObject {
             ChannelPlugin.write(command: PeerLink.mcpCommand)
             refresh()
         }
+        publishReadiness()
     }
 
     /// The switch was turned on or off. On, the checklist is read; off, new panes stop loading the channel at once (each start reads the switch).
@@ -76,7 +153,11 @@ final class MessagesSetup: ObservableObject {
         if Settings.shared.messagesBetweenSessions {
             ChannelPlugin.write(command: PeerLink.mcpCommand)
             refresh()
+        } else {
+            // Also between my Macs needs this switch: both stop, and the other Macs hear it in the next hello.
+            Settings.shared.messagesBetweenMacs = false
         }
+        publishReadiness()
     }
 
     // MARK: The reads
@@ -191,6 +272,7 @@ final class MessagesSetup: ObservableObject {
         }
         rows.append(ChannelChecklist.testRow(testResult, ready: passed))
         lines = rows.enumerated().map { Line(id: $0.offset, title: Self.titles[$0.offset], row: $0.element) }
+        publishReadiness()
     }
 
     private static let stopped = ChannelChecklist.Row(.waiting, "Not checked: Claude Code's provider can't carry channels.")
@@ -330,6 +412,7 @@ final class MessagesSetup: ObservableObject {
             let result = await self.test(in: model)
             self.finishTest()
             self.testResult = result
+            self.publishReadiness()
             self.testTask = nil
             self.refresh()
         }

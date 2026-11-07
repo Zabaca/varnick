@@ -38,6 +38,8 @@ extension HeadlessPeerHost {
         case .outlineRead, .outlineEdit: return .reply(.failure("\(name) is a headless host: the Outline needs a Mac"))
         // A headless host's automations are edited from a Mac's Settings (protocol 29), never from a device.
         case .phoneAutomations: return .reply(.failure("\(name) is a headless host: its automations are edited from a Mac's Settings"))
+        // Its server lists `notify` alone (option 02 of `sessions-cant-reach-each-other-reliably`), and Linux keeps machine policy elsewhere.
+        case .sendMessage, .messageAsk: return .reply(.failure("\(name) is a headless host: its sessions do not receive messages"))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }

@@ -488,6 +488,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// Shows the panel on the notice's pane, over the board or Settings if either is open.
     @objc func openNotice(_ item: NSMenuItem) {
         guard let id = item.representedObject as? UUID else { return }
+        // A paired Mac's ask to join messages between Macs (option 02 of `sessions-cant-reach-each-other-reliably`) opens Settings › Claude, where its checklist is. The
+        // ask stays in Settings, with Dismiss, until this Mac is ready.
+        if model.notifier.macAsks.contains(id) {
+            model.notifier.clearMacAsks(from: id.uuidString.lowercased())
+            UserDefaults.standard.set(SettingsSection.claude.rawValue, forKey: "settingsSection")
+            if !model.showingSettings { model.toggleSettings() }
+            show()
+            return
+        }
         // A Task Run's notice shows the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
         if model.notifier.notices.first(where: { $0.id == id })?.runLine != nil {
             if let why = model.openTaskRun(id) { model.claudeError = why }

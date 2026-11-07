@@ -1055,17 +1055,20 @@ saveRequest.automation = hostBase
 let decodedRequest = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(saveRequest))
 expect("a save request carries the whole automation", decodedRequest?.op == .saveAutomation && decodedRequest?.automation == hostBase)
 expect("the five requests are told apart", [PeerOp.automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened].allSatisfy(PeerProtocol.isAutomationRequest) && !PeerProtocol.isAutomationRequest(.tabs))
-expect("this is protocol 34", PeerProtocol.version == 34)
+expect("this is protocol 35", PeerProtocol.version == 35)
 // A Mac's automations on its Phone page: a device may send the one request, and none of the five a Mac sends a headless host. The list of what a device
 // may not send is explicit, so a new request is a device's unless someone writes it here.
-let deviceRefused: Set<PeerOp> = [.rows, .pages, .arrange, .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened, .upgrade, .restart]
+let deviceRefused: Set<PeerOp> = [.rows, .pages, .arrange, .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened, .upgrade, .restart,
+                                  .sendMessage, .messageAsk]
 expect("a device is refused exactly these requests", Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)) == deviceRefused, "\(Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)).symmetricDifference(deviceRefused))")
+expect("the two requests of messages between Macs are a Mac's alone", PeerProtocol.isMessageRequest(.sendMessage) && PeerProtocol.isMessageRequest(.messageAsk) && !PeerProtocol.isMessageRequest(.tabs)
+       && PeerProtocol.isMacsOnly(.sendMessage) && PeerProtocol.isMacsOnly(.messageAsk) && !PeerProtocol.isDeviceOnly(.sendMessage) && !PeerProtocol.answersAnyVersion(.sendMessage))
 expect("phoneAutomations is a device's, and no Mac's or page server's", !PeerProtocol.isMacsOnly(.phoneAutomations) && PeerProtocol.isDeviceOnly(.phoneAutomations)
        && PeerProtocol.isPhoneAutomationRequest(.phoneAutomations) && !PeerProtocol.isAutomationRequest(.phoneAutomations))
 expect("only the Outline's two, phoneAutomations and voiceExchanges are device-only", Set(PeerOp.allCases.filter(PeerProtocol.isDeviceOnly)) == [.outlineRead, .outlineEdit, .phoneAutomations, .voiceExchanges])
 expect("voiceExchanges is a device's, and no Mac's or page server's", !PeerProtocol.isMacsOnly(.voiceExchanges) && PeerProtocol.isDeviceOnly(.voiceExchanges)
        && !PeerProtocol.isAutomationRequest(.voiceExchanges) && !PeerProtocol.isPhoneAutomationRequest(.voiceExchanges) && !PeerProtocol.isOutlineRequest(.voiceExchanges))
-expect("voiceExchanges needs this build's protocol like the rest, and the protocol stays 34", !PeerProtocol.answersAnyVersion(.voiceExchanges) && PeerProtocol.version == 34)
+expect("voiceExchanges needs this build's protocol like the rest, and the protocol is 35 (option 02 of sessions-cant-reach-each-other-reliably)", !PeerProtocol.answersAnyVersion(.voiceExchanges) && PeerProtocol.version == 35)
 expect("a voiceExchanges request is a bare op", PeerJSON.decode(PeerRequest.self, from: #"{"v":34,"op":"voiceExchanges","by":"aaaaaaaa-0000-4000-8000-000000000001"}"#)?.op == .voiceExchanges)
 expect("phoneAutomations needs this build's protocol like the rest", !PeerProtocol.answersAnyVersion(.phoneAutomations))
 var phoneRequest = PeerRequest(.phoneAutomations)

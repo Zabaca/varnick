@@ -206,6 +206,30 @@ final class SessionNotifier: ObservableObject {
         if !quiet { play(kind) }
     }
 
+    // MARK: A paired Mac's ask
+
+    /// The notice of a paired Mac that asked this one to join messages between Macs (option 02 of `sessions-cant-reach-each-other-reliably`), by the asking Mac's id.
+    /// It stands in the menu like a Task Run's, with its own line; choosing it opens Settings › Claude, where the checklist and the Also between my Macs switch are.
+    /// It goes when this Mac is ready, when it is chosen, or with the "Messages" switch of Settings › Notifications off.
+    private(set) var macAsks: Set<UUID> = []
+
+    func raiseMacAsk(from id: String, name: String) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let line = "\(name) asks to turn on messages between Macs here"
+        let kind = NoticeKind.message(line)
+        macAsks.insert(uuid)
+        guard Settings.shared.noticeSwitches.allows(kind) else { return }
+        notices.removeAll { $0.id == uuid }
+        notices.insert(Notice(id: uuid, kind: kind, runLine: line), at: 0)
+        play(kind)
+    }
+
+    func clearMacAsks(from id: String? = nil) {
+        let gone = id.flatMap(UUID.init(uuidString:)).map { [$0] } ?? macAsks
+        macAsks.subtract(gone)
+        for uuid in gone { clear(uuid) }
+    }
+
     // MARK: A Task Run's own notice
 
     /// The notice of a Task Run, by the Run's id, beside the panes' with the same kinds and switches (option 01 of `work-cant-be-saved-or-chained`,
