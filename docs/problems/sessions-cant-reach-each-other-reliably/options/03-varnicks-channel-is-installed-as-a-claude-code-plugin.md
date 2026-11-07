@@ -1,7 +1,7 @@
 ---
 problem: sessions-cant-reach-each-other-reliably
 title: Option 01, with Varnick's channel installed into Claude Code as a plugin from a marketplace Varnick keeps, in place of loading a plugin folder per pane
-summary: As option 01, but the channel reaches each pane the way the 2026-11-07 test proved end to end. Varnick keeps a one-plugin directory marketplace in its support folder and installs `varnick` from it into the user's Claude Code once, at the user's level, from an Install row added to option 01's setup checklist, and panes start with `plugin:varnick@varnick` as their channel. The policy entry names that marketplace. The cost is a plugin in the user's Claude Code that every session loads, Varnick's or not (outside Varnick its server finds no pane and stays idle), and a copy in Claude Code's plugin cache that must be updated when Varnick changes it. Kept as option 01's fallback if Claude Code doesn't accept a plugin folder's channel.
+summary: As option 01, but the channel reaches each pane the way the 2026-11-07 test proved end to end. Varnick keeps a one-plugin directory marketplace in its support folder and installs `varnick` from it into the user's Claude Code once, at the user's level, from an Install row added to option 01's setup checklist, and panes start with `plugin:varnick@varnick` as their channel. The policy entry names that marketplace. The cost is a plugin in the user's Claude Code that every session loads, Varnick's or not (outside Varnick its server finds no pane and stays idle), and a copy in Claude Code's plugin cache that must be updated when Varnick changes it. Kept as option 01's fallback should a later Claude Code stop accepting a plugin folder's channel (it does on 2.1.319, tested 2026-11-07).
 status: proposed
 ---
 
@@ -21,7 +21,7 @@ Everything in option 01 holds but how the channel reaches a pane.
 
 ## Trade-offs
 
-- **The proven path.** A plugin installed from a local directory marketplace, approved by policy, was registered with no dialog and answered in about 7 s (the coordinator's test of 2026-11-07). Option 01's plugin folder is proven only up to the allowlist step.
+- **Proven, as option 01's is now.** A plugin installed from a local directory marketplace, approved by policy, was registered with no dialog and answered in about 7 s (the coordinator's test of 2026-11-07); a plugin folder approved as `inline` was registered too, later that day, so this option no longer has the edge it was kept for.
 - **A plugin in the user's Claude Code.** It shows in `/plugin`, every session starts its idle server (one more small process in each terminal session too), and it outlives Varnick unless removed.
 - **A copy to keep current.** Claude Code runs an installed plugin from its cache copy, so a change to the plugin's server line needs an update command; the server itself is Varnick's binary through the link, so a new Varnick build needs none.
 - **Writes Claude Code's plugin settings,** which option 01 never does (it changes only the tracking value, and only on Allow).
