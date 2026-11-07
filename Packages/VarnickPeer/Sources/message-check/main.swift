@@ -22,6 +22,12 @@ try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories
 defer { try? FileManager.default.removeItem(at: scratch) }
 SupportFolder.url = scratch.appendingPathComponent("support")
 
+/// A value two threads write one after the other, with the group's wait between them.
+final class Box<T>: @unchecked Sendable {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
 func json(_ data: Data) -> [String: Any]? { (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] }
 func text(_ object: Any?) -> String { String(describing: object ?? "nil") }
 
@@ -310,7 +316,12 @@ func install(folder: URL, content: Data, name: String = ChannelPolicy.fileName) 
     let owner = "\(NSUserName()):\(String(cString: getgrgid(getgid()).pointee.gr_name))"
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    // The Mac's script on a Mac and the Linux script on Linux (option 07): the same cases run against whichever form the platform uses.
+    #if os(Linux)
+    process.arguments = ChannelPolicy.linuxInstallArguments(folder: folder.path, name: name, content: content, owner: owner)
+    #else
     process.arguments = ChannelPolicy.installArguments(folder: folder.path, name: name, content: content, owner: owner)
+    #endif
     process.standardError = FileHandle.nullDevice
     try? process.run()
     process.waitUntilExit()
@@ -745,17 +756,20 @@ expect("the table is in the receiving pane's folder, owner-only, and another pan
 // Two relays writing at once give distinct ids to distinct senders and never reuse one.
 let racePane = UUID()
 let group = DispatchGroup()
-let gotIDs = NSMutableArray()
+let gotIDs = Box<[String]>([])
+let gotLock = NSLock()
 for i in 0..<20 {
     group.enter()
     DispatchQueue.global().async {
         let id = SenderTable.id(mac: macA, pane: UUID().uuidString.lowercased(), name: "m", project: "p\(i)", receiver: racePane)
-        gotIDs.add(id ?? "nil")
+        gotLock.lock()
+        gotIDs.value.append(id ?? "nil")
+        gotLock.unlock()
         group.leave()
     }
 }
 group.wait()
-expect("twenty relays adding twenty senders at once get twenty different ids", Set(gotIDs.compactMap { $0 as? String }).count == 20 && !gotIDs.contains("nil"), "\(gotIDs)")
+expect("twenty relays adding twenty senders at once get twenty different ids", Set(gotIDs.value).count == 20 && !gotIDs.value.contains("nil"), "\(gotIDs.value)")
 
 expect("a message id is digits and dashes, so a receipt can never name another path", HostMessages.isMessageID("0000000001234-000001-77") && !HostMessages.isMessageID("../x") && !HostMessages.isMessageID("") && !HostMessages.isMessageID("1/2")
        && !HostMessages.isMessageID(String(repeating: "1", count: 65)))
@@ -774,17 +788,17 @@ expect("another Mac's outbox is its own", { let other = try? HostOutbox.post(pan
 var bothOrNeither = 0, tookBack = 0, taken = 0
 for _ in 0..<200 {
     let id = try HostOutbox.post(pane: paneA, from: macA, fromProject: "p", skips: false, text: "race", mac: outboxMac)
-    var mac: [PeerHostMessage] = [], back = false
+    let claimedBy = Box<[PeerHostMessage]>([]), backBy = Box(false)
     let start = DispatchSemaphore(value: 0), done = DispatchGroup()
     done.enter()
-    DispatchQueue.global().async { start.wait(); mac = HostOutbox.claim(mac: outboxMac); done.leave() }
+    DispatchQueue.global().async { start.wait(); claimedBy.value = HostOutbox.claim(mac: outboxMac); done.leave() }
     done.enter()
-    DispatchQueue.global().async { start.wait(); back = HostOutbox.takeBack(id, mac: outboxMac); done.leave() }
+    DispatchQueue.global().async { start.wait(); backBy.value = HostOutbox.takeBack(id, mac: outboxMac); done.leave() }
     start.signal(); start.signal()
     done.wait()
-    let took = mac.contains { $0.id == id }
-    if took == back { bothOrNeither += 1 }
-    if back { tookBack += 1 } else { taken += 1 }
+    let took = claimedBy.value.contains { $0.id == id }
+    if took == backBy.value { bothOrNeither += 1 }
+    if backBy.value { tookBack += 1 } else { taken += 1 }
 }
 expect("a taken message is never also taken back, and one that is not taken is taken back", bothOrNeither == 0, "\(bothOrNeither) of 200 (back \(tookBack), taken \(taken))")
 expect("a take-back of a message already gone is false", !HostOutbox.takeBack("00000000000-000000-1", mac: outboxMac) && !HostOutbox.takeBack("../etc", mac: outboxMac))

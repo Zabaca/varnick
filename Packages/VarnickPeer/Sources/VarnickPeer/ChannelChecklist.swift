@@ -234,11 +234,13 @@ extension ChannelChecklist {
         case failed(String)
     }
 
-    public static func testRow(_ result: TestResult, ready: Bool) -> Row {
+    public static func testRow(_ result: TestResult, ready: Bool, host: Bool = false) -> Row {
         switch result {
         case .notRun:
             return ready
-                ? Row(.fix, "Not run yet. It starts two short Claude sessions out of sight, in Home; the first sends a word to the second, which answers, and both end. It uses a little of your plan.",
+                ? Row(.fix, host
+                      ? "Not run yet. It starts a short Claude session on the host and one here, out of sight; the one here sends a word to the host's, which answers, and both end. It uses a little of your plan on each."
+                      : "Not run yet. It starts two short Claude sessions out of sight, in Home; the first sends a word to the second, which answers, and both end. It uses a little of your plan.",
                       action: .runTest, button: "Run test")
                 : Row(.waiting, "Runs once the rows above pass.")
         case .running(let step):

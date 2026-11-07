@@ -229,7 +229,7 @@ final class Settings: ObservableObject {
     /// `send` once the checklist's rows pass (`MessagesSetup`). Read at each pane start and at every `send` call, so turning it off stops new panes and
     /// refuses a running pane's sends.
     @Published var messagesBetweenSessions: Bool { didSet { defaults.set(messagesBetweenSessions, forKey: Self.messagesKey) } }
-    /// Also between my Macs (option 02 of `sessions-cant-reach-each-other-reliably`): needs Messages between sessions. On, this Mac sends to and takes messages from the
+    /// Also between my Macs and hosts (option 02 and option 07 of `sessions-cant-reach-each-other-reliably`): needs Messages between sessions. On, this Mac sends to and takes messages from the
     /// sessions of paired Macs that are ready too. Read at every `send` and every message from another Mac.
     @Published var messagesBetweenMacs: Bool { didSet { defaults.set(messagesBetweenMacs, forKey: Self.messagesMacsKey) } }
     /// This launch found the retired Automations switch stored off. Read once by `startAutomations`; never stored.

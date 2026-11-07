@@ -80,7 +80,7 @@ Anything else leaves only when you turn it on:
 - **Messages between sessions** lets a Claude session in one pane send text to another on this Mac, which may act on it with its own
   permissions without asking you. The text goes to Anthropic with the receiving session, and so does the sender's project name. Turning it on
   also means approving Varnick's channel in this Mac's Claude Code policy (the administrator password, once) and letting Claude Code send Anthropic usage data.
-  With **Also between my Macs** on, the same reaches sessions on your paired Macs that have turned it on, over the link they already use.
+  With **Also between my Macs and hosts** on, the same reaches sessions on your paired Macs that have turned it on, and on your headless hosts once you have approved them from a Mac's Settings, over the link they already use.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
 Claude sessions in Varnick's panes can also, with no switch, read what Varnick's own panel shows: whether it is open, which tab, pane or

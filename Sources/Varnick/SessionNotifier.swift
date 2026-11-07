@@ -209,7 +209,7 @@ final class SessionNotifier: ObservableObject {
     // MARK: A paired Mac's ask
 
     /// The notice of a paired Mac that asked this one to join messages between Macs (option 02 of `sessions-cant-reach-each-other-reliably`), by the asking Mac's id.
-    /// It stands in the menu like a Task Run's, with its own line; choosing it opens Settings › Claude, where the checklist and the Also between my Macs switch are.
+    /// It stands in the menu like a Task Run's, with its own line; choosing it opens Settings › Claude, where the checklist and the Also between my Macs and hosts switch are.
     /// It goes when this Mac is ready, when it is chosen, or with the "Messages" switch of Settings › Notifications off.
     private(set) var macAsks: Set<UUID> = []
 

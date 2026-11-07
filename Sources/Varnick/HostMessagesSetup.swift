@@ -100,10 +100,16 @@ final class HostMessagesSetup: ObservableObject {
         }
 
         // 7. The test across.
-        let ready = state.checklist?.ready == true
-        let test = ChannelChecklist.testRow(state.test, ready: ready)
+        let test = ChannelChecklist.testRow(state.test, ready: rowsPassed(state), host: true)
         lines.append(Line(id: 6, title: "Test", row: test, button: test.action == nil ? nil : .test))
         return lines
+    }
+
+    /// The host's four rows that decide readiness passed: what the test needs, whether or not the last test failed (a failed one is run again, and the host is ready
+    /// again once the new one starts).
+    private func rowsPassed(_ state: State) -> Bool {
+        guard let rows = state.checklist?.rows, rows.count >= 4 else { return false }
+        return rows.prefix(4).allSatisfy { $0.markValue == .pass }
     }
 
     // MARK: Reading
@@ -204,7 +210,7 @@ final class HostMessagesSetup: ObservableObject {
     // MARK: The test
 
     func runTest(on host: String) {
-        guard tests[host] == nil, let model, state(of: host).checklist?.ready == true else { return }
+        guard tests[host] == nil, let model, rowsPassed(state(of: host)) else { return }
         update(host) { $0.test = .running("Starting a session on the host…"); $0.outcome = nil }
         tests[host] = Task { [weak self] in
             guard let self else { return }
@@ -227,7 +233,9 @@ final class HostMessagesSetup: ObservableObject {
         let folder = HomeFolder.madeAndTrusted()
         if let note = ClaudeTrust.note(for: folder) { return .failed("Claude Code hasn't trusted Home on this Mac yet: \(note)") }
         let limit = MessagesSetup.stepLimit
-        // The host's last hello says whether it is ready, which is what lets this Mac collect from it.
+        // A test that failed before stops the host's gate; this one starts clean, so a host whose rows passed is ready again for it. The host's last hello says so,
+        // which is what lets this Mac send to it and collect from it.
+        _ = await PeerManager.shared.hostChecklist(PeerHostCheckAsk(fresh: true, test: "notRun"), on: host)
         await PeerManager.shared.refresh(host)
 
         let receiver = UUID()

@@ -138,7 +138,7 @@ final class PeerBuilds: ObservableObject {
         return headless ? found.address : nil
     }
 
-    /// An Upgrade of this paired Mac is under way (Settings › Claude › Also between my Macs offers it for a Mac on an older build).
+    /// An Upgrade of this paired Mac is under way (Settings › Claude › Also between my Macs and hosts offers it for a Mac or host on an older build).
     func isUpdating(_ peer: String) -> Bool {
         machines[.peer(peer)].map { $0.starting || $0.report?.state == .fetching || $0.report?.state == .building } ?? false
     }
