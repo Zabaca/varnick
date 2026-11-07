@@ -4,7 +4,7 @@ description: A Claude session in a Varnick pane can open a Claude session only b
 impact: Work across projects falls to the user, who types a `#project` prompt in the panel and pastes in what the lead session wrote, or it runs as a subagent or a background `claude` the user can't watch, answer or mark Done, and which dies with the lead (`orchestration-lives-in-one-session` has the costs). A helper opened beside the lead would be in the wrong tab anyway: its tab's project is the lead's, and Done on the lead's tab ends it too. Even within a project, a lead that opened a helper matches it to a `SendMessage` name by its start time in `ListAgents`, which picks the wrong session when two start together.
 severity: mid
 evidence: The user's request and decisions of 2026-11-06, relayed by the coordinator (below). Tests run the same day in Claude sessions on the user's Mac, relayed by the coordinator. Code read at main 29551eb. Claude Code 2.1.319's own session files and the texts of its `SendMessage` tool, read on the user's Mac on 2026-11-06 (figures kept to counts; no paths or names). Related: `panes-open-only-by-hand-at-a-mac` (closed; its option 01 left "opening a new tab" out of scope), `orchestration-lives-in-one-session` option 04, and ADR 0031 with its amendments.
-status: closed
+status: open
 ---
 
 ## What the user asked (2026-11-06)
