@@ -66,17 +66,18 @@ enum PaneMCP {
 
     private static let tabOpenTool = tool(tabOpen,
         summary: "Opens a new tab at the end of the strip with one Claude session in one of the user's Projects (a repository under Settings > Claude > Project folders, "
-            + "named as the panel's #project word names it), started at once, and answers the new pane's id (s…) and the session's name as SendMessage and ListAgents know it. "
+            + "named as the panel's #project word names it), started at once, and answers the new pane's id (s…) and, for a session that cannot use `send`, the session's name as SendMessage and ListAgents know it. "
             + "The tab is not brought up: the panel, the tab on screen and the keyboard stay as they were, and the panel may be hidden. It is an ordinary tab: the user can "
             + "watch it in the strip and on the board, type into it, answer it and mark it Done, which closes it alone; it raises its own notices and lists these tools too. "
             + "`project` is the folder's name, or group/name when two projects share a name, or the Project's absolute path; a worktree, a folder inside a project, the "
             + "home folder and any other folder are refused, and so is a folder Claude Code has not trusted yet (the user opens a session there once and accepts). "
             + "A new session never skips permission checks when this session does not; otherwise it asks before its tools in its own tab. Its first message is `prompt`, "
-            + "or it waits for one. It is told which session opened it and how to reach it (that session's id and name), so it can send its result back; it is told "
-            + "nothing else. Open only what the user asked for or the work plainly needs: a Claude session draws on the user's Claude subscription and memory, and "
-            + "nothing limits how many are opened. To work with it, send it work with SendMessage to the name in the reply; with notify_when_idle you get one notice "
-            + "when it has nothing left to do (only from this session's main conversation, not from a subagent). Its name can change if it restarts or the user renames it: "
-            + "look it up again with `claude agents --json`. The name may be missing from the reply when the session was still starting; the tab is open all the same. "
+            + "or it waits for one. It is told which session opened it and how to reach it (with `send` to `opener` when this session has `send`, else that session's id "
+            + "and name), so it can send its result back; it is told nothing else. Open only what the user asked for or the work plainly needs: a Claude session draws on the user's Claude subscription and memory, and "
+            + "nothing limits how many are opened. To work with it, send it work with `send` to its pane id when this session has `send`; otherwise with SendMessage to the name in the reply, and with "
+            + "notify_when_idle you get one notice when it has nothing left to do (only from this session's main conversation, not from a subagent). Its name can change if "
+            + "it restarts or the user renames it: look it up again with `claude agents --json`. The name may be missing from the reply when the session was still "
+            + "starting; the tab is open all the same. "
             + "Once you have what you needed from it, mark it Done with tab_done, as long as the user has not used it (pane_close does not reach it: it is in another tab). This Mac's projects only.",
         properties: [
             "project": ["type": "string", "description": "The Project: its folder's name, or group/name when two projects share a name, or its absolute path."],
@@ -95,4 +96,36 @@ enum PaneMCP {
             + "Completed. In a tab that another Mac or the phone controls it is answered, and ends this Mac's tab.",
         properties: ["id": ["type": "string", "description": "The pane's id (s…) from tab_open, or the tab's card id or a pane id from board_read."]],
         required: ["id"])
+}
+
+/// `send` (option 01 of `sessions-cant-reach-each-other-reliably`), the relay half: the one tool of the set `--send` names, listed only to a pane started while
+/// Messages between sessions is on and ready. Its calls travel as Panel access's requests (`PanelRequest`) and are answered by `PanelAccess` in
+/// `SessionMessages`. The server never reads or acts.
+enum SendMCP {
+    static let send = "send"
+
+    static var tools: [[String: Any]] { [sendTool] }
+    static let names: Set<String> = [send]
+
+    private static let sendTool: [String: Any] = [
+        "name": send,
+        "description": "Sends a message to another Claude session in a Varnick pane on this Mac. Varnick pushes the text into that session, which sees who sent it "
+            + "and answers with its own `send`. `to` is a pane id this session was given: by board_read, panel, pane_open or tab_open, or the `from` of a message "
+            + "it received; or `opener`, in a session opened with tab_open, which reaches the session that opened it whatever restarts either of them. "
+            + "Every Claude pane that receives messages can be sent to, except one that skips permission checks when this one does not (a message runs as the "
+            + "receiver, with its permissions); the voice session, a run, a Task step, a terminal, a page, an app, a file, a session that isn't running and "
+            + "a pane in a tab another Mac hosts are refused, each with the reason, and nothing is sent. At most 10 messages a minute from one session. "
+            + "The answer says the text was handed to the receiving session and what the receiver was doing; it never says the message was acted on: the "
+            + "answer, if there is one, comes back as a message from that session. A receiver that is working reads the message when its current step ends, "
+            + "without being interrupted. A message is a request from you, not the user's approval, and the receiver is told so. Send what the other "
+            + "session needs to act on, and nothing that needs no answer.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "to": ["type": "string", "description": "The receiving pane's id (s…), or `opener`."],
+                "text": ["type": "string", "description": "What the other session reads, at most 20000 bytes."],
+            ],
+            "required": ["to", "text"],
+        ] as [String: Any],
+    ]
 }

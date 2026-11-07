@@ -249,6 +249,9 @@ enum ScreenMCP {
         static let panes = Sets(rawValue: 128)
         /// `outline_append`: an automation's run, and only when its allowed tools name it (`ClaudeSession.launchClaude`). Its call travels as its own request.
         static let outlineAppend = Sets(rawValue: 256)
+        /// `send` (option 01 of `sessions-cant-reach-each-other-reliably`): listed only to a pane started while Messages between sessions is on and ready. Its
+        /// call travels as Panel access's request.
+        static let messages = Sets(rawValue: 512)
 
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
@@ -256,6 +259,7 @@ enum ScreenMCP {
         static let tasksArgument = "--tasks"
         static let voiceSearchArgument = "--search"
         static let panesArgument = "--panes"
+        static let messagesArgument = "--send"
 
         /// With none named, the screen tools alone: a session started before Panel access keeps the tools it had.
         init(arguments: [String]) {
@@ -269,6 +273,7 @@ enum ScreenMCP {
             if arguments.contains(Self.voiceSearchArgument) { found.insert(.voiceSearch) }
             if arguments.contains(Self.panesArgument) { found.insert(.panes) }
             if arguments.contains(OutlineAppendTool.argument) { found.insert(.outlineAppend) }
+            if arguments.contains(Self.messagesArgument) { found.insert(.messages) }
             self = found.isEmpty ? .screen : found
         }
 
@@ -279,13 +284,14 @@ enum ScreenMCP {
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets
     /// (`ClaudeSession.launchClaude` says which). `--notify` is always there.
     static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
-                              voiceSearch: Bool = false, panes: Bool = false, outlineAppend: Bool = false) -> String {
+                              voiceSearch: Bool = false, panes: Bool = false, outlineAppend: Bool = false, messages: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
                                     + (automations ? [Sets.automationsArgument] : []) + (tasks ? [Sets.tasksArgument] : [])
                                     + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : [])
-                                    + (panes ? [Sets.panesArgument] : []) + (outlineAppend ? [OutlineAppendTool.argument] : []))
+                                    + (panes ? [Sets.panesArgument] : []) + (outlineAppend ? [OutlineAppendTool.argument] : [])
+                                    + (messages ? [Sets.messagesArgument] : []))
     }
 
     // MARK: The tools
@@ -413,6 +419,7 @@ enum ScreenMCP {
         if sets.contains(.voiceSearch) { listed += VoiceSearchMCP.tools }
         if sets.contains(.panes) { listed += PaneMCP.tools }
         if sets.contains(.outlineAppend) { listed.append(OutlineAppendTool.tool) }
+        if sets.contains(.messages) { listed += SendMCP.tools }
         return listed
     }
 
@@ -433,6 +440,9 @@ enum ScreenMCP {
                 reply = ask(requestLine(pane: pane, tool: name, arguments: decoded))
             } else if (sets.contains(.panel) && PanelMCP.names.contains(name)) || (sets.contains(.panes) && PaneMCP.names.contains(name)) {
                 // The pane tools travel as Panel access's request.
+                reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
+            } else if sets.contains(.messages), SendMCP.names.contains(name) {
+                // `send` travels as Panel access's request too.
                 reply = ask(PanelMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.automations), AutomationMCP.names.contains(name) {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))

@@ -424,6 +424,32 @@ if appended:
         if phrase not in description:
             fail("outline_append's description doesn't say %r" % phrase)
 
+# The send tool (option 01 of sessions-cant-reach-each-other-reliably): its own set, named by the app only for a pane started while Messages between sessions is
+# on and ready. Named alone it lists send alone; with every other set it comes last; no other set lists it. NEVER call it here: with Varnick running, the
+# call reaches it and queues a real message for a real session. Only a call to a server that does not list it is made (below), and that is refused before
+# anything is sent.
+if listed(["--send"]) != ["send"]:
+    fail("--send lists %s, not send alone" % listed(["--send"]))
+everything = ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append", "--send"]
+if listed(everything)[-1:] != ["send"] or listed(everything)[:-1] != listed(everything[:-1]):
+    fail("every set lists %s, with send last" % listed(everything))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"], ["--outline-append"],
+                  ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"], ["--notify", "--outline-append"]):
+    if "send" in listed(arguments):
+        fail("%s lists send" % arguments)
+sending = [t for t in listed(["--send"], full=True) if t["name"] == "send"]
+if sending:
+    schema = sending[0]["inputSchema"]
+    properties = schema.get("properties", {})
+    if schema.get("required") != ["to", "text"] or set(properties) != {"to", "text"} or any(properties[name].get("type") != "string" for name in properties):
+        fail("send is %s: a required string to and a required string text, nothing else" % schema)
+    description = sending[0]["description"]
+    for phrase in ("opener", "At most 10 messages a minute", "never says the message was acted on", "not the user's approval", "except one that skips permission checks"):
+        if phrase not in description:
+            fail("send's description doesn't say %r" % phrase)
+    if len(description) > 2400:
+        fail("send's description is %d characters" % len(description))
+
 # A tool a server doesn't list is unknown to it, and nothing is sent to the app.
 for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
                         (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
@@ -436,10 +462,121 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
                         ([], "pane_open"), ([], "pane_close"), ([], "tab_open"), ([], "tab_done"), (["--panel"], "pane_open"), (["--panel"], "tab_open"), (["--panel"], "tab_done"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
                         (["--search"], "pane_open"), (["--search"], "tab_open"), (["--search"], "tab_done"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
                         ([], "outline_append"), (["--notify"], "outline_append"), (["--panel"], "outline_append"), (["--automations"], "outline_append"), (["--outline-append"], "notify"), (["--outline-append"], "outline_act"),
-                        ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open")):
+                        ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open"),
+                        ([], "send"), (["--panes"], "send"), (["--panel"], "send"), (["--notify"], "send"), (["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"], "send"),
+                        (["--send"], "panel"), (["--send"], "pane_open"), (["--send"], "tab_open"), (["--send"], "notify")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
         fail("%s called %s and did not get Unknown tool: %s" % (arguments, name, replies.get(3)))
+
+# The channel server (option 01 of sessions-cant-reach-each-other-reliably): `Varnick --channel --pane <id>`, started with a scratch home folder so its pane's queue
+# and mark are in the scratch folder and not the user's. It answers server/discover with "method not found" and initialize with the channel capability, the
+# instructions and a protocol revision older than 2026-07-28; lists no tools; pushes nothing before the client says it is initialized, then every queued
+# message in the order it was queued, as notifications/claude/channel lines with the text, `from` and `from_project`; keeps a mark while it runs and removes it at
+# the end of its input. Its exact words and every refusal are `make check-messages`'s.
+import select, time
+
+def channel_check():
+    home = tempfile.mkdtemp(prefix="check-channel-")
+    try:
+        pane_id = "11111111-2222-4333-8444-555555555555"
+        pane_folder = os.path.join(home, "Library", "Application Support", "Varnick", "panes", pane_id)
+        queue = os.path.join(pane_folder, "messages")
+        env = dict(os.environ, HOME=home, CFFIXED_USER_HOME=home)
+        server = subprocess.Popen([binary, "--channel", "--pane", pane_id], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, bufsize=0)
+        pending = b""
+
+        def send(message):
+            server.stdin.write((json.dumps(message) + "\n").encode())
+
+        def line(wait):
+            nonlocal pending
+            deadline = time.time() + wait
+            while b"\n" not in pending:
+                left = deadline - time.time()
+                if left <= 0 or not select.select([server.stdout], [], [], left)[0]:
+                    return None
+                chunk = os.read(server.stdout.fileno(), 65536)
+                if not chunk:
+                    return None
+                pending += chunk
+            first, pending = pending.split(b"\n", 1)
+            return json.loads(first)
+
+        counter = [0]
+
+        def enqueue(text, sender="s4", project="croft"):
+            os.makedirs(queue, mode=0o700, exist_ok=True)
+            counter[0] += 1
+            name = "%016d-%06d.json" % (int(time.time() * 1000), counter[0])
+            temporary = os.path.join(queue, "." + name + ".tmp")
+            with open(temporary, "w") as handle:
+                json.dump({"from": sender, "from_project": project, "text": text}, handle)
+            os.rename(temporary, os.path.join(queue, name))
+
+        send({"jsonrpc": "2.0", "id": "server-discover-probe-1", "method": "server/discover", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}})
+        reply = line(10)
+        if not reply or reply.get("error", {}).get("code") != -32601 or reply.get("id") != "server-discover-probe-1":
+            fail("the channel server answered server/discover with %s, not method not found" % reply)
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "check", "version": "1"}}})
+        reply = line(10)
+        result = (reply or {}).get("result", {})
+        if "claude/channel" not in result.get("capabilities", {}).get("experimental", {}):
+            fail("the channel server's initialize declares no claude/channel capability: %s" % reply)
+        if not result.get("instructions", "").startswith("Messages on this channel come from another of your user's Claude Code sessions"):
+            fail("the channel server's instructions are %r" % result.get("instructions"))
+        if not result.get("protocolVersion", "9") < "2026-07-28":
+            fail("the channel server agreed to protocol revision %s" % result.get("protocolVersion"))
+
+        mark = os.path.join(pane_folder, ".varnick-channel")
+        for _ in range(20):
+            if os.path.exists(mark):
+                break
+            time.sleep(0.1)
+        if not os.path.exists(mark) or open(mark).read().strip() != str(server.pid):
+            fail("the channel server keeps no mark with its process id while it runs")
+
+        enqueue("before the client was ready")
+        if line(1.5) is not None:
+            fail("the channel server pushed before the client said it was initialized")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        first = line(10)
+        if not first or first.get("method") != "notifications/claude/channel" or first.get("id") is not None or first.get("params", {}).get("content") != "before the client was ready":
+            fail("the first push is %s" % first)
+        if first and first.get("params", {}).get("meta") != {"from": "s4", "from_project": "croft"}:
+            fail("a push carries %s, not from and from_project" % (first.get("params", {}).get("meta"),))
+
+        enqueue("second\nwith a line break")
+        enqueue("third")
+        enqueue("fourth", sender="s9", project="Home")
+        pushed = [line(10), line(10), line(10)]
+        contents = [(m or {}).get("params", {}).get("content") for m in pushed]
+        if contents != ["second\nwith a line break", "third", "fourth"]:
+            fail("three queued messages arrived as %s, not in order" % contents)
+        if (pushed[2] or {}).get("params", {}).get("meta") != {"from": "s9", "from_project": "Home"}:
+            fail("a push from another sender carries %s" % ((pushed[2] or {}).get("params", {}).get("meta"),))
+        if os.listdir(queue):
+            fail("the queue still holds %s after its messages were pushed" % os.listdir(queue))
+
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        reply = line(10)
+        if (reply or {}).get("result", {}).get("tools") != []:
+            fail("the channel server lists tools: %s" % reply)
+        server.stdin.close()
+        try:
+            status = server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            status = None
+            fail("the channel server did not exit when its input ended")
+        if status not in (0, None):
+            fail("the channel server exited with %s" % status)
+        if os.path.exists(mark):
+            fail("the channel server left its mark behind")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+channel_check()
 
 sys.exit(1 if bad else 0)
 PY

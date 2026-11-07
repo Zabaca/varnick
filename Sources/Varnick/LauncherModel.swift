@@ -2575,8 +2575,8 @@ final class LauncherModel: ObservableObject {
             saveSessions()
             return
         }
-        // The voice session nobody opened ends with its tab alone: it is no one's to resume, and its conversation is a session like any other.
-        if tab.isHiddenRun, session.record.isVoice {
+        // The same for a throwaway session of the Messages checklist's test (`MessagesSetup`).
+        if tab.isHiddenRun, session.record.isVoice || session.record.messageCheck == true {
             if !tab.remove(session, focusing: false) {
                 closing[tab.id] = nil
                 tabs.remove(at: index)

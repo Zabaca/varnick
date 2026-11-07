@@ -59,13 +59,17 @@ extension PanelAccess {
             throw PanelRefusal.bad("Claude Code hasn't trusted \(ClaudeTrust.abbreviated(path)) yet, so the new session would stop at its \"trust this folder?\" question with nobody to see it. Open a session in that folder once and accept it, then call again.")
         }
 
-        // The opener as Claude Code names it, by the caller's current conversation (its file is the one place its name is): the new session is told it.
+        // A caller that receives messages (option 01 of `sessions-cant-reach-each-other-reliably`) is reached by pane, as `opener`: the note holds its pane and
+        // its conversation, and nothing is read from Claude Code's file. Otherwise the opener as Claude Code names it, by the caller's current conversation
+        // (its file is the one place its name is): the new session is told it.
+        let callerReceives = Settings.shared.messagesBetweenSessions && MessageQueue.receives(caller.id)
         let openerConversation = caller.record.conversationID
-        let openerName = await Task.detached(operation: { ClaudeSessionFile.name(ofSession: openerConversation) }).value
+        let openerName = callerReceives ? nil : await Task.detached(operation: { ClaudeSessionFile.name(ofSession: openerConversation) }).value
         let (openerTab, _) = try Self.callingTab(caller.id, model, was: tab)
         let note = OpenerNote(session: openerName == nil ? nil : openerConversation, name: openerName,
                               project: (Project.root(of: caller.record.directory) as NSString).lastPathComponent,
-                              tab: openerTab.name ?? caller.label)
+                              tab: openerTab.name ?? caller.label,
+                              pane: callerReceives ? caller.id : nil, conversation: callerReceives ? openerConversation : nil)
 
         var record = SessionRecord(id: UUID(), prompt: prompt, title: "", directory: path, startedAt: Date(), lastUsed: Date())
         record.agent = agent
@@ -82,11 +86,12 @@ extension PanelAccess {
         model.addTab(PaneNode(session: session), show: false)
         session.start()
 
-        // The name Claude Code gave the session Varnick started under this id (`--session-id`), found by that id and nothing else.
+        // The name Claude Code gave the session Varnick started under this id (`--session-id`), found by that id and nothing else. A caller that
+        // receives messages doesn't wait for it: the reply gives the pane's id, which `send` takes.
         let sessionID = record.id.uuidString.lowercased()
         let deadline = min(ContinuousClock.now + Self.nameWait, began + .seconds(ScreenMCP.callTimeout - 1))
         var name: String?
-        while true {
+        while !callerReceives {
             name = await Task.detached(operation: { ClaudeSessionFile.name(ofSession: sessionID) }).value
             // Claude exiting as it started closes the pane, and the tab with it.
             guard model.tabs.contains(where: { $0.contains(session) }) else {
@@ -99,19 +104,24 @@ extension PanelAccess {
         let paneID = id(for: session.id, caller: caller.id)
         var text = "Opened a new tab in \(project.name), not brought up: \(paneID), a Claude session"
             + (agent.map { " as @\($0)" } ?? "") + ". "
-        if let name {
+        if callerReceives {
+            text += "Send it work with `send` to \(paneID). It was told it can reach this session with `send` to `opener`, and its result comes back as a message from it."
+        } else if let name {
             text += "Its name for SendMessage is \(name). Send it work with SendMessage to that name; with notify_when_idle you get one notice when it has nothing left to do."
         } else {
             text += "The session was still starting, so its name is not known yet: look it up with `claude agents --json`, where its sessionId is \(sessionID)."
         }
-        text += note.addressed
-            ? " It was told this session's id and name, so it can send its result back."
-            : " It was not told who opened it: Varnick could not read this session's name from Claude Code, so give it the address yourself if it needs to reply."
+        if !callerReceives {
+            text += note.addressed
+                ? " It was told this session's id and name, so it can send its result back."
+                : " It was not told who opened it: Varnick could not read this session's name from Claude Code, so give it the address yourself if it needs to reply."
+        }
         if let controller {
             text += " This tab is controlled by \(PeerManager.shared.name(of: controller)); the new tab is this Mac's own, so the user there finds it in this Mac's open tabs."
         }
         // The log's words: whether the session's name was found and whether the opener was named, never a project, a prompt, an agent or a name.
-        let action = (name == nil ? "unnamed" : "named") + (note.addressed ? " opener" : " no-opener") + (controller == nil ? "" : " controlled")
+        let action = callerReceives ? "messages" + (controller == nil ? "" : " controlled")
+            : (name == nil ? "unnamed" : "named") + (note.addressed ? " opener" : " no-opener") + (controller == nil ? "" : " controlled")
         return Answered(text: text, action: action)
     }
 }

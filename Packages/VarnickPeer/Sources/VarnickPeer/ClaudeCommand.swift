@@ -198,14 +198,18 @@ public enum ClaudeCommand {
     /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
     /// start like `taskResult`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
+    /// `channelPlugin` is the folder of Varnick's channel plugin (`ChannelPlugin`), which a pane that receives messages loads with `--plugin-dir` and listens to
+    /// with `--channels` (option 01 of `sessions-cant-reach-each-other-reliably`), read at each start like `mcpConfig` and not stored. Both flags take several
+    /// values, so they go before `--settings`, which ends their lists.
     /// `appendSystemPrompt` is the paragraph a session opened with `tab_open` is told who opened it (`OpenerNote`), kept on the record and passed at every
     /// start until the pane moves to another conversation; Claude Code records the system prompt with the conversation at its first request and resends
     /// that record on a resume, so a later start's text matters only after a compaction.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
                                  dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
-                                 appendSystemPrompt: String? = nil) -> [String] {
+                                 appendSystemPrompt: String? = nil, channelPlugin: String? = nil) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
+            + (channelPlugin.map { ["--plugin-dir", $0, "--channels", SessionMessage.channelArgument] } ?? [])
             + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])

@@ -111,20 +111,41 @@ public struct OpenerNote: Codable, Equatable, Sendable {
     /// The opener's project (its folder's name) and tab, for the paragraph that has no address to give.
     public var project: String
     public var tab: String?
+    /// The opener's pane and the conversation it held at the open (option 01 of `sessions-cant-reach-each-other-reliably`), set when the opener could receive
+    /// messages: `send` to `opener` reaches that pane, and is refused when the pane holds another conversation. Optional so older files load; an older build
+    /// ignores them.
+    public var pane: UUID?
+    public var conversation: String?
 
-    public init(session: String?, name: String?, project: String, tab: String?) {
+    public init(session: String?, name: String?, project: String, tab: String?, pane: UUID? = nil, conversation: String? = nil) {
         self.session = session
         self.name = name
         self.project = project
         self.tab = tab
+        self.pane = pane
+        self.conversation = conversation
     }
 
     /// Whether the paragraph can give the opener's address.
     public var addressed: Bool { session != nil && name != nil }
 
-    /// The text for `--append-system-prompt`. The wording was settled with the user on 2026-11-06 after tests (sessions-cant-start-sessions-in-other-projects).
-    public var paragraph: String {
+    /// The text for `--append-system-prompt` when the new session cannot send messages (the two forms settled with the user on 2026-11-06 after tests,
+    /// sessions-cant-start-sessions-in-other-projects).
+    public var paragraph: String { paragraph(messages: false) }
+
+    /// The text for `--append-system-prompt`. `messages`: this session starts with Varnick's `send`. With it and an opener that could receive (`pane`), the
+    /// paragraph has a third form that gives no id and no name: `send` to `opener` reaches that pane whatever restarts either of them (option 01 of
+    /// `sessions-cant-reach-each-other-reliably`).
+    public func paragraph(messages: Bool) -> String {
         let place = Self.oneLine(project, upTo: 60)
+        if messages, pane != nil {
+            let tab = tab.map { Self.oneLine($0, upTo: 60) }.flatMap { $0.isEmpty ? nil : " (its tab: \($0))" } ?? ""
+            return "This session was opened by another Claude session in \(place)\(tab), with Varnick's `tab_open`. "
+                + "You can reach it with Varnick's `send`, with `to` set to `opener`; that works whatever restarts either of you. "
+                + "Send it your result when you finish, or a question when you need a decision it can make and the user hasn't. "
+                + "If `send` says it can't be reached, say so here in your own reply, and never send to another pane in its place. "
+                + "The user can see this tab and type into it."
+        }
         guard let session, let name else {
             let tab = tab.map { Self.oneLine($0, upTo: 60) }.flatMap { $0.isEmpty ? nil : " (its tab: \($0))" } ?? ""
             return "This session was opened by another Claude session in \(place)\(tab), with Varnick's `tab_open`. "

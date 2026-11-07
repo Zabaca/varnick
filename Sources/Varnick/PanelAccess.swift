@@ -34,6 +34,8 @@ enum PanelRefusal: Error {
     case keysStopped(String, sent: PanelKeyCount, asked: PanelKeyCount)
     /// `tab_done` did not end the tab, with `TabDone`'s kind (the log's) and the words the session reads.
     case notDone(TabDone.Refusal, String)
+    /// `send` did nothing, with `SendRules`' kind (the log's) and the words the session reads.
+    case notSent(SendRules.Refusal)
     /// A pane tool's refusal in a tab another machine controls: the same message, marked in the log.
     indirect case inControlledTab(PanelRefusal)
 
@@ -55,6 +57,7 @@ enum PanelRefusal: Error {
         case .keysRefused(let why): "Nothing was sent: \(why)"
         case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
         case .notDone(_, let why): why
+        case .notSent(let refusal): refusal.message
         case .inControlledTab(let refusal): refusal.message
         }
     }
@@ -84,6 +87,7 @@ enum PanelRefusal: Error {
         case .keysRefused: "keys refused"
         case .keysStopped: "keys stopped"
         case .notDone(let kind, _): "not done: " + kind.word
+        case .notSent(let refusal): "not sent: " + refusal.word
         case .inControlledTab(let refusal): refusal.logKind + " controlled"
         }
     }
@@ -153,6 +157,8 @@ final class PanelAccess {
     private var outlineTables: [UUID: PanelIDs<OutlinePath>] = [:]
     /// What each calling pane has read of the Outline's rows, so an edit to a field it hasn't read, or that changed since, is refused.
     private var outlineKnown: [UUID: OutlineKnowledge] = [:]
+    /// How many messages each sending pane has sent in the last minute (`SendRate`), held in memory only.
+    var sendRates: [UUID: SendRate] = [:]
 
     // MARK: Ids
 
@@ -217,7 +223,7 @@ final class PanelAccess {
             guard let head = PeerJSON.decode(PanelRequestHead.self, from: line) else { throw PanelRefusal.unreadable }
             guard head.panel == PanelRequest.version else { throw PanelRefusal.versionDiffers }
             guard let request = PeerJSON.decode(PanelRequest.self, from: line) else { throw PanelRefusal.unreadable }
-            tool = PanelMCP.names.contains(request.tool) || PaneMCP.names.contains(request.tool) ? request.tool : "-"
+            tool = PanelMCP.names.contains(request.tool) || PaneMCP.names.contains(request.tool) || SendMCP.names.contains(request.tool) ? request.tool : "-"
             // The kind of pane asked for, from the fixed list: never the arguments' own words.
             if PaneMCP.names.contains(request.tool), let asked = OpenedPaneKind(rawValue: (request.args["kind"] ?? "").lowercased()) { action = " " + asked.rawValue }
             let done = try await run(request, arrived: arrived)
@@ -251,7 +257,7 @@ final class PanelAccess {
     /// `panes-open-only-by-hand-at-a-mac`; `tab_open` too, which adds a tab of this Mac's own, and `tab_done`, which ends one) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
     /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
     /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` adds a pane there, and refuses what would open on this Mac.
-    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, PaneMCP.tabDone, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, PaneMCP.tabDone, SendMCP.send, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
                                                  FindMCP.find, FindMCP.sessionRead, FindMCP.open]
 
     /// In order: Varnick starting, the pane, then the tool.
@@ -261,6 +267,7 @@ final class PanelAccess {
         let caller = try callingPane(request.pane, in: model, allowingControlled: lifted)
         prune(in: model)
         if PaneMCP.names.contains(request.tool) { return try await panes(request, model, caller: caller) }
+        if SendMCP.names.contains(request.tool) { return try await send(request.args, model, caller: caller) }
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }
         if request.tool == "show" {
             let (text, kind) = try show(request.args, model, caller: caller)
@@ -313,8 +320,9 @@ final class PanelAccess {
 
     /// Tables of panes that have gone are dropped.
     private func prune(in model: LauncherModel) {
-        guard !tables.isEmpty || !outlineTables.isEmpty || !outlineKnown.isEmpty else { return }
+        guard !tables.isEmpty || !outlineTables.isEmpty || !outlineKnown.isEmpty || !sendRates.isEmpty else { return }
         let open = Set(model.tabs.flatMap { $0.sessions.map(\.id) })
+        sendRates = sendRates.filter { open.contains($0.key) }
         tables = tables.filter { open.contains($0.key) }
         outlineTables = outlineTables.filter { open.contains($0.key) }
         outlineKnown = outlineKnown.filter { open.contains($0.key) }

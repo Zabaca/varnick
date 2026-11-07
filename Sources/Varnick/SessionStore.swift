@@ -107,6 +107,11 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// (`ClaudeSession.checkConversation`). Optional so older records load; an older build ignores it and starts the pane without the paragraph.
     var opener: OpenerNote?
 
+    /// One of the two throwaway sessions of the Messages between sessions checklist's test (option 01 of `sessions-cant-reach-each-other-reliably`): a
+    /// hidden Claude pane in Home, started with the channel and `send`, that `MessagesSetup` ends when the test is over. Its tab is hidden while
+    /// `runUnopened`, as a run's is. Optional so older records load; an older build reads it as an ordinary pane.
+    var messageCheck: Bool?
+
     /// Whether claude was last started skipping permissions (set by every real start, not an attach): `pane_open` gives a helper Skip only if its
     /// caller's is true. Optional so older records load; nil counts as no.
     var skippedAtStart: Bool?

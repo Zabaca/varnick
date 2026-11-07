@@ -25,8 +25,10 @@ public enum MCPServer {
     public static let protocolVersions = ["2024-11-05", "2025-03-26", "2025-06-18"]
 
     /// The reply to one JSON-RPC message; nil for a notification, which is never answered, and for what can't be answered. `call` answers a
-    /// `tools/call` for a tool it knows and returns nil for one it doesn't, which is `Unknown tool`.
-    public static func answer(_ line: String, tools: [[String: Any]], call: (_ name: String, _ arguments: [String: Any]?) -> MCPResult?) -> [String: Any]? {
+    /// `tools/call` for a tool it knows and returns nil for one it doesn't, which is `Unknown tool`. `experimental` and `instructions` are a server's
+    /// own to add to its `initialize` reply (the channel's, `ChannelServer`); the tool servers add none.
+    public static func answer(_ line: String, tools: [[String: Any]], experimental: [String: Any]? = nil, instructions: String? = nil,
+                              call: (_ name: String, _ arguments: [String: Any]?) -> MCPResult?) -> [String: Any]? {
         guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)), let message = object as? [String: Any] else {
             return failure(id: NSNull(), code: -32700, "Parse error")
         }
@@ -36,9 +38,13 @@ public enum MCPServer {
         switch message["method"] as? String {
         case "initialize":
             let asked = params["protocolVersion"] as? String ?? ""
-            return success(id: id, ["protocolVersion": protocolVersions.contains(asked) ? asked : protocolVersions.last!,
-                                    "capabilities": ["tools": [String: Any]()],
-                                    "serverInfo": ["name": name, "version": "1"]])
+            var capabilities: [String: Any] = ["tools": [String: Any]()]
+            if let experimental { capabilities["experimental"] = experimental }
+            var result: [String: Any] = ["protocolVersion": protocolVersions.contains(asked) ? asked : protocolVersions.last!,
+                                         "capabilities": capabilities,
+                                         "serverInfo": ["name": name, "version": "1"]]
+            if let instructions { result["instructions"] = instructions }
+            return success(id: id, result)
         case "tools/list":
             return success(id: id, ["tools": tools])
         case "ping":
