@@ -96,6 +96,8 @@ extension HeadlessPeerHost {
     /// quit, switched the setting off or slept) fails that write, and the request ends without claiming anything, so a message is never claimed for a Mac that is not there.
     func collectMessages(_ request: PeerRequest, by: String) -> PeerReply {
         for receipt in request.collect?.receipts ?? [] { HostOutbox.writeReceipt(receipt, mac: by) }
+        // Receipts alone: answered at once, with nothing held and nothing claimed (the Mac's held request is still waiting beside this one).
+        if request.collect?.hold == false { return .success() }
         HostOutbox.tidy(mac: by)
         HostOutbox.markCollecting(mac: by)
         signal(SIGPIPE, SIG_IGN)
@@ -140,7 +142,7 @@ extension HeadlessPeerHost {
         }
         var saved = savedCheck()
         if ask.action != nil || !HostChecklist.isFresh(saved, asking: ask.fresh == true) {
-            saved = readAndSave(test: ask.test ?? saved?.test)
+            saved = readAndSave(test: HostChecklist.savedTest(asked: ask.test, saved: saved?.test))
         } else if var current = saved, let test = ask.test, test != current.test {
             current.test = test
             save(current)

@@ -4,8 +4,8 @@ import VarnickPeer
 // Collecting a headless host's sessions' messages (option 07 of `sessions-cant-reach-each-other-reliably`), the running Varnick's half. The host never calls a Mac back
 // (ADR 0009), so a host session's answer waits in the host's outbox and this Mac asks: one request, held open by the host for up to 20 s and answered as soon as something
 // waits, then asked again at once. It asks only while Also between my Macs and hosts is on, the host says it is ready, and an open pane here has messaged that host (the
-// pane's `SentHosts` mark), so a host that nothing here has addressed is not held open. Each message goes through `PanelAccess.receiveHostMessage`, and the answers go back as
-// the next request's receipts, which is what the host session waits for. The host's side is `HeadlessMessages.swift` in `varnick-peer`.
+// pane's `SentHosts` mark), so a host that nothing here has addressed is not held open. Each message goes through `PanelAccess.receiveHostMessage` beside the loop, and its
+// receipt, which is what the host session waits for, goes back at once in a request of its own. The host's side is `HeadlessMessages.swift` in `varnick-peer`.
 
 @MainActor
 final class HostMessageCollector {
@@ -51,29 +51,48 @@ final class HostMessageCollector {
         return wanted
     }
 
+    /// The receipts of messages already handed to their receivers that the host has not been told about yet.
+    private var pending: [String: [PeerReceipt]] = [:]
+
+    private func takePending(_ host: String) -> [PeerReceipt] {
+        let receipts = pending[host] ?? []
+        pending[host] = nil
+        return receipts
+    }
+
+    /// One held request after another, the next made at once. **Handing a message to its receiver never delays the next request**: a receiver that is waiting is given up to 5 s to
+    /// start its turn, and a host session that answers again meanwhile must find this Mac collecting, so each message is handed over beside the loop and its receipt goes
+    /// back in a request of its own (`flush`) the moment it is ready.
     private func collect(from host: String) async {
-        var receipts: [PeerReceipt] = []
         while !Task.isCancelled, hostsToCollect().contains(host) {
-            let ask = PeerCollectAsk(receipts: receipts.isEmpty ? nil : receipts)
-            switch await PeerManager.shared.collectMessages(ask, from: host) {
+            // Receipts a flush could not send ride on this request.
+            let carried = takePending(host)
+            switch await PeerManager.shared.collectMessages(PeerCollectAsk(receipts: carried.isEmpty ? nil : carried), from: host) {
             case .failure:
-                // The receipts are kept for the next try. Nothing is held for later: a message the host could not hand over in time was taken back there.
+                // Kept for the next try. Nothing is held for later: a message the host could not hand over in time was taken back there.
+                pending[host, default: []].insert(contentsOf: carried, at: 0)
                 try? await Task.sleep(for: .seconds(HostMessages.retryAfterFailure))
             case .success(let messages):
-                receipts = []
-                guard !messages.isEmpty, let model = PeerManager.shared.model else { continue }
-                // The messages are handed to their receivers together (each may wait up to 5 s to see its turn start), then the answers go back in the next request.
-                receipts = await withTaskGroup(of: PeerReceipt.self) { group in
-                    for message in messages {
-                        group.addTask { @MainActor in
-                            PeerReceipt(id: message.id, sent: await PanelAccess.shared.receiveHostMessage(message, host: host, model: model))
-                        }
-                    }
-                    var answered: [PeerReceipt] = []
-                    for await receipt in group { answered.append(receipt) }
-                    return answered
+                guard let model = PeerManager.shared.model else { continue }
+                for message in messages {
+                    Task { await self.handOver(message, host: host, model: model) }
                 }
             }
+        }
+    }
+
+    private func handOver(_ message: PeerHostMessage, host: String, model: LauncherModel) async {
+        let sent = await PanelAccess.shared.receiveHostMessage(message, host: host, model: model)
+        pending[host, default: []].append(PeerReceipt(id: message.id, sent: sent))
+        await flush(host)
+    }
+
+    /// Tells the host what became of the messages handed over, without waiting for the held request to return. A request that fails leaves the receipts for the next held one.
+    private func flush(_ host: String) async {
+        let receipts = takePending(host)
+        guard !receipts.isEmpty else { return }
+        if case .failure = await PeerManager.shared.collectMessages(PeerCollectAsk(receipts: receipts, hold: false), from: host) {
+            pending[host, default: []].insert(contentsOf: receipts, at: 0)
         }
     }
 }

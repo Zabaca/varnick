@@ -965,10 +965,11 @@ final class PeerManager: ObservableObject {
 
     /// Collects the messages a headless host's sessions have for this Mac (`collectMessages`), handing over the receipts for the last ones. The host holds the request
     /// up to `HostMessages.hold` seconds and answers empty if nothing came; the deadline is longer, since a request past it closes the shared connection.
+    /// An ask with `hold` false hands over receipts only and is answered at once, so it gets a short deadline.
     func collectMessages(_ ask: PeerCollectAsk, from host: String) async -> Result<[PeerHostMessage], Refusal> {
         var request = tabRequest(.collectMessages)
         request.collect = ask
-        switch await send(request, to: host, timeout: HostMessages.collectDeadline) {
+        switch await send(request, to: host, timeout: ask.hold == false ? 15 : HostMessages.collectDeadline) {
         case .failure(let refusal): return .failure(refusal)
         case .success(let reply): return .success(reply.collected ?? [])
         }

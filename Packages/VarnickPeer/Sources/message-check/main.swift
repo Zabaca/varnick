@@ -924,5 +924,63 @@ for _ in 0..<11 {
 expect("ten sends in a minute are allowed and the eleventh is refused", results.prefix(10).allSatisfy { !$0 } && results[10], "\(results)")
 expect("a refused send is not counted against the cap", { var r = SendRate(); let c = Clock(); c.now = Date(); _ = callSend("s7", "x", rate: &r, clock: c); _ = callSend("s1", " ", rate: &r, clock: c); return r.canSend(at: c.now) && (0..<10).allSatisfy { _ in r.allow(at: c.now) } }())
 
+
+// MARK: The fix round: the Mac's test word never overwrites the host's, and two answers a second apart are both collected
+
+expect("a Mac with no result sends no test word, so a restart or a second Mac opening Settings leaves a saved failure alone", HostChecklist.testWord(.notRun) == nil)
+expect("a Mac that holds a result sends it", HostChecklist.testWord(.passed(arrived: 1, answered: 2)) == "passed" && HostChecklist.testWord(.failed("x")) == "failed")
+expect("a test that is starting sends the word that clears a failure", HostChecklist.testWord(.running("Starting…")) == "notRun" && HostChecklist.testStarting == "notRun")
+expect("the host keeps its saved failure when the Mac sends no word", HostChecklist.savedTest(asked: nil, saved: "failed") == "failed")
+expect("a starting test resets a saved failure", HostChecklist.savedTest(asked: "notRun", saved: "failed") == "notRun")
+expect("a passed or failed word overwrites what the host had", HostChecklist.savedTest(asked: "passed", saved: "failed") == "passed" && HostChecklist.savedTest(asked: "failed", saved: "passed") == "failed")
+expect("with nothing asked and nothing saved there is no result", HostChecklist.savedTest(asked: nil, saved: nil) == nil)
+var failedSaved = savedPassing
+failedSaved.test = HostChecklist.savedTest(asked: HostChecklist.testWord(.notRun), saved: "failed")
+expect("a read from a Mac with no result leaves a host with a failed test not ready", HostChecklist.state(saved: failedSaved, ownFileNow: true).ready == false, "\(String(describing: failedSaved.test))")
+expect("the absent word is absent on the wire", !PeerJSON.line(PeerHostCheckAsk(fresh: true)).contains("\"test\""))
+expect("a receipts-only ask says it does not hold, and an older ask reads as a held one", PeerJSON.decode(PeerCollectAsk.self, from: PeerJSON.line(PeerCollectAsk(receipts: [], hold: false)))?.hold == false
+       && PeerJSON.decode(PeerCollectAsk.self, from: "{}")?.hold == nil)
+
+// Two host sessions answer a second apart while the Mac takes 1.5 s to hand each message to its receiver. The Mac asks again at once and hands messages over beside
+// its loop, as `HostMessageCollector` does; each answer is taken inside the 5 s window and neither is refused as "not collecting".
+let busyMac = "99999999-1111-4222-8333-944455566677"
+let helperA = UUID(), helperB = UUID()
+for helper in [helperA, helperB] { _ = SenderTable.id(mac: busyMac, pane: paneA, name: "Desk Mac", project: "croft", receiver: helper) }
+HostOutbox.markCollecting(mac: busyMac)
+let macStopped = Box(false)
+let handedOver = Box<[String]>([])
+let handedLock = NSLock()
+let macLoop = Thread {
+    while !macStopped.value {
+        HostOutbox.markCollecting(mac: busyMac)
+        for message in HostOutbox.claim(mac: busyMac) {
+            Thread.detachNewThread {
+                Thread.sleep(forTimeInterval: 1.5)
+                handedLock.lock(); handedOver.value.append(message.text); handedLock.unlock()
+                HostOutbox.writeReceipt(PeerReceipt(id: message.id, sent: PeerMessageReply(delivery: .waiting, started: true, taken: true, project: "croft")), mac: busyMac)
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+macLoop.start()
+let answers = Box<[String: MCPResult]>([:])
+let answersLock = NSLock()
+let callers = DispatchGroup()
+for (index, helper) in [helperA, helperB].enumerated() {
+    callers.enter()
+    Thread.detachNewThread {
+        Thread.sleep(forTimeInterval: Double(index))
+        var rate = SendRate()
+        let result = HostSendServer.call(["to": "s1", "text": "answer \(index + 1)"], pane: helper, rate: &rate, facts: { HostSendServer.Facts(project: "work", skips: false) })
+        answersLock.lock(); answers.value["answer \(index + 1)"] = result; answersLock.unlock()
+        callers.leave()
+    }
+}
+callers.wait()
+macStopped.value = true
+expect("two answers a second apart are both taken and neither is refused as not collecting", answers.value.count == 2 && answers.value.values.allSatisfy { !$0.isError }
+       && handedOver.value.sorted() == ["answer 1", "answer 2"], "\(answers.value.mapValues { ($0.isError, ($0.content.first?["text"] as? String) ?? "") }) \(handedOver.value)")
+
 print("check-messages: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

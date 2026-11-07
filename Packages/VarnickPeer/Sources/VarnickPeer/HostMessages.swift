@@ -43,9 +43,13 @@ public struct PeerReceipt: Codable, Equatable, Sendable {
 /// `collectMessages`' body: the receipts for the messages the Mac collected last time. The Mac sends the request with no receipts to ask for nothing but messages.
 public struct PeerCollectAsk: Codable, Equatable, Sendable {
     public var receipts: [PeerReceipt]?
+    /// False hands over the receipts and answers at once, without holding the request or claiming a message: a Mac that has finished handing a message to its receiver says so
+    /// while its held request is still waiting. Nil or true is the held request. Optional, so a host that does not know it holds the request as before.
+    public var hold: Bool?
 
-    public init(receipts: [PeerReceipt]? = nil) {
+    public init(receipts: [PeerReceipt]? = nil, hold: Bool? = nil) {
         self.receipts = receipts
+        self.hold = hold
     }
 }
 

@@ -114,13 +114,8 @@ final class HostMessagesSetup: ObservableObject {
 
     // MARK: Reading
 
-    private func testWord(_ host: String) -> String {
-        switch state(of: host).test {
-        case .passed: "passed"
-        case .failed: HostChecklist.testFailed
-        case .notRun, .running: "notRun"
-        }
-    }
+    /// Nil unless this Mac holds a result or a test is starting, so a read never overwrites the host's saved result with "not run" (`HostChecklist.testWord`).
+    private func testWord(_ host: String) -> String? { HostChecklist.testWord(state(of: host).test) }
 
     /// Reads the host's rows, from its saved read when that is under a minute old unless `fresh` (Check again). A host that answers "Unknown request" is an older relay.
     func refresh(_ host: String, fresh: Bool = false) {
@@ -235,7 +230,7 @@ final class HostMessagesSetup: ObservableObject {
         let limit = MessagesSetup.stepLimit
         // A test that failed before stops the host's gate; this one starts clean, so a host whose rows passed is ready again for it. The host's last hello says so,
         // which is what lets this Mac send to it and collect from it.
-        _ = await PeerManager.shared.hostChecklist(PeerHostCheckAsk(fresh: true, test: "notRun"), on: host)
+        _ = await PeerManager.shared.hostChecklist(PeerHostCheckAsk(fresh: true, test: HostChecklist.testStarting), on: host)
         await PeerManager.shared.refresh(host)
 
         let receiver = UUID()
@@ -252,7 +247,7 @@ final class HostMessagesSetup: ObservableObject {
         var up = false
         let started = ContinuousClock.now + .seconds(limit)
         while ContinuousClock.now < started, !up, !Task.isCancelled {
-            if case .success(let list) = await PeerManager.shared.hostChecklist(PeerHostCheckAsk(test: "notRun"), on: host), list.receiving?.contains(receiver.uuidString.lowercased()) == true {
+            if case .success(let list) = await PeerManager.shared.hostChecklist(PeerHostCheckAsk(), on: host), list.receiving?.contains(receiver.uuidString.lowercased()) == true {
                 up = true
             } else {
                 try? await Task.sleep(for: .seconds(2))

@@ -124,8 +124,24 @@ public enum HostChecklist {
     public static let update = "update"
     public static let remove = "remove"
     public static let testFailed = "failed"
+    /// A test that is starting: the host forgets a failure, so the new test's messages are not refused by the gate the old one closed.
+    public static let testStarting = "notRun"
 
     public static let titles = ["Claude Code is new enough", "Signed in with Anthropic directly", "Usage data allowed", "This host approves Varnick", "Sessions started before"]
+
+    /// The word the Mac sends for its own last test: `failed` or `passed` once it holds one, `notRun` for a test that is starting (which clears a failure, so a failed test can be
+    /// run again), and nothing at all when it has none, so a Mac that restarted, or another Mac opening Settings, never overwrites what the host saved.
+    public static func testWord(_ result: ChannelChecklist.TestResult) -> String? {
+        switch result {
+        case .passed: "passed"
+        case .failed: testFailed
+        case .running: testStarting
+        case .notRun: nil
+        }
+    }
+
+    /// What the host saves with a read: the Mac's word when it sent one, else what it already had.
+    public static func savedTest(asked: String?, saved: String?) -> String? { asked ?? saved }
 
     /// A read younger than this is answered from the saved file unless the Mac asks for a fresh one.
     public static let freshFor: TimeInterval = 60
