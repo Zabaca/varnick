@@ -174,9 +174,12 @@ check-apps:
 
 # What `Varnick --mcp` lists for each set of tools, with no running Varnick (scripts/check-mcp.sh). After `make build`;
 # `make check-mcp BIN=<binary>` checks another build.
+# It also builds the headless relay (Packages/VarnickPeer's `varnick-peer`, which the Mac build does not) and checks its tool server and its channel server.
 BIN ?= .build/release/Varnick
+RELAY ?= Packages/VarnickPeer/.build/debug/varnick-peer
 check-mcp:
-	@scripts/check-mcp.sh $(BIN)
+	@swift build --package-path Packages/VarnickPeer --product varnick-peer
+	@scripts/check-mcp.sh $(BIN) $(RELAY)
 
 # The slot function of automations (`AutomationSlot`, Packages/VarnickPeer) over a table of cases, with no Varnick and no files. Builds the
 # check first, in the package's own folder (the headless relay builds there too), so it needs no `make build`.

@@ -3,8 +3,11 @@ import Foundation
 // What two Varnicks say to each other (ADR 0007): one JSON request line in, one reply line out,
 // carried over SSH by the relay (`PeerRelay`) and to the running app by a socket (`PeerSocket`).
 
-/// Bump when a request or reply changes shape: a hello across versions answers with an error, and
-/// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
+/// Bump when a request or reply changes in a way an older build cannot ignore or refuse in words: a hello across versions answers with an error, and
+/// the peer's row says so. An addition does not bump: a new optional field is ignored by a build that does not know it (peer JSON decodes with a plain
+/// `JSONDecoder`), and a new request is answered "Unknown request" by one that does not know it (`PeerRelay.run`), which the asking side reads as "upgrade that host".
+/// What does bump is a change to a shape that is read, a required field, and a new case of an enum that travels in a reply an older build decodes (a plain
+/// `JSONDecoder` fails the whole reply on a case it does not know). The exception is `upgrade` and `restart`, whose shapes are frozen (ADR 0007's amendment of 2026-11-07).
 public enum PeerProtocol {
     public static let version = 35
 
@@ -15,8 +18,12 @@ public enum PeerProtocol {
     /// The requests a listed device is refused, whatever else it may ask: the search sync's `rows` and `pages`, `arrange`, the five automation requests a Mac
     /// sends a headless host, and the two frozen maintenance requests (ADR 0011). Every other request is a device's to send, and `PeerRelay` lets it.
     public static func isMacsOnly(_ op: PeerOp) -> Bool {
-        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || isMessageRequest(op) || answersAnyVersion(op)
+        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || isMessageRequest(op) || isHostMessageRequest(op) || answersAnyVersion(op)
     }
+
+    /// The two requests of messages to a headless host (option 07 of `sessions-cant-reach-each-other-reliably`, no protocol bump), for a listed Mac only: the host's
+    /// checklist with its actions, and a Mac collecting the host sessions' messages. A device can neither change the host's policy nor take its sessions' words.
+    public static func isHostMessageRequest(_ op: PeerOp) -> Bool { op == .hostChecklist || op == .collectMessages }
 
     /// The two requests of messages between Macs (protocol 35, option 02 of `sessions-cant-reach-each-other-reliably`), for a listed Mac only: a device can't push text
     /// into a session this way.
@@ -207,6 +214,12 @@ public enum PeerOp: String, Codable, Sendable, CaseIterable {
     /// A Mac turned on Also between my Macs (protocol 35) and asks this one to join: `asker` is its name. The receiving Varnick puts a notice in its menu that opens
     /// the checklist. For a listed Mac only.
     case messageAsk
+    /// A headless host's checklist for messages (`PeerHostCheckAsk`, `PeerHostChecklist`), read on the host, with the actions its buttons run (Allow, and Approve, Update and
+    /// Remove approval through `sudo -n`) behind the user's press only. For a listed Mac only; a host that does not know it answers "Unknown request" (no protocol bump).
+    case hostChecklist
+    /// A Mac collecting the messages the host's sessions have for it, and handing over its receipts for the last ones (`PeerCollectAsk`). The host holds it for up to 20 s.
+    /// For a listed Mac only; a host that does not know it answers "Unknown request".
+    case collectMessages
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -389,9 +402,13 @@ public struct PeerStart: Codable, Equatable, Sendable {
     public var url: String?
     public var app: String?
     public var file: String?
+    /// A throwaway session of the messages test (option 07 of `sessions-cant-reach-each-other-reliably`): the host keeps it out of its tabs and Recent. Optional, so an
+    /// older host ignores it and lists the session as any other.
+    public var messageTest: Bool?
 
     public init(id: String, folder: String? = nil, prompt: String, agent: String? = nil, skipPermissions: Bool? = nil, resume: Bool? = nil,
-                kind: PeerPaneKind? = nil, url: String? = nil, app: String? = nil, file: String? = nil) {
+                kind: PeerPaneKind? = nil, url: String? = nil, app: String? = nil, file: String? = nil, messageTest: Bool? = nil) {
+        self.messageTest = messageTest
         self.id = id
         self.folder = folder
         self.prompt = prompt
@@ -836,6 +853,10 @@ public struct PeerRequest: Codable, Sendable {
     public var message: PeerSessionMessage?
     /// MessageAsk (protocol 35): the name of the Mac that asks.
     public var asker: String?
+    /// HostChecklist: what to read and do on the host.
+    public var hostCheck: PeerHostCheckAsk?
+    /// CollectMessages: the receipts for the last messages.
+    public var collect: PeerCollectAsk?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -926,6 +947,12 @@ public struct PeerReply: Codable, Sendable {
 
     /// SendMessage (protocol 35): what the host did with the message.
     public var sent: PeerMessageReply?
+
+    /// HostChecklist: the host's rows and what its last action did.
+    public var hostChecklist: PeerHostChecklist?
+
+    /// CollectMessages: the messages the host's sessions have for the asking Mac; empty when the hold ended with none.
+    public var collected: [PeerHostMessage]?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

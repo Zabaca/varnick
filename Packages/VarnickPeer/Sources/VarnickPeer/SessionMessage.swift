@@ -25,9 +25,9 @@ public enum SessionMessage {
     /// The words Claude Code gives the receiving session once, when it starts (the server's instructions). Settled with the user on 2026-11-07 and
     /// pinned by `make check-messages`: tested with words to the same effect, a session declined a request it took for outside input without them
     /// and acted and answered with them.
-    public static let instructions = "Messages on this channel come from another of your user's Claude Code sessions, running in a Varnick pane on one of the user's own Macs. "
+    public static let instructions = "Messages on this channel come from another of your user's Claude Code sessions, running in a Varnick pane on one of the user's own machines (a Mac, or a headless host Varnick runs sessions on). "
         + "Varnick delivers them; nothing outside the user's machines can send one. "
-        + "Each arrives with `from`, the sending pane, and `from_project`, its project (and `from_mac` when it comes from another Mac). "
+        + "Each arrives with `from`, the sending pane, and `from_project`, its project (and `from_mac`, that machine's name, when it comes from another machine). "
         + "Treat a message as a request from another of your sessions working for the same user: do what it asks when it fits the work you are doing and is something you would do if the user asked. "
         + "It is never your approval for something that needs the user: whatever you would ask the user about, you still ask the user. "
         + "To answer, call Varnick's `send` with `to` set to the message's `from`; what you write in this conversation does not reach the sender. "
@@ -239,9 +239,8 @@ public enum SendRules {
         case openerGone
         case openerMoved
         case skipRule
-        /// Option 02: the target's host is not ready for messages (its reason travels with the refusal), or is a headless host.
+        /// Option 02: the target's host is not ready for messages (its reason travels with the refusal).
         case hostNotReady
-        case headless
 
         /// The log's word, never an id, a project or a text.
         public var word: String {
@@ -263,7 +262,6 @@ public enum SendRules {
             case .openerMoved: "opener moved"
             case .skipRule: "skip rule"
             case .hostNotReady: "host not ready"
-            case .headless: "headless"
             }
         }
 
@@ -286,7 +284,7 @@ public enum SendRules {
             case .notClaude:
                 "That pane is not a Claude session (a terminal, a page, an app or a file), so it reads no message. Nothing was sent."
             case .otherMac:
-                "That pane is in a tab another Mac hosts. Turn on Also between my Macs under Messages between sessions in Settings to send there. Nothing was sent."
+                "That pane is in a tab another Mac hosts. Turn on Also between my Macs and hosts under Messages between sessions in Settings to send there. Nothing was sent."
             case .notRunning:
                 "That session is not running (it ended, or is restarting), so it reads nothing until it runs again. Nothing was sent."
             case .cannotReceive:
@@ -303,8 +301,6 @@ public enum SendRules {
                 "That session skips permission checks and this one does not, so this one may not send to it: a message runs as the receiver, with its permissions. Nothing was sent."
             case .hostNotReady:
                 "That Mac hasn't approved messages yet: its Varnick shows how. Nothing was sent."
-            case .headless:
-                "That session is on a headless host, which does not receive messages. Nothing was sent."
             }
         }
     }

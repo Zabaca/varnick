@@ -38,8 +38,11 @@ extension HeadlessPeerHost {
         case .outlineRead, .outlineEdit: return .reply(.failure("\(name) is a headless host: the Outline needs a Mac"))
         // A headless host's automations are edited from a Mac's Settings (protocol 29), never from a device.
         case .phoneAutomations: return .reply(.failure("\(name) is a headless host: its automations are edited from a Mac's Settings"))
-        // Its server lists `notify` alone (option 02 of `sessions-cant-reach-each-other-reliably`), and Linux keeps machine policy elsewhere.
-        case .sendMessage, .messageAsk: return .reply(.failure("\(name) is a headless host: its sessions do not receive messages"))
+        // Messages (option 07 of `sessions-cant-reach-each-other-reliably`): a Mac's message queued by this process, the host's checklist, and a Mac collecting.
+        case .sendMessage: return .reply(receiveMessage(request, by: by))
+        case .hostChecklist: return .reply(hostChecklist(request))
+        case .collectMessages: return .reply(collectMessages(request, by: by))
+        case .messageAsk: return .reply(.failure("\(name) is a headless host: it can't be asked to join. Its checklist is on a Mac, in Settings › Claude"))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
     }
@@ -83,6 +86,11 @@ extension HeadlessPeerHost {
         }
         let target = HeadlessConfig.expand(folder ?? config.defaultFolder)
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(name)") }
+        // A Mac's messages test (option 07 of `sessions-cant-reach-each-other-reliably`) needs the host ready and a folder Claude Code trusts, since nobody can answer its question.
+        if ask.messageTest == true {
+            guard startsWithChannel else { return .failure("\(name) isn't ready for messages: \(messagesState.reason ?? "its checklist hasn't passed")") }
+            if let untrusted = ClaudeTrust.note(for: target) { return .failure("\(name): \(untrusted)") }
+        }
 
         // Record: saved first; `launch` then makes the pane folder and the session.
         var record = HeadlessSession(id: id, folder: target, prompt: ask.isTerminal ? "" : ask.prompt, agent: ask.isTerminal ? nil : ask.agent,
@@ -90,6 +98,12 @@ extension HeadlessPeerHost {
                                      bootID: HeadlessSession.currentBootID, started: Date(), starting: true)
         if tab != id { record.tab = tab }
         if ask.isTerminal { record.kind = .terminal }
+        // The test's receiver asks before its tools and may call `send` without a dialog, so it is the Mac sender's equal under the skip rule.
+        if ask.messageTest == true, !ask.isTerminal {
+            record.messageTest = true
+            record.skipPermissions = false
+            record.allowedTools = [SendTool.qualifiedName]
+        }
         do {
             guard try state.add(record, placed: placement) == .added else { return taken }
         } catch {
@@ -453,7 +467,8 @@ extension HeadlessPeerHost {
         state.reconcile()
         let found: (sessions: [HeadlessSession], tabs: [HeadlessTab])
         do { found = try state.snapshot() } catch { return stateFailure(error) }
-        let open = found.sessions.filter { $0.ended == nil }
+        // A Mac's messages test keeps its throwaway receiver out of every list.
+        let open = found.sessions.filter { $0.ended == nil && $0.messageTest != true }
         let statuses = Zmx.statuses(of: open.compactMap { UUID(uuidString: $0.id).map(Zmx.sessionName) })
         var order: [String] = []
         for record in open where !order.contains(record.tabID) { order.append(record.tabID) }
@@ -519,7 +534,7 @@ extension HeadlessPeerHost {
         var seen = Set<String>()
         var order: [String] = [], tabs: [String: [(record: HeadlessSession, session: PeerRecentSession)]] = [:]
         // A run that ended unopened never reaches Recent, as a Mac's run never does: the Runs tab opens it.
-        for record in records.filter({ $0.ended != nil && !$0.isTerminal && $0.runUnopened != true && !stillOpen.contains($0.tabID) })
+        for record in records.filter({ $0.ended != nil && !$0.isTerminal && $0.runUnopened != true && $0.messageTest != true && !stillOpen.contains($0.tabID) })
             .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
             let folder = record.folder ?? config.defaultFolder

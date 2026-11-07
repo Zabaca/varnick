@@ -42,7 +42,7 @@ struct HeadlessPeerHost: PeerHost {
         // The same fields a Mac's hello carries. Nothing here types, so there is no Keep sessions
         // running setting: sessions always outlive the relay.
         reply.hello = PeerHello(id: id, name: name, address: config.address, build: build, zmx: Zmx.version(),
-                                keepSessions: true, running: true, headless: true)
+                                keepSessions: true, running: true, headless: true, messages: messagesState)
         return reply
     }
 

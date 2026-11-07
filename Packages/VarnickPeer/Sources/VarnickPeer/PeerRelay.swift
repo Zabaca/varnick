@@ -110,7 +110,7 @@ public enum PeerRelay {
             return finish(host.hello(line: line))
         case .start, .resume, .end, .done, .arrange, .reopen, .projects, .agents, .apps, .automations, .saveAutomation, .deleteAutomation, .runAutomation,
              .runOpened, .voiceAudio, .voiceAsk, .voiceStatus, .restartPane, .outlineRead, .outlineEdit, .phoneAutomations, .voiceExchanges,
-             .sendMessage, .messageAsk:
+             .sendMessage, .messageAsk, .hostChecklist, .collectMessages:
             return forwarded(host.forward(op, line: line), host: host, for: device)
         case .status:
             return status(PeerJSON.decode(PeerRequest.self, from: line), host: host, for: device)

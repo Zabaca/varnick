@@ -1,6 +1,6 @@
 import Foundation
 
-// The `notify` tool, shared by `Varnick --mcp` on a Mac and the headless relay's `--mcp`, so the two answer alike
+// The `notify` tool, shared by `Varnick --mcp` on a Mac and the headless relay's `--mcp` (`HostSendServer`), so the two answer alike
 // (`docs/problems/phone-page-is-only-a-browser-tab`, option 04). The server (`MCPServer`) never reads or acts: a `notify` call is answered here
 // and recorded by the PostToolUse hook (`ClaudeCommand.messageInputCommand`), which is the only writer of the message file.
 
@@ -48,15 +48,8 @@ public enum NotifyTool {
                                  + "text without a new alert."] + cut).joined(separator: " "))
     }
 
-    /// The headless relay's server: `<relay> --mcp --pane <id> --notify`, with `notify` alone.
-    public static func relayConfiguration(command: String, pane: UUID) -> String {
-        MCPServer.configuration(command: command, arguments: ["--mcp", "--pane", pane.uuidString.lowercased(), argument])
-    }
-
-    /// What the headless relay's `--mcp` runs: `notify` alone.
-    public static func serve() -> Int32 {
-        MCPServer.run { line in
-            MCPServer.answer(line, tools: [tool]) { name, arguments in name == Self.name ? call(arguments) : nil }
-        }
+    /// The headless relay's server: `<relay> --mcp --pane <id> --notify`, with `--send` too while the host is ready for messages (`HostSendServer`).
+    public static func relayConfiguration(command: String, pane: UUID, send: Bool = false) -> String {
+        MCPServer.configuration(command: command, arguments: ["--mcp", "--pane", pane.uuidString.lowercased(), argument] + (send ? [SendTool.argument] : []))
     }
 }

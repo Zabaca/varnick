@@ -68,9 +68,12 @@ public enum ChannelChecklist {
 
     /// `provider` is `claude auth status --json`'s `apiProvider` ("firstParty", "bedrock", "vertex", "foundry"…). `gateway` is a base address the login shell sets
     /// for Claude Code's requests, when it isn't Anthropic's.
-    public static func signInRow(loggedIn: Bool?, provider: String?, gateway: String?) -> Row {
+    public static func signInRow(loggedIn: Bool?, provider: String?, gateway: String?, host: Bool = false) -> Row {
         guard let loggedIn else { return Row(.blocked, "Claude Code's login report couldn't be read.") }
-        guard loggedIn else { return Row(.blocked, "Claude Code isn't signed in. Open a Claude pane and sign in with Anthropic.") }
+        guard loggedIn else {
+            return Row(.blocked, host ? "Claude Code isn't signed in on this host. Sign in there, in the host's account, with Anthropic."
+                       : "Claude Code isn't signed in. Open a Claude pane and sign in with Anthropic.")
+        }
         if let provider, provider != "firstParty" {
             let name = ["bedrock": "Amazon Bedrock", "vertex": "Google Vertex", "foundry": "Microsoft Foundry"][provider] ?? provider
             return Row(.blocked, "Claude Code uses \(name), not Anthropic directly. Channels can't work there, so messages can't.")
@@ -169,7 +172,7 @@ public enum ChannelChecklist {
         return Row(.fix, "\(where_) \(allowMeaning)", action: .allowUsageData(change), button: "Allow")
     }
 
-    // MARK: 4. This Mac approves Varnick
+    // MARK: 4. This Mac (or host) approves Varnick
 
     /// Where Anthropic's list came from, for the row's text.
     public enum ListSource: Equatable, Sendable {
@@ -177,25 +180,31 @@ public enum ChannelChecklist {
         case pinned
     }
 
-    public static func approvalRow(_ policy: ChannelPolicy.Reading, anthropic: [ChannelPolicy.Entry], source: ListSource) -> Row {
+    /// `host` words the row for a headless host (option 07 of `sessions-cant-reach-each-other-reliably`): Approve runs on the host through `sudo -n`, which asks no password
+    /// there, and opens a terminal on the host only when its sudo wants one.
+    public static func approvalRow(_ policy: ChannelPolicy.Reading, anthropic: [ChannelPolicy.Entry], source: ListSource, host: Bool = false) -> Row {
+        let subject = host ? "This host" : "This Mac"
         if !policy.unreadable.isEmpty {
-            return Row(.blocked, "This Mac's Claude Code policy has a file Varnick can't read (\(policy.unreadable.joined(separator: ", "))), so it won't add to it.")
+            return Row(.blocked, "\(subject)'s Claude Code policy has a file Varnick can't read (\(policy.unreadable.joined(separator: ", "))), so it won't add to it.")
         }
         if !policy.falseIn.isEmpty {
-            return Row(.blocked, "This Mac's administrator turned channels off (channelsEnabled is false in \(policy.falseIn.joined(separator: ", "))). Varnick's file would override that, so it adds nothing.")
+            return Row(.blocked, "\(subject)'s administrator turned channels off (channelsEnabled is false in \(policy.falseIn.joined(separator: ", "))). Varnick's file would override that, so it adds nothing.")
         }
         let from = source == .cache ? "Anthropic's list read from Claude Code's cache" : "Anthropic's list as pinned in this build (Claude Code's cache couldn't be read)"
+        let how = host
+            ? "Approve runs one fixed command on the host through sudo, which asks for no password there if the host's account needs none (else it opens a terminal on the host for the password), and adds one file of Varnick's beside the policy, owned by root"
+            : "Approve asks for the administrator password in the system's own dialog and adds one file of Varnick's beside the policy"
         if !policy.approvesVarnick {
-            return Row(.fix, "This Mac's Claude Code policy doesn't approve Varnick's channel. Approve asks for the administrator password in the system's own dialog and adds one file of Varnick's beside the policy; no existing entry is changed. It also lists \(from), so those channels keep working.",
+            return Row(.fix, "\(subject)'s Claude Code policy doesn't approve Varnick's channel. \(how); no existing entry is changed. It also lists \(from), so those channels keep working.",
                        action: .approve, button: "Approve")
         }
         let missing = ChannelPolicy.missingFromOwnFile(policy, anthropic: anthropic)
         if !missing.isEmpty {
             let names = missing.map(\.plugin).joined(separator: ", ")
-            return Row(.fix, "Claude Code's list of approved channels now has \(names), which Varnick's file doesn't repeat, so a policy list would leave it off. Update asks for the password again.",
+            return Row(.fix, "Claude Code's list of approved channels now has \(names), which Varnick's file doesn't repeat, so a policy list would leave it off. Update \(host ? "does the same as Approve" : "asks for the password again").",
                        action: .update, button: "Update")
         }
-        return Row(.pass, "This Mac approves Varnick's channel (\(from)).")
+        return Row(.pass, "\(subject) approves Varnick's channel (\(from)).")
     }
 
     // MARK: 5. Panes started before
@@ -256,5 +265,99 @@ extension ChannelChecklist {
 
     public static func notStarted(after seconds: Int) -> String {
         "The second session's channel did not start within \(seconds) s. Claude Code may not have started it."
+    }
+}
+
+// MARK: What the rows decide from, and the decision (shared by a Mac's and a headless host's checklists)
+
+extension ChannelChecklist {
+    /// Everything the first four rows decide from, read on the machine the row is about.
+    public struct Reads: Sendable {
+        public var claudeFound = false
+        public var versionOutput: String?
+        public var loggedIn: Bool?
+        public var apiProvider: String?
+        public var analyticsDisabled: Bool?
+        public var userEnv: [String: String] = [:]
+        public var userReadable = true
+        public var shell: [String: String] = [:]
+        public var policy = ChannelPolicy.Reading()
+        public var cache: (entries: [ChannelPolicy.Entry]?, channelsOn: Bool?)?
+
+        public init() {}
+    }
+
+    private struct Auth: Decodable {
+        var loggedIn: Bool?
+        var apiProvider: String?
+        var analyticsDisabled: Bool?
+    }
+
+    /// `claude auth status --json`'s output, which may have something else printed around the object.
+    public static func readAuth(_ output: String, into reads: inout Reads) {
+        let json = output.firstIndex(of: "{").flatMap { first in output.lastIndex(of: "}").map { String(output[first...$0]) } } ?? ""
+        guard let auth = try? JSONDecoder().decode(Auth.self, from: Data(json.utf8)) else { return }
+        reads.loggedIn = auth.loggedIn
+        reads.apiProvider = auth.apiProvider
+        reads.analyticsDisabled = auth.analyticsDisabled
+    }
+
+    /// Claude Code's user settings file: its `env` is where a tracking setting may be. `readable` is false when the file exists and is not a JSON object.
+    public static func readUserEnv(from data: Data?, into reads: inout Reads) {
+        guard let data else { return }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { reads.userReadable = false; return }
+        for (key, value) in (object["env"] as? [String: Any]) ?? [:] {
+            if let text = value as? String { reads.userEnv[key] = text } else if let number = value as? NSNumber { reads.userEnv[key] = number.stringValue }
+        }
+    }
+
+    /// The host of a gateway address when it is not Anthropic's.
+    public static func gateway(in address: String?) -> String? {
+        guard let address, let host = URL(string: address)?.host?.lowercased() else { return nil }
+        return host == "anthropic.com" || host.hasSuffix(".anthropic.com") ? nil : host
+    }
+
+    /// The four rows the reads decide (Claude Code's version, the sign-in, usage data, the approval) and what follows from them.
+    public struct Decided: Sendable {
+        public var rows: [Row]
+        /// All four passed.
+        public var passed: Bool
+        /// Claude Code's provider can't carry channels, so the two rows after it were not decided.
+        public var stopped: Bool
+        /// Varnick's own file is in the policy folder, which is when Remove approval is offered.
+        public var hasOwnFile: Bool
+        /// Anthropic's list as the approval row used it.
+        public var anthropic: (entries: [ChannelPolicy.Entry], fromCache: Bool)
+    }
+
+    /// A row's first sentence, cut to 140 characters, for the reason a hello gives.
+    public static func firstSentence(_ text: String) -> String {
+        let end = text.range(of: ". ")?.lowerBound ?? text.endIndex
+        let sentence = String(text[..<end]).trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return sentence.count > 140 ? String(sentence.prefix(139)) + "…" : sentence
+    }
+
+    public static let stoppedRow = Row(.waiting, "Not checked: Claude Code's provider can't carry channels.")
+
+    public static func decide(_ reads: Reads, host: Bool = false) -> Decided {
+        let anthropic = ChannelPolicy.anthropicList(cache: reads.cache)
+        let version = versionRow(output: reads.claudeFound ? reads.versionOutput : nil)
+        let gateway = gateway(in: reads.userEnv["ANTHROPIC_BASE_URL"] ?? reads.shell["ANTHROPIC_BASE_URL"])
+        let signIn = signInRow(loggedIn: reads.loggedIn, provider: reads.apiProvider, gateway: gateway, host: host)
+        let usage = usageRow(.init(analyticsDisabled: reads.analyticsDisabled, userSettings: reads.userEnv, userSettingsReadable: reads.userReadable,
+                                   shell: reads.shell, policy: reads.policy.env))
+        let approval = approvalRow(reads.policy, anthropic: anthropic.entries, source: anthropic.fromCache ? .cache : .pinned, host: host)
+        // Channels can't work on another provider, and an administrator who turned them off is not overridden: the rows after stop.
+        let stops = signIn.mark == .blocked && reads.apiProvider.map { $0 != "firstParty" } == true
+        let passed = [version, signIn, usage, approval].allSatisfy { $0.mark == .pass }
+        return Decided(rows: [version, signIn, stops ? stoppedRow : usage, stops ? stoppedRow : approval], passed: passed, stopped: stops,
+                       hasOwnFile: reads.policy.ownList != nil, anthropic: anthropic)
+    }
+
+    /// The row for sessions that started before, on a headless host: no button, since a Restart from a Mac needs control of the tab, so each joins at its next start.
+    public static func hostPanesRow(withoutChannel: Int) -> Row {
+        if withoutChannel == 0 { return Row(.pass, "Every Claude session running on this host has the channel.") }
+        let noun = withoutChannel == 1 ? "session" : "sessions"
+        return Row(.pass, "\(withoutChannel) Claude \(noun) on this host started before this was ready. Each joins at its next start (Restart in its pane).")
     }
 }

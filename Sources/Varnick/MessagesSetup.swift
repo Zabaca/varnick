@@ -32,7 +32,7 @@ final class MessagesSetup: ObservableObject {
     /// Whether Varnick's own file is in the policy folder, which is when Remove approval is offered.
     @Published private(set) var hasOwnFile = false
 
-    private weak var model: LauncherModel?
+    weak var model: LauncherModel?
     private var claudeCode: ClaudeCodeState?
     private var refreshing: Task<Void, Never>?
     private var lastRefresh = Date.distantPast
@@ -78,15 +78,9 @@ final class MessagesSetup: ObservableObject {
 
     /// The first failing row's words, cut to its first sentence, for the reason a paired Mac shows.
     private var firstFailure: String? {
-        if case .failed(let why) = testResult { return Self.firstSentence(why) }
+        if case .failed(let why) = testResult { return ChannelChecklist.firstSentence(why) }
         guard let line = lines.prefix(4).first(where: { $0.row.mark != .pass }) else { return nil }
-        return line.title + ": " + Self.firstSentence(line.row.text)
-    }
-
-    nonisolated static func firstSentence(_ text: String) -> String {
-        let end = text.range(of: ". ")?.lowerBound ?? text.endIndex
-        let sentence = String(text[..<end]).trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-        return sentence.count > 140 ? String(sentence.prefix(139)) + "…" : sentence
+        return line.title + ": " + ChannelChecklist.firstSentence(line.row.text)
     }
 
     /// Stores what a hello tells the other Macs (the relay answers one with Varnick's state read from UserDefaults), and drops the asks this Mac now meets.
@@ -101,9 +95,10 @@ final class MessagesSetup: ObservableObject {
         }
     }
 
-    /// Also between my Macs was turned on or off. On, every paired Mac is asked again (they answer a hello with their readiness first); off, the asks are forgotten.
+    /// Also between my Macs and hosts was turned on or off. On, every paired Mac is asked again (they answer a hello with their readiness first); off, the asks are forgotten.
     func macsSwitchChanged() {
         publishReadiness()
+        HostMessageCollector.shared.refresh()
         if Settings.shared.messagesBetweenMacs {
             asked = []
             Task { await PeerManager.shared.refreshAll() }
@@ -112,9 +107,11 @@ final class MessagesSetup: ObservableObject {
         }
     }
 
-    /// A paired Mac answered a hello: ask it to join when this Mac has Also between my Macs on and it is not ready (once, until it is seen ready).
+    /// A paired Mac answered a hello: ask it to join when this Mac has Also between my Macs and hosts on and it is not ready (once, until it is seen ready).
     func peerAnswered(_ peer: Peer) {
-        guard Settings.shared.messagesBetweenSessions, Settings.shared.messagesBetweenMacs, peer.info?.headless != true else { return }
+        // A headless host is not asked to join: nobody is there to show a notice to, and its checklist is on this Mac (`HostMessagesSetup`).
+        if peer.info?.headless == true { return HostMessageCollector.shared.refresh() }
+        guard Settings.shared.messagesBetweenSessions, Settings.shared.messagesBetweenMacs else { return }
         let state = peer.info?.messages
         if state?.ready == true { asked.remove(peer.id); return }
         guard MacMessages.shouldAsk(link: .answered, state: state, alreadyAsked: asked.contains(peer.id)) else { return }
@@ -139,6 +136,7 @@ final class MessagesSetup: ObservableObject {
     /// At launch: ends the test's sessions a quit left behind, writes the plugin folder and, while the switch is on, reads the rows.
     func start(model: LauncherModel, claudeCode: ClaudeCodeState) {
         self.model = model
+        HostMessagesSetup.shared.model = model
         self.claudeCode = claudeCode
         for pane in model.tabs.flatMap(\.sessions) where pane.record.messageCheck == true { end(pane) }
         if Settings.shared.messagesBetweenSessions {
@@ -154,38 +152,19 @@ final class MessagesSetup: ObservableObject {
             ChannelPlugin.write(command: PeerLink.mcpCommand)
             refresh()
         } else {
-            // Also between my Macs needs this switch: both stop, and the other Macs hear it in the next hello.
+            // Also between my Macs and hosts needs this switch: both stop, and the other Macs hear it in the next hello.
             Settings.shared.messagesBetweenMacs = false
         }
+        HostMessageCollector.shared.refresh()
         publishReadiness()
     }
 
     // MARK: The reads
 
-    /// Everything the rows decide from.
-    struct Reads: Sendable {
-        var claudeFound = false
-        var versionOutput: String?
-        var loggedIn: Bool?
-        var apiProvider: String?
-        var analyticsDisabled: Bool?
-        var userEnv: [String: String] = [:]
-        var userReadable = true
-        var shell: [String: String] = [:]
-        var policy = ChannelPolicy.Reading()
-        var cache: (entries: [ChannelPolicy.Entry]?, channelsOn: Bool?)?
-    }
-
-    private struct Auth: Decodable {
-        var loggedIn: Bool?
-        var apiProvider: String?
-        var analyticsDisabled: Bool?
-    }
-
     /// The reads, off the main actor: Claude Code's version and login report (through the account's login shell's environment, as the login check runs
     /// them), Claude Code's user settings, the shell's environment, the policy folder and Claude Code's cache.
-    @concurrent private static func read(claude: String?, variables: [String: String]) async -> Reads {
-        var reads = Reads()
+    @concurrent private static func read(claude: String?, variables: [String: String]) async -> ChannelChecklist.Reads {
+        var reads = ChannelChecklist.Reads()
         reads.shell = variables
         if let claude {
             reads.claudeFound = true
@@ -193,45 +172,13 @@ final class MessagesSetup: ObservableObject {
             async let auth = Subprocess.run(claude, ["auth", "status", "--json"], environment: variables, timeout: 8)
             let (versionRun, authRun) = await (version, auth)
             if !versionRun.launchFailed, !versionRun.timedOut { reads.versionOutput = versionRun.output }
-            if !authRun.launchFailed, !authRun.timedOut {
-                let output = authRun.output
-                let json = output.firstIndex(of: "{").flatMap { first in output.lastIndex(of: "}").map { String(output[first...$0]) } } ?? ""
-                if let auth = try? JSONDecoder().decode(Auth.self, from: Data(json.utf8)) {
-                    reads.loggedIn = auth.loggedIn
-                    reads.apiProvider = auth.apiProvider
-                    reads.analyticsDisabled = auth.analyticsDisabled
-                }
-            }
+            if !authRun.launchFailed, !authRun.timedOut { ChannelChecklist.readAuth(authRun.output, into: &reads) }
         }
         // Claude Code's user settings: its `env` is where a tracking setting may be.
-        let settings = UserSettingsEdit.settingsFile()
-        if let data = try? Data(contentsOf: settings) {
-            if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-                for (key, value) in (object["env"] as? [String: Any]) ?? [:] {
-                    if let text = value as? String { reads.userEnv[key] = text } else if let number = value as? NSNumber { reads.userEnv[key] = number.stringValue }
-                }
-            } else {
-                reads.userReadable = false
-            }
-        }
-        reads.policy = readPolicy()
+        ChannelChecklist.readUserEnv(from: try? Data(contentsOf: UserSettingsEdit.settingsFile()), into: &reads)
+        reads.policy = ChannelPolicy.readFiles()
         reads.cache = ChannelPolicy.cachedSwitches(fromConfig: try? Data(contentsOf: ClaudeTrust.configFile))
         return reads
-    }
-
-    /// The policy files in the order Claude Code reads them: the main file, then the drop-ins by name.
-    nonisolated static func readPolicy(in directory: String = ChannelPolicy.directory) -> ChannelPolicy.Reading {
-        func file(_ url: URL, name: String) -> ChannelPolicy.FileRead {
-            guard FileManager.default.fileExists(atPath: url.path) else { return .init(name: name, data: nil) }
-            guard let data = try? Data(contentsOf: url) else { return .init(name: name, data: nil, unreadable: true) }
-            return .init(name: name, data: data)
-        }
-        let base = URL(fileURLWithPath: directory, isDirectory: true)
-        var files = [file(base.appendingPathComponent(ChannelPolicy.mainFileName), name: ChannelPolicy.mainFileName)]
-        let dropIns = base.appendingPathComponent(ChannelPolicy.dropInFolderName, isDirectory: true)
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dropIns.path)) ?? []).filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }.sorted()
-        files += names.map { file(dropIns.appendingPathComponent($0), name: $0) }
-        return ChannelPolicy.read(files)
     }
 
     // MARK: The rows
@@ -250,37 +197,19 @@ final class MessagesSetup: ObservableObject {
         }
     }
 
-    private func apply(_ reads: Reads) {
-        let anthropic = ChannelPolicy.anthropicList(cache: reads.cache)
-        let version = ChannelChecklist.versionRow(output: reads.claudeFound ? reads.versionOutput : nil)
-        let gateway = Self.gateway(in: reads.userEnv["ANTHROPIC_BASE_URL"] ?? reads.shell["ANTHROPIC_BASE_URL"])
-        let signIn = ChannelChecklist.signInRow(loggedIn: reads.loggedIn, provider: reads.apiProvider, gateway: gateway)
-        let usage = ChannelChecklist.usageRow(.init(analyticsDisabled: reads.analyticsDisabled, userSettings: reads.userEnv, userSettingsReadable: reads.userReadable,
-                                                    shell: reads.shell, policy: reads.policy.env))
-        let approval = ChannelChecklist.approvalRow(reads.policy, anthropic: anthropic.entries, source: anthropic.fromCache ? .cache : .pinned)
-        hasOwnFile = reads.policy.ownList != nil
-
-        // Channels can't work on another provider, and an administrator who turned them off is not overridden: the rows after stop.
-        let stops = signIn.mark == .blocked && reads.apiProvider.map { $0 != "firstParty" } == true
-        let passed = [version, signIn, usage, approval].allSatisfy { $0.mark == .pass }
-        lastReady = passed
-        var rows = [version, signIn, stops ? Self.stopped : usage, stops ? Self.stopped : approval]
-        if !passed || stops {
+    private func apply(_ reads: ChannelChecklist.Reads) {
+        let decided = ChannelChecklist.decide(reads)
+        hasOwnFile = decided.hasOwnFile
+        lastReady = decided.passed
+        var rows = decided.rows
+        if !decided.passed || decided.stopped {
             rows.append(.init(.waiting, "Checked once the rows above pass."))
         } else {
             rows.append(panesRow())
         }
-        rows.append(ChannelChecklist.testRow(testResult, ready: passed))
+        rows.append(ChannelChecklist.testRow(testResult, ready: decided.passed))
         lines = rows.enumerated().map { Line(id: $0.offset, title: Self.titles[$0.offset], row: $0.element) }
         publishReadiness()
-    }
-
-    private static let stopped = ChannelChecklist.Row(.waiting, "Not checked: Claude Code's provider can't carry channels.")
-
-    /// The host of a gateway address when it is not Anthropic's.
-    nonisolated static func gateway(in address: String?) -> String? {
-        guard let address, let host = URL(string: address)?.host?.lowercased() else { return nil }
-        return host == "anthropic.com" || host.hasSuffix(".anthropic.com") ? nil : host
     }
 
     // MARK: Panes started before
@@ -392,16 +321,24 @@ final class MessagesSetup: ObservableObject {
 
     // MARK: The test
 
-    private var checkPanes: [UUID] = []
+    var checkPanes: [UUID] = []
     /// `send` calls the test is waiting for: set by the test, noted by `PanelAccess.send` when a message is queued.
-    private var watchedTo: [UUID: Date] = [:]
+    var watchedTo: [UUID: Date] = [:]
+
+    /// The first throwaway session's send to the host's receiver was taken: when, and whether the receiver's turn started (the host says so in its answer).
+    var hostSent: [UUID: (sentAt: Date, at: Date, started: Bool)] = [:]
+
+    /// `PanelAccess.send` was taken by a headless host for a pane of this Mac: when the send began, when the host answered, and whether the receiver's turn started.
+    func noteHostSent(from sender: UUID, sentAt: Date, at date: Date, started: Bool) {
+        if checkPanes.contains(sender), hostSent[sender] == nil { hostSent[sender] = (sentAt, date, started) }
+    }
 
     /// `PanelAccess.send` queued a message for `receiver`.
     func noteSent(to receiver: UUID, at date: Date) {
         if checkPanes.contains(receiver), watchedTo[receiver] == nil { watchedTo[receiver] = date }
     }
 
-    private static let stepLimit = 60
+    static let stepLimit = 60
 
     private func runTest() {
         guard testTask == nil, let model else { return }
@@ -418,10 +355,11 @@ final class MessagesSetup: ObservableObject {
         }
     }
 
-    private func finishTest() {
+    func finishTest() {
         for id in checkPanes { if let pane = model?.claudePane(id) { end(pane) } }
         checkPanes = []
         watchedTo = [:]
+        hostSent = [:]
     }
 
     private func refreshRows() {
@@ -478,7 +416,7 @@ final class MessagesSetup: ObservableObject {
     }
 
     /// Polls `condition` every 0.3 s for up to `seconds`; false on the deadline or when the test is cancelled.
-    private func waitUntil(_ seconds: Int, _ condition: () -> Bool) async -> Bool {
+    func waitUntil(_ seconds: Int, _ condition: () -> Bool) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(seconds)
         while ContinuousClock.now < deadline {
             if condition() { return true }
@@ -490,7 +428,7 @@ final class MessagesSetup: ObservableObject {
 
     /// A hidden Claude pane in Home for the test: asks before its tools, with `send` allowed so no dialog can stall it; its tab is out of the strip, the
     /// board and Recent as an unopened run's is.
-    private func checkPane(id: UUID, prompt: String, folder: String, model: LauncherModel) -> ClaudeSession {
+    func checkPane(id: UUID, prompt: String, folder: String, model: LauncherModel) -> ClaudeSession {
         let now = Date()
         var record = SessionRecord(id: id, prompt: prompt, title: Self.checkTitle, directory: folder, startedAt: now, lastUsed: now)
         record.skipPermissions = false
@@ -507,7 +445,7 @@ final class MessagesSetup: ObservableObject {
 
     static let checkTitle = "Varnick channel check"
 
-    private func end(_ pane: ClaudeSession) {
+    func end(_ pane: ClaudeSession) {
         let id = pane.id
         pane.endSession()
         Task.detached(priority: .utility) {

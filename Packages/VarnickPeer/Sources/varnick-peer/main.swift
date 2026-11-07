@@ -4,7 +4,8 @@ import VarnickPeer
 // The headless host's relay, for a machine with no Varnick app: ADR 0009 says what its install root holds.
 //
 //   varnick-peer --peer <base64 request>   what a peer Mac runs over SSH: one reply, or `attach`/`watch`
-//   varnick-peer --mcp --pane <id> --notify   the MCP server a Claude pane on this host starts (the `notify` tool)
+//   varnick-peer --mcp --pane <id> --notify [--send]   the MCP server a Claude pane on this host starts (`notify`, and `send` while messages are on)
+//   varnick-peer --channel --pane <id>     the channel server Varnick's plugin starts in a Claude pane on this host (messages from the user's other sessions)
 //   varnick-peer init                      makes the host's id if there is none, and prints it
 //   varnick-peer peers                     the Macs it is paired with
 //   varnick-peer forget <id or name>       unpairs one
@@ -16,7 +17,7 @@ import VarnickPeer
 //   varnick-peer tick                      what the host's timer runs once a minute: fires the automations that are due (ADR 0009, 0040)
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | --mcp --pane <id> --notify | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session> | tick\n".utf8))
+    FileHandle.standardError.write(Data("usage: varnick-peer --peer <base64 request> | --mcp --pane <id> --notify [--send] | --channel --pane <id> | init | peers | forget <id or name> | devices | device add <tailnet name> | device remove <id or name> | sessions | end <session> | tick\n".utf8))
     exit(2)
 }
 
@@ -25,11 +26,6 @@ func fail(_ error: Error) -> Never {
     exit(1)
 }
 
-// `--mcp ...` is the MCP server a Claude pane on this host starts (`HeadlessPeerHost.launch` passes it as `--mcp-config`): `notify` alone, the
-// tool a Mac's server lists with Screen and Panel access (`NotifyTool`). JSON-RPC on standard input and output; it never reads or acts, and
-// exits when its input ends. It needs no install folder.
-if CommandLine.arguments.contains("--mcp") { exit(NotifyTool.serve()) }
-
 guard let root = Zmx.installFolder else {
     FileHandle.standardError.write(Data("varnick-peer: can't tell which folder it is in\n".utf8))
     exit(1)
@@ -37,6 +33,29 @@ guard let root = Zmx.installFolder else {
 let state = StateFolder(url: root.appendingPathComponent("state", isDirectory: true))
 // `panes/` and `readers/` live in the state folder, so the relay's own files stay in one place.
 SupportFolder.url = state.url
+
+// `--mcp ...` is the MCP server a Claude pane on this host starts (`HeadlessPeerHost.launch` passes it as `--mcp-config`): `notify`, and `send` while messages are on
+// (`--send`, `HostSendServer`). JSON-RPC on standard input and output; it reads and writes the pane's folder and the host's outbox and nothing else, and exits when its
+// input ends. `--channel` is the channel server of Varnick's plugin (`ChannelServer`), which pushes each message queued for the pane. Both need the state folder, which is
+// where the pane's folder and the outbox are.
+func paneArgument() -> UUID? {
+    let all = CommandLine.arguments
+    return all.firstIndex(of: "--pane").flatMap { $0 + 1 < all.count ? UUID(uuidString: all[$0 + 1]) : nil }
+}
+if CommandLine.arguments.contains("--channel") {
+    guard let pane = paneArgument() else { usage() }
+    exit(ChannelServer.run(pane: pane))
+}
+if CommandLine.arguments.contains("--mcp") {
+    guard let pane = paneArgument() else { usage() }
+    let host = HeadlessConfig.load(from: root.appendingPathComponent("config.json"))
+    exit(HostSendServer.serve(pane: pane, send: CommandLine.arguments.contains(SendTool.argument)) {
+        // The pane's project and whether it was started skipping, from the host's record of it.
+        let record = (try? state.sessions())?.first { $0.id == pane.uuidString.lowercased() }
+        let fallback = (try? host.get().defaultFolder) ?? NSHomeDirectory()
+        return HostSendServer.Facts(project: ((Project.root(of: record?.folder ?? fallback) as NSString).lastPathComponent), skips: record?.startedSkipping == true)
+    })
+}
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {

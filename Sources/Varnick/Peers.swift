@@ -946,6 +946,34 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// A headless host's checklist for messages (`hostChecklist`, option 07 of `sessions-cant-reach-each-other-reliably`, no protocol bump): its rows from a read made there, after
+    /// the action asked for, if any (Allow, or Approve, Update and Remove approval through `sudo -n` there). A host on an older relay answers "Unknown request", which the
+    /// caller reads as "upgrade that host" (`unknownRequest`). The wait covers the host's reads and a sudo that takes its time.
+    func hostChecklist(_ ask: PeerHostCheckAsk, on host: String) async -> Result<PeerHostChecklist, Refusal> {
+        var request = tabRequest(.hostChecklist)
+        request.hostCheck = ask
+        switch await send(request, to: host, timeout: 75) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply):
+            guard let checklist = reply.hostChecklist else { return .failure(Refusal(message: "\(name(of: host)) sent no checklist")) }
+            return .success(checklist)
+        }
+    }
+
+    /// Whether a refusal is an older relay's answer to a request it does not know: the host needs the upgrade.
+    nonisolated static func unknownRequest(_ refusal: Refusal) -> Bool { refusal.message == "Unknown request" }
+
+    /// Collects the messages a headless host's sessions have for this Mac (`collectMessages`), handing over the receipts for the last ones. The host holds the request
+    /// up to `HostMessages.hold` seconds and answers empty if nothing came; the deadline is longer, since a request past it closes the shared connection.
+    func collectMessages(_ ask: PeerCollectAsk, from host: String) async -> Result<[PeerHostMessage], Refusal> {
+        var request = tabRequest(.collectMessages)
+        request.collect = ask
+        switch await send(request, to: host, timeout: HostMessages.collectDeadline) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply): return .success(reply.collected ?? [])
+        }
+    }
+
     /// Asks a paired Mac to join messages between Macs (`messageAsk`): its Varnick puts a notice in its menu that opens the checklist. A failure is only logged.
     func askToJoinMessages(_ id: String) async {
         var request = tabRequest(.messageAsk)
@@ -1054,6 +1082,9 @@ final class PeerManager: ObservableObject {
         switch request.op {
         case .hello:
             return PeerJSON.line(PeerReply(v: PeerProtocol.version, ok: true, paired: noteCaller(request)))
+        case .hostChecklist, .collectMessages:
+            // A headless host's requests (option 07 of `sessions-cant-reach-each-other-reliably`): a Mac has its own checklist and nothing collects from it.
+            return PeerJSON.line(PeerReply.failure("\(PeerIdentity.name ?? "This Mac") isn't a headless host: only a headless host answers these"))
         case .sendMessage, .messageAsk:
             // Messages between Macs (protocol 35): for a Mac in the list alone, read from the same list the relay reads; a device is refused there and here.
             guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { Zmx.sameID($0.id, by) }) else {

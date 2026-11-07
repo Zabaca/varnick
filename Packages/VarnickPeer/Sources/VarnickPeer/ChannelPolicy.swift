@@ -30,8 +30,15 @@ public enum ChannelPolicy {
         Entry(marketplace: officialMarketplace, plugin: "imessage"),
     ]
 
-    /// Where Claude Code reads machine policy on a Mac: the main file and the folder of drop-ins beside it.
-    public static let directory = "/Library/Application Support/ClaudeCode"
+    /// Where Claude Code reads machine policy: the main file and the folder of drop-ins beside it. One function in Claude Code picks the folder for every platform
+    /// (read in 2.1.319): `/etc/claude-code` on Linux (option 07 of `sessions-cant-reach-each-other-reliably`).
+    public static let macDirectory = "/Library/Application Support/ClaudeCode"
+    public static let linuxDirectory = "/etc/claude-code"
+    #if os(Linux)
+    public static let directory = linuxDirectory
+    #else
+    public static let directory = macDirectory
+    #endif
     public static let mainFileName = "managed-settings.json"
     public static let dropInFolderName = "managed-settings.d"
     /// Varnick's own drop-in. Its name is Varnick's, so an Approve or Update replaces only it and Remove approval deletes only it.
@@ -109,6 +116,21 @@ public enum ChannelPolicy {
         return reading
     }
 
+    /// The policy files on disk in the order Claude Code reads them: the main file, then the drop-ins by name.
+    public static func readFiles(in directory: String = directory) -> Reading {
+        func file(_ url: URL, name: String) -> FileRead {
+            guard FileManager.default.fileExists(atPath: url.path) else { return .init(name: name, data: nil) }
+            guard let data = try? Data(contentsOf: url) else { return .init(name: name, data: nil, unreadable: true) }
+            return .init(name: name, data: data)
+        }
+        let base = URL(fileURLWithPath: directory, isDirectory: true)
+        var files = [file(base.appendingPathComponent(mainFileName), name: mainFileName)]
+        let dropIns = base.appendingPathComponent(dropInFolderName, isDirectory: true)
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dropIns.path)) ?? []).filter { $0.hasSuffix(".json") && !$0.hasPrefix(".") }.sorted()
+        files += names.map { file(dropIns.appendingPathComponent($0), name: $0) }
+        return read(files)
+    }
+
     // MARK: Anthropic's list
 
     /// Anthropic's approved channel plugins, and its switch for channels, as Claude Code's own file caches them with its feature switches (undocumented,
@@ -171,9 +193,67 @@ public enum ChannelPolicy {
     printf '%s' "$b64" | /usr/bin/base64 -D | /usr/bin/cmp -s - "$dst" || { rm -f "$dst"; exit 16; }
     """#
 
+    /// The owner on Linux: root's own group, since Linux has no `wheel`.
+    public static let linuxInstallOwner = "root:root"
+
+    /// `installScript` for Linux (option 07 of `sessions-cant-reach-each-other-reliably`): the same steps and exit statuses, GNU `base64 -d` and the tools at the paths
+    /// Linux keeps them (`chown` is in `/usr/bin`).
+    public static let linuxInstallScript = #"""
+    dir="$1"; name="$2"; b64="$3"; owner="$4"
+    [ ! -L "$dir" ] || exit 11
+    [ -d "$dir" ] || /usr/bin/install -d -m 755 -o "${owner%%:*}" -g "${owner##*:}" "$dir" || exit 12
+    dst="$dir/$name"; tmp="$dir/.$name.new"
+    [ ! -L "$dst" ] || exit 13
+    /usr/bin/rm -f "$tmp"
+    printf '%s' "$b64" | /usr/bin/base64 -d > "$tmp" || { /usr/bin/rm -f "$tmp"; exit 14; }
+    /usr/bin/chown "$owner" "$tmp" && /usr/bin/chmod 644 "$tmp" && /usr/bin/mv -f "$tmp" "$dst" || { /usr/bin/rm -f "$tmp"; exit 15; }
+    printf '%s' "$b64" | /usr/bin/base64 -d | /usr/bin/cmp -s - "$dst" || { /usr/bin/rm -f "$dst"; exit 16; }
+    """#
+
     /// The arguments of `installScript` for a drop-in folder, the file's name, its content and the owner.
     public static func installArguments(folder: String, name: String = fileName, content: Data, owner: String = installOwner) -> [String] {
         ["-c", installScript, "sh", folder, name, content.base64EncodedString(), owner]
+    }
+
+    /// The same for a Linux host: `/bin/sh -c <script> sh <folder> <name> <content> <owner>`, run as root.
+    public static func linuxInstallArguments(folder: String, name: String = fileName, content: Data, owner: String = linuxInstallOwner) -> [String] {
+        ["-c", linuxInstallScript, "sh", folder, name, content.base64EncodedString(), owner]
+    }
+
+    /// What a host's `sudo -n <command>` did: it ran the command and it worked, it wants a password (so nothing ran), the account may not use sudo, the install
+    /// script failed with a status of its own (11 to 16), or something else went wrong. `output` is sudo's standard error, read in the C locale
+    /// (the host runs it with `LC_ALL=C`) so the message is English whatever the host's language is.
+    public enum SudoOutcome: Equatable, Sendable {
+        case worked
+        case passwordRequired
+        case notAllowed
+        case scriptFailed(Int32)
+        case failed(Int32)
+    }
+
+    public static func sudoOutcome(status: Int32, output: String) -> SudoOutcome {
+        if status == 0 { return .worked }
+        // The script's own statuses are 11 to 16 and sudo's refusals are 1, so the two never mix.
+        if (11...16).contains(status) { return .scriptFailed(status) }
+        let text = output.lowercased()
+        if text.contains("a password is required") || text.contains("a terminal is required") { return .passwordRequired }
+        if text.contains("may not run sudo") || text.contains("not in the sudoers") || text.contains("is not allowed to execute") { return .notAllowed }
+        return .failed(status)
+    }
+
+    /// A word for a shell, quoted so it stays one argument whatever it holds.
+    public static func shellQuoted(_ word: String) -> String { "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
+
+    /// The line a terminal on the host is typed: the script travels base64 so it stays one line, and `sudo` reads its password from the terminal while the
+    /// script comes from the pipe. The same steps as `linuxInstallScript`, run by the user in their own terminal.
+    public static func linuxTerminalCommand(folder: String, name: String = fileName, content: Data) -> String {
+        let script = Data(linuxInstallScript.utf8).base64EncodedString()
+        return "printf %s \(shellQuoted(script)) | base64 -d | sudo /bin/sh -s -- \(shellQuoted(folder)) \(shellQuoted(name)) \(shellQuoted(content.base64EncodedString())) \(shellQuoted(linuxInstallOwner))"
+    }
+
+    /// The command that removes Varnick's file on a Linux host: `rm -f` of the one file, as root.
+    public static func removeArguments(folder: String, name: String = fileName) -> [String] {
+        ["-f", folder + "/" + name]
     }
 
     /// What an install's exit status means, in words for the row.
