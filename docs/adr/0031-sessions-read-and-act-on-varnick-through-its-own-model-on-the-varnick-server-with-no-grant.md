@@ -172,3 +172,15 @@ At the user's word (option 01 of `sessions-cant-reach-each-other-reliably`), a C
 - **Log.** The tool, the receiver's turn, the outcome's kind and the text's byte count; never a text, an id or a project.
 
 What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Messages between sessions; what it adds to what sessions may do is in docs/privacy-and-security.md.
+
+## Amendment: a message reaches a session on a paired Mac (2026-11-07)
+
+At the user's word (option 02 of `sessions-cant-reach-each-other-reliably`, built on the amendment above), `send` also reaches a session in a tab a paired Mac hosts, with a second switch, Also between my Macs, under Messages between sessions. It changes the peer protocol (to 35): two Mac-only requests, one that carries the message to the Mac that hosts the target and one that asks a Mac to join.
+
+- **Both ends opt in.** A Mac takes messages from paired Macs only while its own Messages between sessions and Also between my Macs are on and its checklist passes. Turning the switch on asks the other Macs (a notice in their menu opens the checklist there, since the administrator password is typed on that Mac) and turns nothing on for them. A Mac that is not ready is skipped, and a send to it says why.
+- **The host decides.** The sending Mac checks its own switches, text and rate cap and sends the target pane, the sender's pane, project and Mac, whether the sender was started skipping permission checks, and the text. The host runs option 01's checks for its own panes, with the skip rule decided from what the request says of the sender, and answers with the receiver's turn. The relay accepts the request only from a Mac it lists, never from a device, and a headless host refuses it.
+- **The receiver sees which Mac.** `from_mac` joins `from` and `from_project`; the answer goes back the same way, since the sender's pane is an id in the receiver's own table.
+- **The reach grows.** A session on one Mac can steer a session on another that is ready; the skip rule holds across Macs, and pairing is already full trust between the user's Macs, but a session misled on one Mac now reaches every ready paired Mac's skipping sessions.
+- **Nothing is held** for a Mac that is asleep, off the network or on another build, and a message crosses only the link the Macs already use.
+
+What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Messages between sessions, and its Peers entry; what it adds to what sessions may do is in docs/privacy-and-security.md.

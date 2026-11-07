@@ -9,8 +9,11 @@ struct PeerInfo: Codable, Equatable {
     var keepSessions: Bool?
     var running: Bool?
     var headless: Bool?
+    /// Whether it takes messages from other Macs, as its last hello said (option 02 of `sessions-cant-reach-each-other-reliably`).
+    var messages: PeerMessagesState?
 
     init(_ hello: PeerHello) {
+        messages = hello.messages
         build = hello.build
         zmx = hello.zmx
         keepSessions = hello.keepSessions
@@ -606,6 +609,7 @@ final class PeerManager: ObservableObject {
             }
             peers[index].record(hello)
             status[id] = paired == false && !confirming ? .removedThisMac : .answered
+            MessagesSetup.shared.peerAnswered(peers[index])
         case .mismatch(let theirs):
             status[id] = .mismatch(theirs)
         case .failed(let message):
@@ -928,6 +932,29 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// A session message to a session on a paired Mac (`sendMessage`, protocol 35, option 02 of `sessions-cant-reach-each-other-reliably`): the host applies option 01's
+    /// checks and answers with what it did. A Mac that doesn't answer, speaks another protocol or has removed this one is the failure, never held for later.
+    func sendMessage(_ message: PeerSessionMessage, pane: UUID, to host: String) async -> Result<PeerMessageReply, Refusal> {
+        var request = tabRequest(.sendMessage, pane: pane)
+        request.message = message
+        // The host waits up to 5 s for a waiting receiver's turn to start, inside this.
+        switch await send(request, to: host, timeout: 20) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply):
+            guard let sent = reply.sent else { return .failure(Refusal(message: "\(name(of: host)) sent no answer")) }
+            return .success(sent)
+        }
+    }
+
+    /// Asks a paired Mac to join messages between Macs (`messageAsk`): its Varnick puts a notice in its menu that opens the checklist. A failure is only logged.
+    func askToJoinMessages(_ id: String) async {
+        var request = tabRequest(.messageAsk)
+        request.asker = PeerIdentity.name ?? PeerIdentity.computerName()
+        if case .failure(let refusal) = await send(request, to: id) {
+            NSLog("Varnick: couldn't ask \(name(of: id)) to join messages between Macs: \(refusal.message)")
+        }
+    }
+
     /// Takes a tab on its host for this Mac (`take`): every Claude and terminal pane of it is relabelled, then every client detached. Nil once
     /// taken, else why not. The caller attaches each pane, which finds the label naming this Mac.
     func take(tab id: UUID, on host: String) async -> String? {
@@ -1027,6 +1054,17 @@ final class PeerManager: ObservableObject {
         switch request.op {
         case .hello:
             return PeerJSON.line(PeerReply(v: PeerProtocol.version, ok: true, paired: noteCaller(request)))
+        case .sendMessage, .messageAsk:
+            // Messages between Macs (protocol 35): for a Mac in the list alone, read from the same list the relay reads; a device is refused there and here.
+            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
+                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
+            }
+            guard let model else { return starting }
+            if request.op == .messageAsk {
+                MessagesSetup.shared.noteAsk(from: by, name: name(of: by, reported: request.asker))
+                return PeerJSON.line(PeerReply.success())
+            }
+            return PeerJSON.line(await PanelAccess.shared.receiveMessage(request, by: by, model: model))
         case .start, .resume, .end, .arrange, .reopen, .restartPane, .done:
             guard let model else { return starting }
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit

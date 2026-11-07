@@ -45,6 +45,13 @@ enum PeerIdentity {
         return formatter.string(from: date)
     }()
 
+    /// Whether this Mac takes messages from other Macs (option 02 of `sessions-cant-reach-each-other-reliably`), as the running Varnick last stored it: the relay
+    /// answers a hello with Varnick not running too, and then the answer is "not ready".
+    static func messagesState(running: Bool) -> PeerMessagesState {
+        if !running { return MacMessages.state(messagesOn: false, macsOn: false, startsWithChannel: false, checklistReason: nil, running: false) }
+        return PeerMessagesState(ready: defaults.bool(forKey: Settings.messagesMacsReadyKey), reason: defaults.string(forKey: Settings.messagesMacsReasonKey))
+    }
+
     /// This Mac as a peer sees it, nil before the running Varnick has given it an id. Blocks the
     /// first time (zmx): not for the main thread.
     static func hello(running: Bool) -> PeerHello? {
@@ -52,6 +59,6 @@ enum PeerIdentity {
         let name = name ?? computerName()
         let address = address ?? "\(NSUserName())@\(ProcessInfo.processInfo.hostName)"
         return PeerHello(id: id, name: name, address: address, build: build, zmx: zmxVersion,
-                         keepSessions: defaults.bool(forKey: Settings.keepSessionsRunningKey), running: running)
+                         keepSessions: defaults.bool(forKey: Settings.keepSessionsRunningKey), running: running, messages: messagesState(running: running))
     }
 }

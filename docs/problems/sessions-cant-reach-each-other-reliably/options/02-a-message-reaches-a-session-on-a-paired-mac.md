@@ -2,7 +2,7 @@
 problem: sessions-cant-reach-each-other-reliably
 title: Option 01 across Macs, with `send` reaching a session in a tab hosted on a paired Mac, over the link the Macs already have
 summary: Built on option 01. A pane id that `board_read` gives for a session on a paired Mac is a valid `to`. This Mac's Varnick sends the paired Mac one new request over the SSH link the Macs already use, and that Mac's Varnick applies option 01's checks and pushes the text into its session, which answers the same way back. The receiver also sees which Mac the sender is on. A second switch under option 01's, Also between my Macs, lists each paired Mac as ready, needing approval on that Mac, or on an older Varnick (with Update); turning it on puts a notice on each other Mac that opens the same checklist there, since the password must be typed on that Mac. A Mac that isn't ready is skipped, and sends to it say why. It needs both Macs on the same build (a protocol change). Headless hosts and the phone stay out.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -88,3 +88,8 @@ Headless hosts (their sessions' server lists `notify` alone, and Linux keeps mac
 - **Build order:** on its own branch, from main once option 01 has merged (option 01's Further Notes say why). Option 01 and this one together: about 8 to 9.5 hours of building and 1.5 to 2 hours of review and fix rounds, plus the user's steps on both Macs.
 - **Assumption:** the notice lives in the menu bar menu, where Varnick's other notices are, and is not a macOS notification, as they are not.
 - **Depends on** option 01 (or 03, whose delivery it shares).
+- **Review follow-ups (merged 2026-11-07; reviewer verdict merge after one fix round):**
+  - should-fix: the receiver labels `from_mac` with the name the sending Mac reports for itself (and an empty one becomes "Home"); the spec wants the name the receiver's board shows for that Mac, as `messageAsk` already does.
+  - Reviewer's note for the user, not a finding: the protocol bump to 35 looks avoidable (the hello field is optional and an older relay already refuses an unknown request); kept as specified, so both Macs are upgraded together.
+  - nits: the memo of panes that messaged this Mac is never pruned; an ask goes out to a Mac that has removed this one (refused, logged); asks are held in memory only, on both Macs; no menu notice while Settings › Notifications' Messages switch is off (the spec sets no such condition); a local card resolves only with exactly one Claude session, a paired Mac's with one pane of any kind (the host refuses a terminal); "mac unreachable" logs both an unanswered Mac and another build; where-it-breaks' bump bullet drops the line on what a 34 and a 35 build still exchange; a header comment names `MacMessaging.swift`; the Also row doesn't point to its privacy-doc section; long doc comments; peer names at 12.5; a raw `"settingsSection"` key; duplicated session lookup and target building; card-id resolution isn't in the spec or `send`'s description; the paired-card helper's parameter is named `claudeSessions` though it takes any pane.
+- **Hand check owed** on both Macs after both run this build and restart: the ask and its notice, approval on the other Mac turning its row Ready, Update for an older build, a message each way with the answer through `from`, a tab hosted on the other Mac but controlled here, each refusal (asleep, older build, no policy, Also off on either side, headless), the first switch off stopping both, and the logs holding no text, id, project or Mac name.

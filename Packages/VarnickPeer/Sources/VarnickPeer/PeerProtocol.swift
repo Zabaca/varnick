@@ -6,7 +6,7 @@ import Foundation
 /// Bump when a request or reply changes shape: a hello across versions answers with an error, and
 /// the peer's row says so. The exception is `upgrade` and `restart`, whose shapes are frozen.
 public enum PeerProtocol {
-    public static let version = 34
+    public static let version = 35
 
     /// The two requests every build answers whatever protocol the asker speaks, so the relay and the asking side skip the version check for them
     /// and for no other.
@@ -15,8 +15,12 @@ public enum PeerProtocol {
     /// The requests a listed device is refused, whatever else it may ask: the search sync's `rows` and `pages`, `arrange`, the five automation requests a Mac
     /// sends a headless host, and the two frozen maintenance requests (ADR 0011). Every other request is a device's to send, and `PeerRelay` lets it.
     public static func isMacsOnly(_ op: PeerOp) -> Bool {
-        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || answersAnyVersion(op)
+        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || isMessageRequest(op) || answersAnyVersion(op)
     }
+
+    /// The two requests of messages between Macs (protocol 35, option 02 of `sessions-cant-reach-each-other-reliably`), for a listed Mac only: a device can't push text
+    /// into a session this way.
+    public static func isMessageRequest(_ op: PeerOp) -> Bool { op == .sendMessage || op == .messageAsk }
 
     /// The five requests a headless host answers about its automations (protocol 29), for a listed Mac only.
     public static func isAutomationRequest(_ op: PeerOp) -> Bool {
@@ -197,6 +201,12 @@ public enum PeerOp: String, Codable, Sendable, CaseIterable {
     /// The Voice session's earlier exchanges, for the Voice mode view on a Mac's Phone page (`PeerVoiceExchanges`; ADR 0043's amendment of 2026-10-31). A listed device
     /// may ask; a paired Mac and a headless host are refused. No protocol bump: only a host's own page server sends it.
     case voiceExchanges
+    /// A session message for a session on the receiving Mac (protocol 35, `PeerSessionMessage`): the target pane in `pane`. For a listed Mac only. The host's running
+    /// Varnick applies option 01's checks and answers with a `PeerMessageReply`.
+    case sendMessage
+    /// A Mac turned on Also between my Macs (protocol 35) and asks this one to join: `asker` is its name. The receiving Varnick puts a notice in its menu that opens
+    /// the checklist. For a listed Mac only.
+    case messageAsk
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -340,9 +350,12 @@ public struct PeerHello: Codable, Equatable, Sendable {
     public var running: Bool
     /// True from a host with no Varnick app, where the relay is all there is. Absent from a Mac's.
     public var headless: Bool?
+    /// Whether this Mac takes messages from other Macs, and if not why not (protocol 35, option 02 of `sessions-cant-reach-each-other-reliably`).
+    public var messages: PeerMessagesState?
 
     public init(id: String, name: String, address: String, build: String? = nil, zmx: String? = nil, keepSessions: Bool, running: Bool,
-                headless: Bool? = nil) {
+                headless: Bool? = nil, messages: PeerMessagesState? = nil) {
+        self.messages = messages
         self.id = id
         self.name = name
         self.address = address
@@ -819,6 +832,10 @@ public struct PeerRequest: Codable, Sendable {
     public var outline: PeerOutlineAsk?
     /// PhoneAutomations: what the phone asks of the Mac's automations.
     public var phoneAutomation: PeerPhoneAutomationAsk?
+    /// SendMessage (protocol 35): the message; `pane` is the target.
+    public var message: PeerSessionMessage?
+    /// MessageAsk (protocol 35): the name of the Mac that asks.
+    public var asker: String?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -906,6 +923,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// VoiceExchanges: the Voice session's earlier exchanges, as its transcript holds them.
     public var voiceExchanges: PeerVoiceExchanges?
+
+    /// SendMessage (protocol 35): what the host did with the message.
+    public var sent: PeerMessageReply?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

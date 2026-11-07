@@ -36,6 +36,8 @@ enum PanelRefusal: Error {
     case notDone(TabDone.Refusal, String)
     /// `send` did nothing, with `SendRules`' kind (the log's) and the words the session reads.
     case notSent(SendRules.Refusal)
+    /// `send` to a pane on a paired Mac did nothing: the words (the Mac's refusal, or why it wasn't reached) and the log's kind.
+    case macRefused(String, kind: String)
     /// A pane tool's refusal in a tab another machine controls: the same message, marked in the log.
     indirect case inControlledTab(PanelRefusal)
 
@@ -58,6 +60,7 @@ enum PanelRefusal: Error {
         case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
         case .notDone(_, let why): why
         case .notSent(let refusal): refusal.message
+        case .macRefused(let words, _): words
         case .inControlledTab(let refusal): refusal.message
         }
     }
@@ -88,6 +91,7 @@ enum PanelRefusal: Error {
         case .keysStopped: "keys stopped"
         case .notDone(let kind, _): "not done: " + kind.word
         case .notSent(let refusal): "not sent: " + refusal.word
+        case .macRefused(_, let kind): "not sent: " + kind
         case .inControlledTab(let refusal): refusal.logKind + " controlled"
         }
     }
@@ -159,6 +163,8 @@ final class PanelAccess {
     private var outlineKnown: [UUID: OutlineKnowledge] = [:]
     /// How many messages each sending pane has sent in the last minute (`SendRate`), held in memory only.
     var sendRates: [UUID: SendRate] = [:]
+    /// The paired Mac a pane that sent this Mac a message is on, so the receiver's answer routes back even before the board lists that Mac's tab. In memory only.
+    var remoteSenders: [UUID: String] = [:]
 
     // MARK: Ids
 

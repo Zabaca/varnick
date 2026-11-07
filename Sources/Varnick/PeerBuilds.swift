@@ -138,6 +138,11 @@ final class PeerBuilds: ObservableObject {
         return headless ? found.address : nil
     }
 
+    /// An Upgrade of this paired Mac is under way (Settings › Claude › Also between my Macs offers it for a Mac on an older build).
+    func isUpdating(_ peer: String) -> Bool {
+        machines[.peer(peer)].map { $0.starting || $0.report?.state == .fetching || $0.report?.state == .building } ?? false
+    }
+
     func isInstalling(_ id: MachineID) -> Bool {
         guard let host = headlessAddress(id), case .upgrading = HeadlessUpgrade.shared.state(for: host) else { return false }
         return true

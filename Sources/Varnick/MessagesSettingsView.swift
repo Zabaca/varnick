@@ -66,3 +66,101 @@ struct MessagesChecklistView: View {
         }
     }
 }
+
+// MARK: Messages between sessions, the section (option 01) and Also between my Macs (option 02)
+
+/// Both switches of Settings › Claude's messages and what hangs from them: the checklist, and under Also between my Macs one row for each paired Mac. A paired Mac's
+/// ask (`MessagesSetup.asks`) shows the checklist even while the first switch is off, so the Mac that was asked can see what to do; nothing is turned on for it.
+struct MessagesSection: View {
+    @ObservedObject var settings = Settings.shared
+    @ObservedObject var setup = MessagesSetup.shared
+
+    var body: some View {
+        // Two sentences on one setting: what the switch does, what it changes and where the rest is (the privacy doc, Messages between sessions).
+        SettingRow(title: "Messages between sessions",
+                   detail: "Lets a Claude session in one pane send text to another Claude pane on this Mac, which may act on it with its own permissions without asking you; a session that asks before its tools can't send to one that skips them. Turning it on shows a checklist that sets up Claude Code with a button for each step, and what reaches Anthropic grows by the message text and the sender's project name. See Anthropic, through Messages between sessions in docs/privacy-and-security.md.") {
+            Toggle("", isOn: $settings.messagesBetweenSessions).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .onChange(of: settings.messagesBetweenSessions) { _, _ in setup.switchChanged() }
+        }
+        ForEach(setup.asks) { ask in
+            HStack(spacing: 8) {
+                Image(systemName: "bell.badge").foregroundStyle(.orange)
+                Text("\(ask.name) asks to turn on messages between Macs here: turn on both switches below and finish the checklist.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 12)
+                Button("Dismiss") { setup.dismissAsk(ask.id) }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+        }
+        if settings.messagesBetweenSessions || !setup.asks.isEmpty { MessagesChecklistView(setup: setup) }
+        SettingRow(title: "Also between my Macs",
+                   detail: "Lets these sessions send to and take messages from sessions on your paired Macs, over the link they already use. Each Mac turns it on itself, so turning it on here only asks the others, and a Mac that isn't ready is skipped. Both Macs must run the same build.") {
+            Toggle("", isOn: $settings.messagesBetweenMacs).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .disabled(!settings.messagesBetweenSessions)
+                .onChange(of: settings.messagesBetweenMacs) { _, _ in setup.macsSwitchChanged() }
+        }
+        if settings.messagesBetweenMacs { MessagesMacsView() }
+    }
+}
+
+/// One row for each paired Mac (a headless host isn't listed): Ready, Needs approval on that Mac, an older Varnick with Update, or Not answering.
+struct MessagesMacsView: View {
+    @ObservedObject var peers = PeerManager.shared
+    @ObservedObject var builds = PeerBuilds.shared
+
+    var body: some View {
+        let macs = peers.peers.filter { $0.info?.headless != true }
+        VStack(alignment: .leading, spacing: 8) {
+            if macs.isEmpty {
+                Text("No Mac is paired. Pair one in Settings › Peers.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
+            ForEach(macs) { peer in
+                let row = MacMessages.row(link: link(of: peer), state: peer.info?.messages)
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: symbol(row.mark)).foregroundStyle(color(row.mark)).frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(peer.name).font(.system(size: 12.5, weight: .medium))
+                        Text(row.text).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    if row.offersUpdate {
+                        Button(builds.isUpdating(peer.id) ? "Updating…" : "Update") { Task { await builds.upgrade(.peer(peer.id)) } }
+                            .disabled(builds.isUpdating(peer.id))
+                    }
+                }
+            }
+            Button("Check again") { Task { await peers.refreshAll() } }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .onAppear { Task { await peers.refreshAll() } }
+        // A Mac's checklist can pass any time: its row follows.
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in Task { await peers.refreshAll() } }
+    }
+
+    private func link(of peer: Peer) -> MacMessages.Link {
+        switch peers.status[peer.id] {
+        case .answered?: .answered
+        case .notAnswering(let why)?: .notAnswering(why)
+        case .mismatch(let theirs)?: .mismatch(theirs)
+        case .removedThisMac?: .removedThisMac
+        case nil: .notAnswering("not asked yet")
+        }
+    }
+
+    private func symbol(_ mark: MacMessages.Row.Mark) -> String {
+        switch mark {
+        case .ready: "checkmark.circle.fill"
+        case .needsApproval, .older, .newer: "exclamationmark.circle"
+        case .notAnswering, .removed: "xmark.circle"
+        }
+    }
+
+    private func color(_ mark: MacMessages.Row.Mark) -> Color {
+        switch mark {
+        case .ready: .green
+        case .needsApproval, .older, .newer: .orange
+        case .notAnswering, .removed: .red
+        }
+    }
+}

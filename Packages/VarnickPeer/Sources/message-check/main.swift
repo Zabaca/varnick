@@ -411,7 +411,7 @@ expect("a session that asks takes from one that skips", decide(skips: true) == n
 expect("an opener's refusal comes before the target's", decide(opener: .openerGone) == .openerGone)
 expect("not running is told before cannot receive", decide(target: .init(kind: .claude, running: false, receives: false, skipsPermissions: true)) == .notRunning)
 let refusals: [SendRules.Refusal] = [.switchOff, .empty, .tooLong, .rateCap, .unknownID, .gone, .toSelf, .notClaude, .otherMac, .notRunning, .cannotReceive, .cannotReceiveEver,
-                                     .noOpener, .openerGone, .openerMoved, .skipRule]
+                                     .noOpener, .openerGone, .openerMoved, .skipRule, .hostNotReady, .headless]
 expect("every refusal has a log word and a message of its own", Set(refusals.map(\.word)).count == refusals.count && Set(refusals.map(\.message)).count == refusals.count)
 expect("every refusal says nothing was sent", refusals.allSatisfy { $0.message.contains("Nothing was sent") })
 expect("no message carries an em dash", refusals.allSatisfy { !$0.message.contains("\u{2014}") })
@@ -448,6 +448,91 @@ expect("a waiting receiver whose turn did not start is told plainly", SendRules.
 expect("a message the channel has not taken is told", SendRules.answer(.waiting, label: "s3", started: false, taken: false).contains("has not taken"))
 expect("a turn is classed for the sender", SendRules.delivery(for: .working) == .working && SendRules.delivery(for: .permission) == .waitingOnUser && SendRules.delivery(for: .question) == .waitingOnUser
        && SendRules.delivery(for: .waiting) == .waiting && SendRules.delivery(for: .background) == .waiting && SendRules.delivery(for: .failed) == .waiting && SendRules.delivery(for: nil) == .unknown)
+
+// A tab's card id means its one Claude session, and a send to the sender's own is refused whichever id named it.
+let callerPane = UUID(), otherPane = UUID()
+expect("a card with one Claude session means it", SendRules.cardTarget(claudeSessions: [otherPane]) == otherPane)
+expect("a card with none or several means none", SendRules.cardTarget(claudeSessions: []) == nil && SendRules.cardTarget(claudeSessions: [callerPane, otherPane]) == nil)
+expect("a card id that resolves to the caller's own session is a send to itself", SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: [callerPane]), caller: callerPane))
+expect("a card id that resolves to another session is not", !SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: [otherPane]), caller: callerPane))
+expect("a card id that resolves to nothing is not", !SendRules.isSelf(resolved: SendRules.cardTarget(claudeSessions: []), caller: callerPane))
+expect("a send to itself is refused with the sender-itself words",
+       decide(toSelf: SendRules.isSelf(resolved: callerPane, caller: callerPane)) == .toSelf && decide(toSelf: SendRules.isSelf(resolved: otherPane, caller: callerPane)) == nil)
+
+// MARK: Between paired Macs (option 02)
+
+let crossing = SessionMessage.Queued(from: "s4", fromProject: "croft", text: "hello", fromMac: "Desk Mac")
+expect("a message from another Mac carries from_mac, with valid attribute names", crossing.attributes == ["from": "s4", "from_project": "croft", "from_mac": "Desk Mac"]
+       && crossing.attributes.keys.allSatisfy { attributeName.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil })
+expect("a message from this Mac carries no from_mac", queued.attributes.keys.sorted() == ["from", "from_project"])
+expect("the push of a message from another Mac carries from_mac", ((ChannelServer.notification(for: crossing)["params"] as? [String: Any])?["meta"] as? [String: String])?["from_mac"] == "Desk Mac")
+expect("a queue file of option 01's still loads", (try? JSONDecoder().decode(SessionMessage.Queued.self, from: Data(#"{"from":"s1","from_project":"Home","text":"x"}"#.utf8)))?.fromMac == nil)
+expect("a queue file keeps the sending Mac", (try? JSONDecoder().decode(SessionMessage.Queued.self, from: JSONEncoder().encode(crossing))) == crossing)
+
+var send = PeerRequest(.sendMessage)
+send.by = "aaaaaaaa-1111-4222-8333-944455566677"
+send.pane = "bbbbbbbb-1111-4222-8333-944455566677"
+send.message = PeerSessionMessage(from: "cccccccc-1111-4222-8333-944455566677", fromProject: "croft", fromMac: "Desk Mac", skips: true, text: "Line one\nline \"two\"")
+let decodedSend = PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(send))
+expect("a send request carries the target, the sender's facts and the text", decodedSend?.op == .sendMessage && decodedSend?.pane == send.pane && decodedSend?.message == send.message, "\(String(describing: decodedSend))")
+expect("a send request is one line", !PeerJSON.line(send).contains("\n"))
+expect("a send request is this protocol's", decodedSend?.v == PeerProtocol.version && PeerProtocol.version == 35)
+var big = send
+big.message?.text = String(repeating: "x", count: SessionMessage.longestText)
+expect("a send of the longest text stays far under the 120,000 bytes the phone page's relay allows itself", Data(PeerJSON.line(big).utf8).base64EncodedString().utf8.count < 60_000,
+       "\(Data(PeerJSON.line(big).utf8).base64EncodedString().utf8.count)")
+var asking = PeerRequest(.messageAsk)
+asking.asker = "Desk Mac"
+expect("an ask carries the asking Mac's name", PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(asking))?.asker == "Desk Mac")
+var answered = PeerReply.success()
+answered.sent = PeerMessageReply(delivery: .waiting, started: true, taken: true, project: "croft")
+let decodedReply = PeerJSON.decode(PeerReply.self, from: PeerJSON.line(answered))
+expect("the host's answer travels with the receiver's turn and whether it started", decodedReply?.sent == answered.sent, "\(String(describing: decodedReply?.sent))")
+var refused = PeerReply.success()
+refused.sent = PeerMessageReply(refusal: .skipRule)
+expect("a refusal travels as its word", PeerJSON.line(refused).contains("\"skipRule\"") && PeerJSON.decode(PeerReply.self, from: PeerJSON.line(refused))?.sent?.refusal == .skipRule)
+expect("every refusal and delivery survives the wire", refusals.allSatisfy { (try? JSONDecoder().decode(SendRules.Refusal.self, from: JSONEncoder().encode($0))) == $0 }
+       && [SendRules.Delivery.working, .waitingOnUser, .waiting, .unknown].allSatisfy { (try? JSONDecoder().decode(SendRules.Delivery.self, from: JSONEncoder().encode($0))) == $0 })
+expect("a reply from a build that sends no answer reads as none", PeerJSON.decode(PeerReply.self, from: PeerJSON.line(PeerReply.success()))?.sent == nil)
+expect("the two requests are a listed Mac's, never a device's", PeerProtocol.isMacsOnly(.sendMessage) && PeerProtocol.isMacsOnly(.messageAsk))
+
+let helloWith = PeerHello(id: "a", name: "Desk Mac", address: "me@desk", keepSessions: true, running: true, messages: PeerMessagesState(ready: false, reason: "its checklist hasn't passed"))
+expect("a hello carries a Mac's readiness", (try? JSONDecoder().decode(PeerHello.self, from: JSONEncoder().encode(helloWith))) == helloWith)
+expect("a hello without it still reads", (try? JSONDecoder().decode(PeerHello.self, from: Data(#"{"id":"a","name":"n","address":"x","keepSessions":false,"running":true}"#.utf8)))?.messages == nil)
+
+let readyNow = MacMessages.state(messagesOn: true, macsOn: true, startsWithChannel: true, checklistReason: nil)
+expect("both switches on and the checklist passing is ready", readyNow == PeerMessagesState(ready: true))
+expect("the first switch off is not ready and says so", !MacMessages.state(messagesOn: false, macsOn: true, startsWithChannel: true, checklistReason: nil).ready
+       && MacMessages.state(messagesOn: false, macsOn: true, startsWithChannel: true, checklistReason: nil).reason?.contains("Messages between sessions") == true)
+expect("Also between my Macs off is not ready and says so", MacMessages.state(messagesOn: true, macsOn: false, startsWithChannel: true, checklistReason: nil).reason?.contains("Also between my Macs") == true)
+expect("a failing checklist gives its first row's words", MacMessages.state(messagesOn: true, macsOn: true, startsWithChannel: false, checklistReason: "Claude Code is older").reason == "Claude Code is older")
+expect("a checklist that failed with no words still says why not", MacMessages.state(messagesOn: true, macsOn: true, startsWithChannel: false, checklistReason: nil).reason != nil)
+expect("a Mac whose Varnick isn't running is not ready", MacMessages.state(messagesOn: true, macsOn: true, startsWithChannel: true, checklistReason: nil, running: false) == PeerMessagesState(ready: false, reason: "Varnick isn't running there"))
+expect("the host's gate lets a ready Mac through", MacMessages.gate(readyNow) == nil)
+expect("the host's gate refuses a Mac that isn't ready, with its reason", MacMessages.gate(PeerMessagesState(ready: false, reason: "x")) == PeerMessageReply(refusal: .hostNotReady, reason: "x"))
+expect("the sender's words for a host that isn't ready name the Mac and the reason",
+       MacMessages.message(for: PeerMessageReply(refusal: .hostNotReady, reason: "its checklist hasn't passed"), mac: "Desk Mac")
+           == "Desk Mac hasn't approved messages yet (its checklist hasn't passed): its Varnick shows how. Nothing was sent.")
+expect("the sender's words for another refusal are option 01's", MacMessages.message(for: PeerMessageReply(refusal: .skipRule), mac: "Desk Mac") == SendRules.Refusal.skipRule.message)
+expect("an answer that is no refusal has no refusal words", MacMessages.message(for: PeerMessageReply(delivery: .working), mac: "Desk Mac") == nil)
+expect("a pane id is a plain uuid", MacMessages.paneID(" bbbbbbbb-1111-4222-8333-944455566677 ") != nil && MacMessages.paneID("opener") == nil && MacMessages.paneID(nil) == nil)
+
+let ok = PeerMessagesState(ready: true), notOk = PeerMessagesState(ready: false, reason: "Messages between sessions is off in its Settings")
+expect("a ready Mac's row is Ready", MacMessages.row(link: .answered, state: ok) == .init(.ready, "Ready."))
+expect("a Mac that isn't ready needs approval there, with its reason", MacMessages.row(link: .answered, state: notOk).mark == .needsApproval
+       && MacMessages.row(link: .answered, state: notOk).text.contains("Needs approval on that Mac") && MacMessages.row(link: .answered, state: notOk).text.contains("off in its Settings"))
+expect("a Mac that says nothing of it needs approval", MacMessages.row(link: .answered, state: nil).mark == .needsApproval)
+let olderMac = MacMessages.row(link: .mismatch(PeerProtocol.version - 1), state: nil)
+expect("an older Varnick offers Update", olderMac.mark == .older && olderMac.offersUpdate && olderMac.text.contains("Older Varnick"), olderMac.text)
+let newerMac = MacMessages.row(link: .mismatch(PeerProtocol.version + 1), state: nil)
+expect("a newer Varnick offers no Update here", newerMac.mark == .newer && !newerMac.offersUpdate && newerMac.text.contains("Update this Mac"), newerMac.text)
+expect("a Mac that doesn't answer says so", MacMessages.row(link: .notAnswering("Can't reach it"), state: ok) == .init(.notAnswering, "Not answering: Can't reach it"))
+expect("a Mac that removed this one says so", MacMessages.row(link: .removedThisMac, state: ok).mark == .removed)
+expect("a Mac's old readiness is not shown when it doesn't answer", MacMessages.row(link: .notAnswering("x"), state: ok).mark == .notAnswering)
+expect("an unready Mac that answered is asked once", MacMessages.shouldAsk(link: .answered, state: notOk, alreadyAsked: false) && !MacMessages.shouldAsk(link: .answered, state: notOk, alreadyAsked: true))
+expect("a ready Mac is not asked", !MacMessages.shouldAsk(link: .answered, state: ok, alreadyAsked: false))
+expect("a Mac that doesn't answer is not asked now", !MacMessages.shouldAsk(link: .notAnswering("x"), state: nil, alreadyAsked: false) && !MacMessages.shouldAsk(link: .mismatch(1), state: nil, alreadyAsked: false))
+expect("a Mac that says nothing of readiness is asked", MacMessages.shouldAsk(link: .answered, state: nil, alreadyAsked: false))
 
 print("check-messages: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
