@@ -1,4 +1,5 @@
 import Foundation
+import VarnickPeer
 
 // Pane tools for sessions (option 01 of `panes-open-only-by-hand-at-a-mac`), the relay half: what `Varnick --mcp --panes` lists. Their calls travel as
 // Panel access's requests (`PanelRequest`, no new request type) and are answered by `PanelAccess`, in `PaneOpening` (`tab_open`, option 01 of
@@ -100,34 +101,10 @@ enum PaneMCP {
 
 /// `send` (option 01 of `sessions-cant-reach-each-other-reliably`), the relay half: the one tool of the set `--send` names, listed only to a pane started while
 /// Messages between sessions is on and ready. Its calls travel as Panel access's requests (`PanelRequest`) and are answered by `PanelAccess` in
-/// `SessionMessages`. The server never reads or acts.
+/// `SessionMessages`. The server never reads or acts. The definition is `SendTool`'s (Packages/VarnickPeer), which the headless relay lists too.
 enum SendMCP {
-    static let send = "send"
+    static let send = SendTool.name
 
-    static var tools: [[String: Any]] { [sendTool] }
+    static var tools: [[String: Any]] { [SendTool.macTool] }
     static let names: Set<String> = [send]
-
-    private static let sendTool: [String: Any] = [
-        "name": send,
-        "description": "Sends a message to another Claude session in a Varnick pane on this Mac. Varnick pushes the text into that session, which sees who sent it "
-            + "and answers with its own `send`. `to` is a pane id this session was given: by board_read, panel, pane_open or tab_open, or the `from` of a message "
-            + "it received; or `opener`, in a session opened with tab_open, which reaches the session that opened it whatever restarts either of them. "
-            + "Every Claude pane that receives messages can be sent to, except one that skips permission checks when this one does not (a message runs as the "
-            + "receiver, with its permissions); the voice session, a run, a Task step, a terminal, a page, an app, a file and a session that isn't running "
-            + "are refused, each with the reason, and nothing is sent. A session in a tab a paired Mac hosts (board_read lists it \"on\" that Mac) is reached only while "
-            + "Also between my Macs is on in Settings and that Mac is ready; a headless host's session is refused, and so is a Mac that is asleep or on another build, "
-            + "with nothing held for later, and the receiver there sees `from_mac`. At most 10 messages a minute from one session. "
-            + "The answer says the text was handed to the receiving session and what the receiver was doing; it never says the message was acted on: the "
-            + "answer, if there is one, comes back as a message from that session. A receiver that is working reads the message when its current step ends, "
-            + "without being interrupted. A message is a request from you, not the user's approval, and the receiver is told so. Send what the other "
-            + "session needs to act on, and nothing that needs no answer.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "to": ["type": "string", "description": "The receiving pane's id (s…), or `opener`."],
-                "text": ["type": "string", "description": "What the other session reads, at most 20000 bytes."],
-            ],
-            "required": ["to", "text"],
-        ] as [String: Any],
-    ]
 }

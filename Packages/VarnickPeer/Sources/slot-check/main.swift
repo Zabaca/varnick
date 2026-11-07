@@ -1059,7 +1059,7 @@ expect("this is protocol 35", PeerProtocol.version == 35)
 // A Mac's automations on its Phone page: a device may send the one request, and none of the five a Mac sends a headless host. The list of what a device
 // may not send is explicit, so a new request is a device's unless someone writes it here.
 let deviceRefused: Set<PeerOp> = [.rows, .pages, .arrange, .automations, .saveAutomation, .deleteAutomation, .runAutomation, .runOpened, .upgrade, .restart,
-                                  .sendMessage, .messageAsk]
+                                  .sendMessage, .messageAsk, .hostChecklist, .collectMessages]
 expect("a device is refused exactly these requests", Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)) == deviceRefused, "\(Set(PeerOp.allCases.filter(PeerProtocol.isMacsOnly)).symmetricDifference(deviceRefused))")
 expect("the two requests of messages between Macs are a Mac's alone", PeerProtocol.isMessageRequest(.sendMessage) && PeerProtocol.isMessageRequest(.messageAsk) && !PeerProtocol.isMessageRequest(.tabs)
        && PeerProtocol.isMacsOnly(.sendMessage) && PeerProtocol.isMacsOnly(.messageAsk) && !PeerProtocol.isDeviceOnly(.sendMessage) && !PeerProtocol.answersAnyVersion(.sendMessage))

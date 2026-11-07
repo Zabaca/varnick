@@ -6,12 +6,15 @@
 # them the app names for a pane is ClaudeSession.launchClaude's, checked by hand.
 set -u
 bin=${1:-.build/release/Varnick}
+relay=${2:-Packages/VarnickPeer/.build/debug/varnick-peer}
 [ -x "$bin" ] || { echo "error: check-mcp: no binary at $bin (make build first)" >&2; exit 1; }
+[ -x "$relay" ] || { echo "error: check-mcp: no headless relay at $relay (make check-mcp builds it)" >&2; exit 1; }
 
-exec python3 -I - "$bin" <<'PY'
+exec python3 -I - "$bin" "$relay" <<'PY'
 import json, os, shutil, subprocess, sys, tempfile
 
 binary = sys.argv[1]
+relay_binary = sys.argv[2]
 pane = "00000000-0000-0000-0000-000000000000"
 screen = ["look", "point", "click", "type", "drag", "window"]
 bad = False
@@ -476,14 +479,16 @@ for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--pane
 # the end of its input. Its exact words and every refusal are `make check-messages`'s.
 import select, time
 
-def channel_check():
+def channel_check(what, make_command, panes_under):
+    """Runs the channel server `make_command(home)` names against a scratch folder: `panes_under(home)` is where its panes' folders are."""
     home = tempfile.mkdtemp(prefix="check-channel-")
     try:
         pane_id = "11111111-2222-4333-8444-555555555555"
-        pane_folder = os.path.join(home, "Library", "Application Support", "Varnick", "panes", pane_id)
+        pane_folder = os.path.join(panes_under(home), pane_id)
         queue = os.path.join(pane_folder, "messages")
         env = dict(os.environ, HOME=home, CFFIXED_USER_HOME=home)
-        server = subprocess.Popen([binary, "--channel", "--pane", pane_id], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, bufsize=0)
+        command = make_command(home)
+        server = subprocess.Popen(command + ["--channel", "--pane", pane_id], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, bufsize=0)
         pending = b""
 
         def send(message):
@@ -517,16 +522,16 @@ def channel_check():
         send({"jsonrpc": "2.0", "id": "server-discover-probe-1", "method": "server/discover", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}})
         reply = line(10)
         if not reply or reply.get("error", {}).get("code") != -32601 or reply.get("id") != "server-discover-probe-1":
-            fail("the channel server answered server/discover with %s, not method not found" % reply)
+            fail(what + ": the channel server answered server/discover with %s, not method not found" % reply)
         send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "check", "version": "1"}}})
         reply = line(10)
         result = (reply or {}).get("result", {})
         if "claude/channel" not in result.get("capabilities", {}).get("experimental", {}):
-            fail("the channel server's initialize declares no claude/channel capability: %s" % reply)
+            fail(what + ": the channel server's initialize declares no claude/channel capability: %s" % reply)
         if not result.get("instructions", "").startswith("Messages on this channel come from another of your user's Claude Code sessions"):
-            fail("the channel server's instructions are %r" % result.get("instructions"))
+            fail(what + ": the channel server's instructions are %r" % result.get("instructions"))
         if not result.get("protocolVersion", "9") < "2026-07-28":
-            fail("the channel server agreed to protocol revision %s" % result.get("protocolVersion"))
+            fail(what + ": the channel server agreed to protocol revision %s" % result.get("protocolVersion"))
 
         mark = os.path.join(pane_folder, ".varnick-channel")
         for _ in range(20):
@@ -534,17 +539,17 @@ def channel_check():
                 break
             time.sleep(0.1)
         if not os.path.exists(mark) or open(mark).read().strip() != str(server.pid):
-            fail("the channel server keeps no mark with its process id while it runs")
+            fail(what + ": the channel server keeps no mark with its process id while it runs")
 
         enqueue("before the client was ready")
         if line(1.5) is not None:
-            fail("the channel server pushed before the client said it was initialized")
+            fail(what + ": the channel server pushed before the client said it was initialized")
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         first = line(10)
         if not first or first.get("method") != "notifications/claude/channel" or first.get("id") is not None or first.get("params", {}).get("content") != "before the client was ready":
-            fail("the first push is %s" % first)
+            fail(what + ": the first push is %s" % first)
         if first and first.get("params", {}).get("meta") != {"from": "s4", "from_project": "croft"}:
-            fail("a push carries %s, not from and from_project" % (first.get("params", {}).get("meta"),))
+            fail(what + ": a push carries %s, not from and from_project" % (first.get("params", {}).get("meta"),))
 
         enqueue("second\nwith a line break")
         enqueue("third")
@@ -552,31 +557,97 @@ def channel_check():
         pushed = [line(10), line(10), line(10)]
         contents = [(m or {}).get("params", {}).get("content") for m in pushed]
         if contents != ["second\nwith a line break", "third", "fourth"]:
-            fail("three queued messages arrived as %s, not in order" % contents)
+            fail(what + ": three queued messages arrived as %s, not in order" % contents)
         if (pushed[2] or {}).get("params", {}).get("meta") != {"from": "s9", "from_project": "Home"}:
-            fail("a push from another sender carries %s" % ((pushed[2] or {}).get("params", {}).get("meta"),))
+            fail(what + ": a push from another sender carries %s" % ((pushed[2] or {}).get("params", {}).get("meta"),))
         if os.listdir(queue):
-            fail("the queue still holds %s after its messages were pushed" % os.listdir(queue))
+            fail(what + ": the queue still holds %s after its messages were pushed" % os.listdir(queue))
 
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         reply = line(10)
         if (reply or {}).get("result", {}).get("tools") != []:
-            fail("the channel server lists tools: %s" % reply)
+            fail(what + ": the channel server lists tools: %s" % reply)
         server.stdin.close()
         try:
             status = server.wait(timeout=10)
         except subprocess.TimeoutExpired:
             server.kill()
             status = None
-            fail("the channel server did not exit when its input ended")
+            fail(what + ": the channel server did not exit when its input ended")
         if status not in (0, None):
-            fail("the channel server exited with %s" % status)
+            fail(what + ": the channel server exited with %s" % status)
         if os.path.exists(mark):
-            fail("the channel server left its mark behind")
+            fail(what + ": the channel server left its mark behind")
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
-channel_check()
+def mac_command(home):
+    return [binary]
+
+channel_check("Varnick", mac_command, lambda home: os.path.join(home, "Library", "Application Support", "Varnick", "panes"))
+
+# The headless relay (option 07 of sessions-cant-reach-each-other-reliably): the same binary copied into a scratch install folder, so its `state/` folder, where the
+# panes' folders and the outbox are, is the scratch one and not a host's. `--mcp --notify` lists notify alone and with `--send` lists notify then send, whose host
+# wording is the answering tool's; send is Unknown tool without `--send`; a send to an id the session was never given is refused before anything is written; and
+# its `--channel` is the app's channel server over the host's state folder.
+def relay_in(home):
+    install = os.path.join(home, "install")
+    os.makedirs(install, exist_ok=True)
+    copy = os.path.join(install, "varnick-peer")
+    shutil.copy(relay_binary, copy)
+    os.chmod(copy, 0o755)
+    return copy
+
+def relay_talk(home, arguments, messages):
+    lines = "".join(json.dumps(m) + "\n" for m in messages)
+    out = subprocess.run([relay_in(home), "--mcp", "--pane", pane] + arguments, input=lines, capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        fail("the relay %s exited with %d: %s" % (arguments, out.returncode, out.stderr.strip()))
+    return {json.loads(line).get("id"): json.loads(line) for line in out.stdout.splitlines()}
+
+relay_home = tempfile.mkdtemp(prefix="check-relay-")
+try:
+    handshake = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                 {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}]
+    def relay_tools(arguments):
+        return relay_talk(relay_home, arguments, handshake).get(2, {}).get("result", {}).get("tools", [])
+    if [t["name"] for t in relay_tools(["--notify"])] != ["notify"]:
+        fail("the relay's --notify lists %s, not notify alone" % [t["name"] for t in relay_tools(["--notify"])])
+    host_tools = relay_tools(["--notify", "--send"])
+    if [t["name"] for t in host_tools] != ["notify", "send"]:
+        fail("the relay's --notify --send lists %s, not notify then send" % [t["name"] for t in host_tools])
+    host_send = [t for t in host_tools if t["name"] == "send"]
+    if host_send:
+        schema = host_send[0]["inputSchema"]
+        if schema.get("required") != ["to", "text"] or set(schema.get("properties", {})) != {"to", "text"}:
+            fail("the host's send is %s: a required to and text, nothing else" % schema)
+        words = host_send[0]["description"]
+        for phrase in ("`from` of a message this session received", "cannot send first", "not the user's approval", "10 messages a minute", "never says the message was acted on"):
+            if phrase not in words:
+                fail("the host's send description doesn't say %r" % phrase)
+        if "opener" in words or "board_read" in words:
+            fail("the host's send description names opener or board_read, which a host session has not")
+    mac_send = [t for t in listed(["--send"], full=True) if t["name"] == "send"]
+    if mac_send and host_send and mac_send[0]["description"] == host_send[0]["description"]:
+        fail("the host's send description is the Mac's")
+    unknown = relay_talk(relay_home, ["--notify"], [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "send", "arguments": {"to": "s1", "text": "hi"}}}])
+    if unknown.get(3, {}).get("error", {}).get("message") != "Unknown tool":
+        fail("the relay's --notify server answered a send call with %s, not Unknown tool" % unknown.get(3))
+    refused = relay_talk(relay_home, ["--notify", "--send"], [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "send", "arguments": {"to": "s1", "text": "hi"}}}])
+    result = refused.get(3, {}).get("result", {})
+    if result.get("isError") is not True or "No such id" not in result.get("content", [{}])[0].get("text", "") or "Nothing was sent" not in result["content"][0]["text"]:
+        fail("a host send to an id it was never given was not refused as no such id: %s" % refused.get(3))
+    state_outbox = os.path.join(relay_home, "install", "state", "outbox")
+    if os.path.exists(state_outbox):
+        fail("a refused host send left an outbox behind")
+    empty = relay_talk(relay_home, ["--notify", "--send"], [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "send", "arguments": {"to": "s1", "text": "  "}}}])
+    if empty.get(3, {}).get("result", {}).get("isError") is not True or "text is needed" not in empty[3]["result"]["content"][0]["text"]:
+        fail("a host send with no text was not refused: %s" % empty.get(3))
+finally:
+    shutil.rmtree(relay_home, ignore_errors=True)
+
+channel_check("the relay", lambda home: [relay_in(home)], lambda home: os.path.join(home, "install", "state", "panes"))
 
 sys.exit(1 if bad else 0)
 PY

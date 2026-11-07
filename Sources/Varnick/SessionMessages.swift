@@ -5,8 +5,9 @@ import VarnickPeer
 // `send` (option 01 of `sessions-cant-reach-each-other-reliably`), the running Varnick's half: a session sends text to another Claude pane, which Varnick queues in that
 // pane's folder for its channel server to push into the session. The request is Panel access's (`PanelRequest`); `PanelAccess.run` routes it here after its own checks;
 // the relay half is `SendMCP`, and the rules and the refusals' words are `SendRules` (Packages/VarnickPeer), checked by `make check-messages`. Option 02 adds the
-// pane of a tab a paired Mac hosts: the request goes to that Mac (`PeerManager.sendMessage`), whose Varnick runs `receiveMessage`. The rules are in
-// docs/agents/where-it-breaks.md, Messages between sessions.
+// pane of a tab a paired Mac hosts: the request goes to that Mac (`PeerManager.sendMessage`), whose Varnick runs `receiveMessage`. Option 07 adds a session on a headless
+// host (the same request, answered by the host's relay) and the host's answers back, which `HostMessageCollector` collects and `receiveHostMessage` applies. The rules
+// are in docs/agents/where-it-breaks.md, Messages between sessions.
 
 extension PanelAccess {
     /// Where a send goes: a session of this Mac, or a pane on a paired Mac (its id and the host's).
@@ -84,7 +85,7 @@ extension PanelAccess {
                             action: Self.turnWord(delivered.delivery) + (delivered.started ? " started" : ""), counts: "\(text.utf8.count) bytes")
         case .remote(let host, let pane):
             let mac = PeerManager.shared.name(of: host)
-            if PeerManager.shared.peers.first(where: { $0.id == host })?.info?.headless == true { throw PanelRefusal.notSent(.headless) }
+            let isHost = PeerManager.shared.peers.first(where: { $0.id == host })?.info?.headless == true
             let message = PeerSessionMessage(from: callerID.uuidString.lowercased(), fromProject: project, fromMac: PeerIdentity.name ?? PeerIdentity.computerName(),
                                              skips: sender.record.skippedAtStart == true, text: text)
             switch await PeerManager.shared.sendMessage(message, pane: pane, to: host) {
@@ -92,11 +93,17 @@ extension PanelAccess {
                 // Nothing is held for a Mac that is asleep or on another build: the failure's own words say which.
                 throw PanelRefusal.macRefused("\(mac) was not reached: \(refusal.message). Nothing was sent.", kind: "mac unreachable")
             case .success(let reply):
-                if let words = MacMessages.message(for: reply, mac: mac), let refusal = reply.refusal {
+                if let words = MacMessages.message(for: reply, mac: mac, isHost: isHost), let refusal = reply.refusal {
                     throw PanelRefusal.macRefused(words, kind: refusal.word)
                 }
                 limiter.record(at: queuedAt)
                 sendRates[callerID] = limiter
+                if isHost {
+                    // The host took it: this pane has now messaged that host, which is what lets the host's sessions answer it and this Mac collect their answers.
+                    SentHosts.add(host, pane: callerID)
+                    HostMessageCollector.shared.refresh()
+                    MessagesSetup.shared.noteHostSent(from: callerID, sentAt: queuedAt, at: Date(), started: reply.started == true)
+                }
                 let label = "\(id(for: pane, caller: callerID)) (\(reply.project ?? "a project") on \(mac))"
                 let delivery = reply.delivery ?? .unknown
                 return Answered(text: SendRules.answer(delivery, label: label, started: reply.started == true, taken: reply.taken ?? true),
@@ -206,6 +213,42 @@ extension PanelAccess {
             return answer(PeerMessageReply(delivery: delivered.delivery, started: delivered.started, taken: delivered.taken, project: Self.projectWord(of: receiver)))
         } catch {
             return .failure("Varnick couldn't queue the message for that session")
+        }
+    }
+
+    // MARK: A message from a headless host's session
+
+    /// A message a session on a headless host sent one of this Mac's panes, collected by `HostMessageCollector` (option 07 of `sessions-cant-reach-each-other-reliably`).
+    /// In order: this Mac's two switches, the pane being open here and having messaged that host (`HostMessages.macDecision`), then option 01's checks with the
+    /// host session's facts as the message states them. The sender is an id in the receiver's own table, so its answer goes back the same way. Nothing is queued for a refusal.
+    func receiveHostMessage(_ message: PeerHostMessage, host: String, model: LauncherModel) async -> PeerMessageReply {
+        guard let pane = UUID(uuidString: message.pane), let sender = UUID(uuidString: message.from) else { return PeerMessageReply(refusal: .unknownID) }
+        let found = model.tabs.lazy.compactMap { tab in tab.sessions.first { $0.id == pane }.map { (tab, $0) } }.first
+        // A view of another Mac's tab is not a pane of this Mac's that the host's session can have been answered by.
+        let open = found.map { $0.0.host == nil && !$0.1.isOnPeer } ?? false
+        if let refusal = HostMessages.macDecision(paneOpen: open, sentToHost: SentHosts.contains(host, pane: pane)) { return PeerMessageReply(refusal: refusal) }
+        guard let (_, receiver) = found else { return PeerMessageReply(refusal: .gone) }
+        let target = SendRules.Target(kind: receiver.isClaude ? .claude : .other, onOtherMac: false, running: receiver.runsNow,
+                                      receives: MessageQueue.receives(receiver.id), neverReceives: receiver.record.isVoice || receiver.record.isRun,
+                                      skipsPermissions: receiver.record.skippedAtStart == true)
+        let on = Settings.shared.messagesBetweenSessions && Settings.shared.messagesBetweenMacs
+        if let refusal = SendRules.decide(switchOn: on, text: message.text, rateAllowed: true, toSelf: false, target: target, targetKnown: true, senderSkips: message.skips) {
+            return PeerMessageReply(refusal: refusal)
+        }
+        remoteSenders[sender] = host
+        let from = id(for: sender, caller: receiver.id)
+        let queued = SessionMessage.Queued(from: from, fromProject: SessionMessage.projectWord(message.fromProject), text: message.text,
+                                           fromMac: SessionMessage.projectWord(PeerManager.shared.name(of: host)))
+        let queuedAt = Date()
+        do {
+            let delivered = try await deliver(queued, to: receiver)
+            MessagesSetup.shared.noteSent(to: receiver.id, at: queuedAt)
+            // The log's words: the receiver's turn, never an id, a machine, a project or the text.
+            NSLog("Varnick: panel send from a host %@ (%d bytes)", Self.turnWord(delivered.delivery) + (delivered.started ? " started" : ""), message.text.utf8.count)
+            return PeerMessageReply(delivery: delivered.delivery, started: delivered.started, taken: delivered.taken, project: Self.projectWord(of: receiver))
+        } catch {
+            // The host session is told the Mac took the message and could not queue it; the refusal words are option 01's `cannotReceive`.
+            return PeerMessageReply(refusal: .cannotReceive)
         }
     }
 }

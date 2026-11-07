@@ -421,9 +421,15 @@ value in Claude Code's own settings file after saying what it means); this Mac a
 Claude Code's machine policy, changing none of what is there; **Remove approval** takes it out again); panes started before can join (**Restart them** restarts the ones that are waiting); and a test, in which
 Varnick starts two short sessions out of sight, one sends a word to the other and it answers. Off, new panes start as before and `send` is refused.
 
-**Also between my Macs**, under it, lets `send` reach the sessions `board_read` lists on your paired Macs (not a headless host's), over the link the Macs already use, and the receiver sees `from_mac`, the sending Mac. Each Mac turns it on
-itself; turning it on here asks the others, with a notice in their menu bar menu that opens the same checklist there (the administrator password is typed on that Mac), and shows one row for each paired Mac: ready, needs
-approval on that Mac, an older Varnick with an **Update** button, or not answering. A Mac that is not ready is skipped, and a send to it says why; nothing is held for a Mac that is asleep. Both Macs must run the same build.
+**Also between my Macs and hosts**, under it, lets `send` reach the sessions `board_read` lists on your paired Macs and on your headless hosts, over the link they already use, and the receiver sees `from_mac`, the sending machine. Each Mac turns it on
+itself; turning it on here asks the other Macs, with a notice in their menu bar menu that opens the same checklist there (the administrator password is typed on that Mac), and shows one row for each paired Mac: ready, needs
+approval on that Mac, an older Varnick with an **Update** button, or not answering. A Mac that is not ready is skipped, and a send to it says why; nothing is held for a Mac that is asleep. Both machines must speak the same peer protocol version, and a feature added without changing it needs the build only on the machines that use it.
+
+A **headless host** has no Settings of its own, so its checklist is under this switch on a Mac, one block for each host: Varnick there is new enough (**Upgrade** if not), Claude Code is new enough, signed in with Anthropic directly, usage data allowed
+(**Allow**, after saying what it means), the host approves Varnick (**Approve**, **Update** and **Remove approval**), sessions started before (each joins at its next start), and a **Run test** that starts a short session on the host, sends it a word from a short
+one here and waits for the answer. **Approve** runs one fixed command on the host over the link through `sudo` where the host's account needs no password, adding one file of Varnick's to the host's Claude Code policy (`/etc/claude-code/managed-settings.d/`, owned by root);
+where the host's `sudo` asks for a password, a terminal tab opens on the host with the command typed in for you to enter it there. Nothing changes the host's machine policy except your press of one of those buttons. A session on a host can only **answer** a session on a Mac that messaged it (it
+has no board to find one on), so a lead on a Mac sends the host's session its work and the host's session sends its results back to the `from` of that message; if the Mac is asleep, has the switch off or runs an older Varnick, the host session's `send` is refused at once and nothing is held.
 
 Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
 your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,

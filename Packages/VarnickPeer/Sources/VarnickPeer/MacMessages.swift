@@ -67,7 +67,7 @@ public enum MacMessages {
     public static func state(messagesOn: Bool, macsOn: Bool, startsWithChannel: Bool, checklistReason: String?, running: Bool = true) -> PeerMessagesState {
         if !running { return PeerMessagesState(ready: false, reason: "Varnick isn't running there") }
         if !messagesOn { return PeerMessagesState(ready: false, reason: "Messages between sessions is off in its Settings") }
-        if !macsOn { return PeerMessagesState(ready: false, reason: "Also between my Macs is off in its Settings") }
+        if !macsOn { return PeerMessagesState(ready: false, reason: "Also between my Macs and hosts is off in its Settings") }
         if !startsWithChannel { return PeerMessagesState(ready: false, reason: checklistReason ?? "its checklist hasn't passed") }
         return PeerMessagesState(ready: true)
     }
@@ -77,12 +77,13 @@ public enum MacMessages {
         state.ready ? nil : PeerMessageReply(refusal: .hostNotReady, reason: state.reason)
     }
 
-    /// The sender's words for a refusal the host sent back.
-    public static func message(for reply: PeerMessageReply, mac: String) -> String? {
+    /// The sender's words for a refusal the host sent back. A headless host has no Settings of its own, so its checklist is on a Mac (`isHost`).
+    public static func message(for reply: PeerMessageReply, mac: String, isHost: Bool = false) -> String? {
         guard let refusal = reply.refusal else { return nil }
         guard refusal == .hostNotReady else { return refusal.message }
         let reason = reply.reason.map { " (\($0))" } ?? ""
-        return "\(mac) hasn't approved messages yet\(reason): its Varnick shows how. Nothing was sent."
+        let shows = isHost ? "Settings › Claude on this Mac shows how" : "its Varnick shows how"
+        return "\(mac) hasn't approved messages yet\(reason): \(shows). Nothing was sent."
     }
 
     /// A message crossing a Mac boundary may not name a session by its own: the target on the host must be a plain pane id.

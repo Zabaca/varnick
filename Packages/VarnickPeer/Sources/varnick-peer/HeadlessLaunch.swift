@@ -46,6 +46,8 @@ extension HeadlessPeerHost {
                 PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: uuid)
                 PaneFolder.clearSubagentWork(for: uuid)
                 PaneFolder.clearMessage(for: uuid)
+                // Nothing sent to an earlier run of the pane reaches this one, and the old run's channel mark goes.
+                MessageQueue.clear(for: uuid)
             } catch {
                 failed()
                 return stateFailure(error)
@@ -55,15 +57,22 @@ extension HeadlessPeerHost {
         // Pty client: the Mac's command and a fresh environment, on a pty of the relay's own, with the labels written in the same attach.
         // claude exits on an unknown --agent, so only one that exists is passed.
         let shellArguments: [String]
+        let skips = record.skipPermissions ?? config.skipPermissions
+        // Messages (option 07 of `sessions-cant-reach-each-other-reliably`): a Claude session that is not an automation's run gets the channel and `send` while the host is
+        // ready (its saved check passed, the Mac's last test did not fail, and Varnick's file is in the policy folder now). Otherwise it starts exactly as it did before.
+        let relay = root.appendingPathComponent("varnick-peer").path
+        let receivesMessages = !record.isTerminal && record.automation == nil && startsWithChannel
+        if receivesMessages { ChannelPlugin.write(command: relay) }
         if record.isTerminal {
             shellArguments = ["-l"]
         } else {
             let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
             shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
-                skipPermissions: record.skipPermissions ?? config.skipPermissions, agent: agent, resuming: conversation, sessionID: startID,
+                skipPermissions: skips, agent: agent, resuming: conversation, sessionID: startID,
                 prompt: prompt, problems: problemsBoard,
-                mcpConfig: NotifyTool.relayConfiguration(command: root.appendingPathComponent("varnick-peer").path, pane: uuid),
-                dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? []))
+                mcpConfig: NotifyTool.relayConfiguration(command: relay, pane: uuid, send: receivesMessages),
+                dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [],
+                channelPlugin: receivesMessages ? ChannelPlugin.folder.path : nil))
         }
         guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
             failed()
@@ -104,7 +113,12 @@ extension HeadlessPeerHost {
         Zmx.detachClients(of: session)
         client.finish(waiting: 3000)
         do {
-            try state.update(record.id) { if $0.ended == nil { $0.starting = false } }
+            try state.update(record.id) {
+                if $0.ended == nil {
+                    $0.starting = false
+                    if !record.isTerminal { $0.startedSkipping = skips }
+                }
+            }
         } catch {
             return stateFailure(error)
         }

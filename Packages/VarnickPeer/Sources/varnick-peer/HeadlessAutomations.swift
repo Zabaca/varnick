@@ -386,6 +386,7 @@ extension HeadlessPeerHost {
             log("zmx", "not beside the relay")
             return 1
         }
+        sweepTestSessions(now: now)
         let files: (automations: AutomationFile.ReadResult, runs: TaskRunFile.ReadResult, tick: Date?)
         do { files = try state.automationFiles() } catch {
             log("files", "state folder busy or unreadable")

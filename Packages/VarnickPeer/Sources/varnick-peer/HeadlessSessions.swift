@@ -45,6 +45,11 @@ struct HeadlessSession: Codable, Equatable {
     /// The run raises no Done while unopened (option 01 of `automation-runs-crowd-the-menu`), decided at its start (`Automation.quietsDone`) and listed on
     /// its tab's run mark. Optional, so an older relay reads the record as it did.
     var quietDone: Bool?
+    /// The session was started skipping permission checks (the value `launch` passed on the command line, the record's own else the host's default), for the skip rule
+    /// between messages (option 07 of `sessions-cant-reach-each-other-reliably`). Nil: not known, which reads as not skipping.
+    var startedSkipping: Bool?
+    /// A throwaway receiver of a Mac's messages test: kept out of the host's tabs and Recent, and ended by the tick if the Mac does not end it.
+    var messageTest: Bool?
 
     /// The tab the session is in, as a Mac names it.
     var tabID: String { tab ?? id }
