@@ -329,6 +329,13 @@ public enum HostOutbox {
         try? Data("\(getpid())\n".utf8).write(to: markFile(for: mac), options: .atomic)
     }
 
+    /// Takes the mark away when the request that dated it is the one whose connection dropped, so the Mac stops looking like it collects: only when the mark still holds this
+    /// process's id, since a newer request from the same Mac has dated it again.
+    public static func clearCollecting(mac: String, pid: Int32 = getpid()) {
+        guard let text = try? String(contentsOf: markFile(for: mac), encoding: .utf8), Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) == pid else { return }
+        unlink(markFile(for: mac).path)
+    }
+
     public static func isCollecting(mac: String, now: Date = Date()) -> Bool {
         guard let dated = PaneFolder.modificationDate(markFile(for: mac).path) else { return false }
         return now.timeIntervalSince(dated) < HostMessages.collectingFreshFor

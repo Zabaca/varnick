@@ -67,7 +67,7 @@ struct MessagesChecklistView: View {
     }
 }
 
-// MARK: Messages between sessions, the section (option 01) and Also between my Macs (option 02)
+// MARK: Messages between sessions, the section (option 01) and Also between my Macs and hosts (options 02 and 07)
 
 /// Both switches of Settings › Claude's messages and what hangs from them: the checklist, and under Also between my Macs and hosts one row for each paired Mac and a checklist for each headless host. A paired Mac's
 /// ask (`MessagesSetup.asks`) shows the checklist even while the first switch is off, so the Mac that was asked can see what to do; nothing is turned on for it.
@@ -198,7 +198,7 @@ struct HostChecklistView: View {
                     Spacer(minLength: 12)
                     HStack(spacing: 6) {
                         if let button = line.button, let label = line.row.button {
-                            Button(label) { press(button) }.disabled(state.working != nil || state.reading || builds.isUpdating(peer.id))
+                            Button(label) { press(button) }.disabled(state.working != nil || state.reading || builds.isUpdating(peer.id) || builds.isInstalling(.peer(peer.id)))
                         }
                         if line.id == 4, state.checklist?.hasOwnFile == true {
                             Button("Remove approval") { hosts.perform(HostChecklist.remove, on: peer.id) }.disabled(state.working != nil)
@@ -214,6 +214,9 @@ struct HostChecklistView: View {
             } else if let outcome = state.outcome {
                 Text(outcome).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if let address = builds.headlessAddress(.peer(peer.id)) {
+                HeadlessLines(id: .peer(peer.id), host: address, name: peer.name, confirming: builds.machines[.peer(peer.id)]?.confirmingInstall == true)
+            }
         }
         .padding(.leading, 4)
     }
@@ -221,7 +224,8 @@ struct HostChecklistView: View {
     private func press(_ button: HostMessagesSetup.Line.Button) {
         switch button {
         case .host(let action): hosts.perform(action, on: peer.id)
-        case .upgrade: Task { await builds.upgrade(.peer(peer.id)) }
+        // A headless host is upgraded with the installer, run from this Mac after one confirmation, which its lines below show (`HeadlessLines`).
+        case .upgrade: builds.askInstall(.peer(peer.id))
         case .test: hosts.runTest(on: peer.id)
         }
     }

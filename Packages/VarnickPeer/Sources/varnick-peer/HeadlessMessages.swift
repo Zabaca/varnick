@@ -91,20 +91,33 @@ extension HeadlessPeerHost {
 
     /// `collectMessages`: writes the receipts the Mac brings, marks that it is collecting, and answers with the messages waiting for it, as soon as there are any or empty
     /// after `HostMessages.hold` seconds, never later (a request past the Mac's deadline closes the shared connection).
+    ///
+    /// A blank line goes out every half second while it holds, which the asking side skips (it reads the last line that decodes): a connection that has dropped (the Mac
+    /// quit, switched the setting off or slept) fails that write, and the request ends without claiming anything, so a message is never claimed for a Mac that is not there.
     func collectMessages(_ request: PeerRequest, by: String) -> PeerReply {
         for receipt in request.collect?.receipts ?? [] { HostOutbox.writeReceipt(receipt, mac: by) }
         HostOutbox.tidy(mac: by)
         HostOutbox.markCollecting(mac: by)
+        signal(SIGPIPE, SIG_IGN)
+        func stillThere() -> Bool { write(STDOUT_FILENO, "\n", 1) >= 0 }
         let deadline = Date().addingTimeInterval(HostMessages.hold)
-        var marked = Date()
-        var found = HostOutbox.claim(mac: by)
-        while found.isEmpty, Date() < deadline {
+        var marked = Date(), beat = Date()
+        var found: [PeerHostMessage] = []
+        while Date() < deadline {
+            if Date().timeIntervalSince(beat) >= 0.5 {
+                guard stillThere() else {
+                    HostOutbox.clearCollecting(mac: by)
+                    return .failure("The connection closed while the request was held")
+                }
+                beat = Date()
+            }
+            found = HostOutbox.claim(mac: by)
+            if !found.isEmpty { break }
             Thread.sleep(forTimeInterval: HostMessages.poll)
             if Date().timeIntervalSince(marked) >= 2 {
                 HostOutbox.markCollecting(mac: by)
                 marked = Date()
             }
-            found = HostOutbox.claim(mac: by)
         }
         HostOutbox.markCollecting(mac: by)
         var reply = PeerReply.success()

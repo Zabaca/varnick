@@ -211,7 +211,7 @@ public enum PeerOp: String, Codable, Sendable, CaseIterable {
     /// A session message for a session on the receiving Mac (protocol 35, `PeerSessionMessage`): the target pane in `pane`. For a listed Mac only. The host's running
     /// Varnick applies option 01's checks and answers with a `PeerMessageReply`.
     case sendMessage
-    /// A Mac turned on Also between my Macs (protocol 35) and asks this one to join: `asker` is its name. The receiving Varnick puts a notice in its menu that opens
+    /// A Mac turned on Also between my Macs and hosts (protocol 35) and asks this one to join: `asker` is its name. The receiving Varnick puts a notice in its menu that opens
     /// the checklist. For a listed Mac only.
     case messageAsk
     /// A headless host's checklist for messages (`PeerHostCheckAsk`, `PeerHostChecklist`), read on the host, with the actions its buttons run (Allow, and Approve, Update and
