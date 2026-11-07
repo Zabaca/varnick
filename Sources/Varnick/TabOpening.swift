@@ -73,6 +73,9 @@ extension PanelAccess {
         // Saved as false when not, so a later change of the setting never makes the new session skip; nil when yes, so it follows the setting.
         record.skipPermissions = Settings.shared.skipPermissions && caller.record.skippedAtStart == true ? nil : false
         record.opener = note
+        // The mark `pane_open` saves, naming the calling pane: it is how `tab_done` knows this tab is the caller's to end until the user takes it. `pane_close`
+        // still refuses the pane, since it looks in the caller's own tab first and answers "in another tab".
+        record.openedBy = caller.id
 
         // A paired Mac's start of a new tab is the sibling: the tab joins the strip without being shown, and the session starts at once.
         let session = model.makeSession(record, resuming: false, query: "")

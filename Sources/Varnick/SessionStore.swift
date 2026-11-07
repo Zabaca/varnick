@@ -96,7 +96,9 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// The voice session while its tab is hidden; opening or taking it over clears `runUnopened` (`markRunOpened`).
     var isUnopenedVoice: Bool { isVoice && runUnopened == true }
 
-    /// The pane whose session opened this one with `pane_open`; it may close it until the user takes the pane, which clears this.
+    /// The pane whose session opened this one with `pane_open` (a pane of the same tab) or `tab_open` (a pane of another, which `tab_done` ends with the
+    /// tab); it may close it, or mark the tab Done, until the user takes the pane, which clears this. A Take over by another Mac or the phone and a
+    /// reopen of the closed tab clear a `tab_open` mark too (`LauncherModel.paneTakenOver`, `PaneLayout.droppingForeignMarks`).
     /// Optional so older records load.
     var openedBy: UUID?
 

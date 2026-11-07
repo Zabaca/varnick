@@ -2,7 +2,7 @@ import Foundation
 
 // Pane tools for sessions (option 01 of `panes-open-only-by-hand-at-a-mac`), the relay half: what `Varnick --mcp --panes` lists. Their calls travel as
 // Panel access's requests (`PanelRequest`, no new request type) and are answered by `PanelAccess`, in `PaneOpening` (`tab_open`, option 01 of
-// `sessions-cant-start-sessions-in-other-projects`, in `TabOpening`). The server never reads or acts.
+// `sessions-cant-start-sessions-in-other-projects`, in `TabOpening`; `tab_done`, option 06, in `TabDoneAccess`). The server never reads or acts.
 
 /// The kinds `pane_open` takes, in the order its schema lists them.
 enum OpenedPaneKind: String, CaseIterable {
@@ -20,12 +20,13 @@ enum PaneMCP {
     static let open = "pane_open"
     static let close = "pane_close"
     static let tabOpen = "tab_open"
+    static let tabDone = "tab_done"
 
-    /// The three tools, as `tools/list` gives them.
-    static var tools: [[String: Any]] { [openTool, closeTool, tabOpenTool] }
+    /// The four tools, as `tools/list` gives them.
+    static var tools: [[String: Any]] { [openTool, closeTool, tabOpenTool, tabDoneTool] }
 
     /// The names `tools` lists: the only ones a call may use.
-    static let names: Set<String> = [open, close, tabOpen]
+    static let names: Set<String> = [open, close, tabOpen, tabDone]
 
     private static func tool(_ name: String, summary: String, properties: [String: Any], required: [String] = []) -> [String: Any] {
         var schema: [String: Any] = ["type": "object", "properties": properties]
@@ -76,10 +77,22 @@ enum PaneMCP {
             + "nothing limits how many are opened. To work with it, send it work with SendMessage to the name in the reply; with notify_when_idle you get one notice "
             + "when it has nothing left to do (only from this session's main conversation, not from a subagent). Its name can change if it restarts or the user renames it: "
             + "look it up again with `claude agents --json`. The name may be missing from the reply when the session was still starting; the tab is open all the same. "
-            + "pane_close does not close it (it is in another tab). This Mac's projects only.",
+            + "Once you have what you needed from it, mark it Done with tab_done, as long as the user has not used it (pane_close does not reach it: it is in another tab). This Mac's projects only.",
         properties: [
             "project": ["type": "string", "description": "The Project: its folder's name, or group/name when two projects share a name, or its absolute path."],
             "agent": ["type": "string", "description": "A Claude Code agent found in that project's folder, as @name would find it there."],
             "prompt": ["type": "string", "description": "The new session's first message, at most 20000 bytes. Left out, the session waits for one."],
         ], required: ["project"])
+
+    private static let tabDoneTool = tool(tabDone,
+        summary: "Marks Done a tab this session opened with tab_open, as the user's Done would: every pane in it closes (a terminal, page, app or file the new session "
+            + "opened beside itself too), the tab goes to Completed, where the user can reopen it whole with ↩, and its sessions are still found by search. Nothing is asked. "
+            + "`id` is the pane's id (s…) from tab_open's reply, or the tab's card id or a pane id that board_read lists for it. Call it once you have what you needed from the "
+            + "session. Refused while the user has taken the tab over: a click in it, a key typed in it, a pane they added or focused since, or a take over on another Mac or the "
+            + "phone (bringing the tab up to watch it does not count, and the reply says when it was showing); while a session in it is working, has background work or "
+            + "waits on the user (wait for it to have nothing left to do, then call again; a session waiting on the user has called the user there, so it is theirs); "
+            + "while the user is closing it; for this session's own tab; and for any tab this session did not open, one opened before this build, or one reopened from "
+            + "Completed. In a tab that another Mac or the phone controls it is answered, and ends this Mac's tab.",
+        properties: ["id": ["type": "string", "description": "The pane's id (s…) from tab_open, or the tab's card id or a pane id from board_read."]],
+        required: ["id"])
 }

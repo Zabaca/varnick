@@ -32,6 +32,8 @@ enum PanelRefusal: Error {
     case keysRefused(String)
     /// `keys` sent some of its characters and keys and then stopped, with the reason.
     case keysStopped(String, sent: PanelKeyCount, asked: PanelKeyCount)
+    /// `tab_done` did not end the tab, with `TabDone`'s kind (the log's) and the words the session reads.
+    case notDone(TabDone.Refusal, String)
     /// A pane tool's refusal in a tab another machine controls: the same message, marked in the log.
     indirect case inControlledTab(PanelRefusal)
 
@@ -52,6 +54,7 @@ enum PanelRefusal: Error {
         case .refused(let why): "Nothing was changed: \(why)"
         case .keysRefused(let why): "Nothing was sent: \(why)"
         case .keysStopped(let why, let sent, let asked): "Stopped after sending \(sent.of(asked)): \(why)"
+        case .notDone(_, let why): why
         case .inControlledTab(let refusal): refusal.message
         }
     }
@@ -80,6 +83,7 @@ enum PanelRefusal: Error {
         case .refused: "edit refused"
         case .keysRefused: "keys refused"
         case .keysStopped: "keys stopped"
+        case .notDone(let kind, _): "not done: " + kind.word
         case .inControlledTab(let refusal): refusal.logKind + " controlled"
         }
     }
@@ -244,10 +248,10 @@ final class PanelAccess {
     }
 
     /// The tools that answer a session whose pane another machine controls, in a tab of this Mac: the pane tools (option 04 of
-    /// `panes-open-only-by-hand-at-a-mac`; `tab_open` too, which adds a tab of this Mac's own) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
+    /// `panes-open-only-by-hand-at-a-mac`; `tab_open` too, which adds a tab of this Mac's own, and `tab_done`, which ends one) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
     /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
     /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` adds a pane there, and refuses what would open on this Mac.
-    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, PaneMCP.tabDone, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
                                                  FindMCP.find, FindMCP.sessionRead, FindMCP.open]
 
     /// In order: Varnick starting, the pane, then the tool.

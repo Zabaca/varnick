@@ -92,7 +92,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // The screen belongs to the card that shows it; a pane taken back or ended keeps none, and
         // watches nothing (the card's live screen, below).
         didSet {
-            if case .controlled = away { return syncWatch() }
+            if case .controlled = away {
+                if !isOnPeer { onControlled() }
+                return syncWatch()
+            }
             watchRefused = false
             stopWatching()
             framesPaused = false
@@ -173,6 +176,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var onKept: () -> Void = {}
     /// The record has something new to save that no tab change carries (`launchClaude` recording how it started).
     var onRecordChange: () -> Void = {}
+
+    /// This Mac's own pane now shows the card of another Mac or the phone in control: a Take over (`LauncherModel.paneTakenOver`).
+    var onControlled: () -> Void = {}
 
     /// The user took this pane, so the session that opened it may no longer close it. True when it was one a session opened.
     func clearOpenedBy() -> Bool {

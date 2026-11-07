@@ -402,6 +402,11 @@ opened it was started skipping them. The session that opened it gets the new ses
 (its id and name, in one paragraph added to its system prompt, not to your prompt) so it can send its result back; that stops applying once you `/clear` the tab or move it to another conversation.
 A folder Claude Code hasn't trusted yet is refused: open a session there once and accept. It starts only in a project of yours, never in a worktree, a folder inside a project or Home.
 
+A fourth, **`tab_done`**, lets the session that opened such a tab mark it Done once it has the result, exactly as your own Done does: every pane in the tab closes (a terminal or a page the new session opened beside itself too), the tab
+goes to Completed, where ↩ reopens it whole, and search still finds its sessions. It works only while you have not used the tab: a click in it, a key typed in it, a pane you added or focused, a take over on the phone or another Mac, or
+reopening it from Completed makes it yours, and then the session cannot end it. Bringing the tab up to watch it does not count. It is also refused while a session in the tab is working, has background work or waits on you (a permission
+dialog, a question, a plan), for the session's own tab, and for any tab it did not open. A session's `keys` still refuses the Done key.
+
 Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
 your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,
 this Mac's open sessions first), each result marked Claude session, page or bookmark, and a session with its project, Mac, when it was used, its tab and whether that is Open, Closed or Done,

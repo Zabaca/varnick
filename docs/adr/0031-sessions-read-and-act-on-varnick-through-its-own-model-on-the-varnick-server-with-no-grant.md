@@ -144,3 +144,17 @@ At the user's word (options 01 and 04 of `sessions-cant-start-sessions-in-other-
 - **Log.** The tool, the outcome's kind, whether the new session's name and the opener's were found, and the time; never a project, a prompt, an agent or a name.
 
 What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Panel access; what leaves the Mac is in docs/privacy-and-security.md.
+
+## Amendment: a session marks Done a tab it opened, until the user has used it (2026-11-06)
+
+At the user's word (option 06 of `sessions-cant-start-sessions-in-other-projects`), the pane tools gain `tab_done`. Until now marking a tab Done was the user's, or a listed Mac's or Device's ([ADR 0045](0045-done-from-any-listed-mac-or-device-closes-the-tab-on-its-host-whoever-controls-or-started-it.md)), and `keys` refuses the Done key; this lets a session mark Done one kind of tab, the kind it opened itself.
+
+- **Which sessions get it.** The `--panes` set lists it after `tab_open`, so the rule of the amendment of 2026-10-17 covers it with no change. No switch. A session gains it at its start.
+- **What it does.** The user's Done, nothing less: every pane in the tab closes, the tab goes to Completed and Recent, where ↩ reopens it whole, and search finds its sessions under it. It asks no question; the refusals below stand in for the one the user's Done asks while a session works.
+- **Only a tab the session opened with `tab_open`, and the user has not used.** `tab_open` now saves the opened-by mark `pane_open` saves, naming the calling pane. The tab is the caller's to end while a pane of it carries that mark and every pane of it carries some session's mark. The user's click in it, a key typed in it and focus moved to it clear a pane's mark, as they do for `pane_close`; a Take over by another Mac or the phone, and reopening the closed tab, clear it too. Bringing the tab up to watch it, a session's `show` and reading it on the board do not. Tabs opened before this build carry no mark, so they are the user's.
+- **Refused** while a session in it is working, has background work or waits on the user; while another Mac or the phone controls it; while it is already closing; for the caller's own tab; and for any tab the caller did not open. Nothing forces it.
+- **What it can end.** Everything in the tab, as Done does: a terminal or a dev server the new session opened beside itself ends with it. Completed keeps the tab whole.
+- **Same route.** The call is Panel access's request with a new tool name, so the request version stays and no peer protocol changes. It is answered in a tab another machine controls (`PanelAccess.answersControlled`) and ends a tab of this Mac's own.
+- **Log.** The tool, the outcome's kind (done, or the refusal's) and whether the tab was on screen; never a project, a name or a prompt.
+
+What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Panel access; what it adds to what sessions may do is in docs/privacy-and-security.md.
