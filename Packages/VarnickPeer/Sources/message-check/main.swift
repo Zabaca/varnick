@@ -982,5 +982,26 @@ macStopped.value = true
 expect("two answers a second apart are both taken and neither is refused as not collecting", answers.value.count == 2 && answers.value.values.allSatisfy { !$0.isError }
        && handedOver.value.sorted() == ["answer 1", "answer 2"], "\(answers.value.mapValues { ($0.isError, ($0.content.first?["text"] as? String) ?? "") }) \(handedOver.value)")
 
+// MARK: Where a session with no folder starts on a host (HostFolder)
+
+let hostHome = "/state/Home", accountHome = "/home/user"
+func folderOf(_ saved: String?, configured: String? = nil, transcriptUnder: Set<String> = []) -> String {
+    HostFolder.saved(folder: saved, configured: configured, home: hostHome, userHome: accountHome) { transcriptUnder.contains($0) }
+}
+expect("no folder and no config starts in Home, not the account's home folder", HostFolder.start(asked: nil, configured: nil, home: hostHome) == hostHome)
+expect("no folder with a configured one starts in the configured folder", HostFolder.start(asked: nil, configured: "/srv/work", home: hostHome) == "/srv/work")
+expect("a given folder wins over the configured one and Home", HostFolder.start(asked: "/home/user/Projects/app", configured: "/srv/work", home: hostHome) == "/home/user/Projects/app")
+expect("a given folder wins when nothing is configured", HostFolder.start(asked: "/home/user/Projects/app", configured: nil, home: hostHome) == "/home/user/Projects/app")
+expect("a given home folder is still the home folder (a session asked to start there)", HostFolder.start(asked: accountHome, configured: nil, home: hostHome) == accountHome)
+expect("the messages test's receiver starts in Home when no folder is asked", HostFolder.messageTest(asked: nil, home: hostHome) == hostHome)
+expect("the messages test's receiver starts in the folder it is asked to", HostFolder.messageTest(asked: "/srv/work", home: hostHome) == "/srv/work")
+expect("a record with a folder keeps it, the home folder too", folderOf("/home/user/Projects/app") == "/home/user/Projects/app" && folderOf(accountHome, transcriptUnder: [hostHome]) == accountHome)
+expect("a legacy record with no folder resumes under the account's home folder when its conversation is there", folderOf(nil, transcriptUnder: [accountHome]) == accountHome)
+expect("a legacy record with no folder resumes under the configured folder when its conversation is there", folderOf(nil, configured: "/srv/work", transcriptUnder: ["/srv/work"]) == "/srv/work")
+expect("a legacy record whose conversation is under the configured folder is not looked for under the home folder", folderOf(nil, configured: "/srv/work", transcriptUnder: [accountHome]) == "/srv/work")
+expect("a record with no folder whose conversation is in Home resumes in Home", folderOf(nil, transcriptUnder: [hostHome]) == hostHome)
+expect("a record with no folder and no transcript yet starts in Home", folderOf(nil) == hostHome)
+expect("a record with no folder and no transcript yet starts in the configured folder when there is one", folderOf(nil, configured: "/srv/work") == "/srv/work")
+
 print("check-messages: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

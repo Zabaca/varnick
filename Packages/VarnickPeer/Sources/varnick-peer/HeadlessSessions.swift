@@ -57,8 +57,8 @@ struct HeadlessSession: Codable, Equatable {
     var isTerminal: Bool { kind == .terminal }
 
     /// A Claude pane nothing was ever sent in: no prompt, and no transcript for `conversation`. One that lost its transcript had a prompt.
-    func isUntouched(conversation: String) -> Bool {
-        !isTerminal && (prompt ?? "").isEmpty && !TranscriptReader.hasConversation(directory: folder ?? "", conversation: conversation)
+    func isUntouched(conversation: String, in directory: String) -> Bool {
+        !isTerminal && (prompt ?? "").isEmpty && !TranscriptReader.hasConversation(directory: directory, conversation: conversation)
     }
 
     /// The conversation claude is on: the hook's last report, else the one saved, else the session's own id.
@@ -336,7 +336,7 @@ extension StateFolder {
     /// What a `start` with `resume` for this record comes to, decided and marked under one lock so two Macs'
     /// panes can't both start it. A record to start is marked starting in this boot, with the conversation it
     /// follows. `before` is the record as it was, for a start that fails to put back.
-    func claimResume(_ id: String, running: Set<String>, now: Date = Date()) throws -> (decision: HeadlessLifecycle.Resume, before: HeadlessSession?) {
+    func claimResume(_ id: String, running: Set<String>, folder: (HeadlessSession, String) -> String, now: Date = Date()) throws -> (decision: HeadlessLifecycle.Resume, before: HeadlessSession?) {
         try locked(exclusive: true) {
             var sessions = try readSessions()
             let bootID = HeadlessSession.currentBootID
@@ -348,10 +348,10 @@ extension StateFolder {
             let conversation = conversations[id] ?? id
             // A terminal has no conversation to resume: one a reboot lost starts fresh in its folder.
             let transcript = before.isTerminal
-                || TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: conversation)
+                || TranscriptReader.hasConversation(directory: folder(before, conversation), conversation: conversation)
             let decision = HeadlessLifecycle.resumeDecision(
                 record: before, running: running.contains(id), bootID: bootID, conversation: conversation, transcriptExists: transcript,
-                untouched: before.isUntouched(conversation: conversation),
+                untouched: before.isUntouched(conversation: conversation, in: folder(before, conversation)),
                 held: !before.isTerminal
                     && HeadlessLifecycle.isHeld(conversation, in: sessions, running: running, conversations: conversations, excluding: id))
             switch decision {
@@ -390,7 +390,7 @@ extension StateFolder {
 
     /// A closed tab's panes that can start again (Claude with a transcript, or untouched and fresh, and not held; every terminal), marked
     /// starting for `by` in one step like `claimResume`. The tab is made for `by`; its mark comes off.
-    func claimReopen(_ tab: String, by: String, running: Set<String>, now: Date = Date()) throws -> Reopen {
+    func claimReopen(_ tab: String, by: String, running: Set<String>, folder: (HeadlessSession, String) -> String, now: Date = Date()) throws -> Reopen {
         try locked(exclusive: true) {
             var sessions = try readSessions()
             var tabs = try readTabs()
@@ -407,9 +407,9 @@ extension StateFolder {
                     let held = conversations[id] ?? id
                     guard !HeadlessLifecycle.isHeld(held, in: sessions, running: running, conversations: conversations, excluding: id)
                     else { continue }
-                    if TranscriptReader.hasConversation(directory: before.folder ?? "", conversation: held) {
+                    if TranscriptReader.hasConversation(directory: folder(before, held), conversation: held) {
                         conversation = held
-                    } else if before.isUntouched(conversation: held) {
+                    } else if before.isUntouched(conversation: held, in: folder(before, held)) {
                         freshUnder = held
                     } else {
                         continue
