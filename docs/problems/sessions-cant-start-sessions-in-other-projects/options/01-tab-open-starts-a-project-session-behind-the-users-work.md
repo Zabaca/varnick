@@ -110,3 +110,7 @@ Follow-ups from the review (2026-11-06, verdict merge), for this option and opti
 - **should-fix:** in Wrap mode, a new tab that starts a new row in the strip grows its header and resizes every pane, the one on screen included, as a paired Mac's new tab already does. Run the hand check in Wrap mode too, then accept and document it or stop the strip resizing panes for a tab added behind.
 - **should-fix:** the hand check after a restart (the full list in where-it-breaks, "By hand after a restart (tab_open)") is still owed.
 - **nits:** the comment on the pane tool set still names only `pane_open` and `pane_close`; where-it-breaks' "What the tools do not promise" doesn't yet cover `tab_open`, whose open question (a project's own settings making a helper skip permissions) now reaches every project; the privacy doc leaves out the opener's tab title, which the fallback paragraph sends; the session-file read takes the first match by session id without checking that its process is alive (the paragraph's lookup rule recovers).
+
+Follow-up from the first live use (2026-11-06):
+
+- **A session can't close a tab it opened.** `pane_close` closes only panes in the caller's own tab, and no tool marks a tab Done (the keys tool refuses the Done key on purpose), so every tab a session opens with `tab_open` stays until the user marks it Done. Wanted: the opener can close, or mark Done, a tab it opened with `tab_open` and the user hasn't taken over (focused or typed into), as `pane_close` treats panes. Done on any other tab stays the user's.
