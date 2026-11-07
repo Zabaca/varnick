@@ -31,7 +31,9 @@ extension HeadlessPeerHost {
             return .failure("\(name) has no login shell for its account")
         }
         let session = Zmx.sessionName(uuid)
-        let folder = record.folder ?? config.defaultFolder
+        let folder = config.folder(of: record, conversation: conversation ?? freshUnder)
+        // Home is where a record with no folder lands: made and marked trusted before claude starts in it.
+        if folder == VarnickHome.path { VarnickHome.madeAndTrusted() }
         // A fresh pane starts under the conversation it follows, with no prompt: a reopened tab's untouched one never sends its first again.
         let startID = freshUnder ?? record.id
         let prompt = freshUnder == nil ? record.prompt ?? "" : ""

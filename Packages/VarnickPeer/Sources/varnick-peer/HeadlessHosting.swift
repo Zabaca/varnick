@@ -84,7 +84,10 @@ extension HeadlessPeerHost {
             folder = folder ?? found.sessions.first { $0.id == beside }?.folder
             placement = .beside(pane: beside, axis: axis)
         }
-        let target = HeadlessConfig.expand(folder ?? config.defaultFolder)
+        // No folder: Varnick's Home, which is made and marked trusted here, before the checks below look at it. The messages test's receiver always has it
+        // when none is asked, whatever `config.json` says (a configured `~` is never trusted).
+        let target = ask.messageTest == true ? HostFolder.messageTest(asked: folder.map(HeadlessConfig.expand), home: VarnickHome.path) : config.startFolder(folder)
+        if target == VarnickHome.path { VarnickHome.madeAndTrusted() }
         guard Self.isFolder(target) else { return .failure("\(target) isn't a folder on \(name)") }
         // A Mac's messages test (option 07 of `sessions-cant-reach-each-other-reliably`) needs the host ready and a folder Claude Code trusts, since nobody can answer its question.
         if ask.messageTest == true {
@@ -151,7 +154,7 @@ extension HeadlessPeerHost {
         if let record = (try? state.sessions())?.first(where: { $0.id == id }), let refusal = notHeldElsewhere(tab: record.tabID, by: by) { return refusal }
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         let claim: (decision: HeadlessLifecycle.Resume, before: HeadlessSession?)
-        do { claim = try state.claimResume(id, running: running) } catch { return stateFailure(error) }
+        do { claim = try state.claimResume(id, running: running, folder: config.folder(of:conversation:)) } catch { return stateFailure(error) }
         var reply = PeerReply.success()
         switch claim.decision {
         case .running:
@@ -309,7 +312,7 @@ extension HeadlessPeerHost {
             return .failure("That session isn't running and controlled by the machine that asked")
         }
         let conversation = StateFolder.conversations(of: records)[pane] ?? pane
-        let resumable = TranscriptReader.hasConversation(directory: record.folder ?? config.defaultFolder, conversation: conversation)
+        let resumable = TranscriptReader.hasConversation(directory: config.folder(of: record, conversation: conversation), conversation: conversation)
         let before = record
         func putBack() {
             _ = try? state.update(pane) {
@@ -348,7 +351,7 @@ extension HeadlessPeerHost {
         state.reconcile()
         guard let running = StateFolder.runningIDs() else { return zmxUnaskable }
         let claim: StateFolder.Reopen
-        do { claim = try state.claimReopen(tab, by: by, running: running) } catch { return stateFailure(error) }
+        do { claim = try state.claimReopen(tab, by: by, running: running, folder: config.folder(of:conversation:)) } catch { return stateFailure(error) }
         switch claim {
         case .open: return .failure("That tab is open on \(name): take it over from the list")
         case .nothing: return .failure("Nothing in that tab can be reopened on \(name)")
@@ -434,7 +437,7 @@ extension HeadlessPeerHost {
 
     /// `agents`: those of `folder`, or of the default folder when it names none.
     private func agents(folder: String?) -> PeerReply {
-        let folder = HeadlessConfig.expand(folder ?? config.defaultFolder)
+        let folder = config.startFolder(folder)
         var reply = PeerReply.success()
         reply.folder = folder
         reply.agents = Agent.available(in: folder).map { PeerAgent(name: $0.name, description: $0.description, project: $0.project) }
@@ -494,7 +497,7 @@ extension HeadlessPeerHost {
     }
 
     private func pane(_ record: HeadlessSession, uuid: UUID, status: PeerSessionStatus?) -> PeerPane {
-        let folder = record.folder ?? config.defaultFolder
+        let folder = config.folder(of: record)
         let running = status?.running == true
         if record.isTerminal {
             return PeerPane(id: record.id, kind: .terminal, title: "Terminal", folder: folder, running: running, clients: status?.clients,
@@ -537,7 +540,7 @@ extension HeadlessPeerHost {
         for record in records.filter({ $0.ended != nil && !$0.isTerminal && $0.runUnopened != true && $0.messageTest != true && !stillOpen.contains($0.tabID) })
             .sorted(by: { ($0.ended ?? .distantPast) > ($1.ended ?? .distantPast) }) {
             let conversation = conversations[record.id] ?? record.id
-            let folder = record.folder ?? config.defaultFolder
+            let folder = config.folder(of: record, conversation: conversation)
             guard !seen.contains(conversation), TranscriptReader.hasConversation(directory: folder, conversation: conversation),
                   !HeadlessLifecycle.isHeld(conversation, in: records, running: running, conversations: conversations) else { continue }
             seen.insert(conversation)

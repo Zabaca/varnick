@@ -52,8 +52,8 @@ if CommandLine.arguments.contains("--mcp") {
     exit(HostSendServer.serve(pane: pane, send: CommandLine.arguments.contains(SendTool.argument)) {
         // The pane's project and whether it was started skipping, from the host's record of it.
         let record = (try? state.sessions())?.first { $0.id == pane.uuidString.lowercased() }
-        let fallback = (try? host.get().defaultFolder) ?? NSHomeDirectory()
-        return HostSendServer.Facts(project: ((Project.root(of: record?.folder ?? fallback) as NSString).lastPathComponent), skips: record?.startedSkipping == true)
+        let folder = (try? host.get()).flatMap { config in record.map { config.folder(of: $0) } ?? config.startFolder(nil) } ?? record?.folder ?? NSHomeDirectory()
+        return HostSendServer.Facts(project: ((Project.root(of: folder) as NSString).lastPathComponent), skips: record?.startedSkipping == true)
     })
 }
 

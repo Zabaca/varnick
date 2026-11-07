@@ -80,7 +80,7 @@ extension HeadlessPeerHost {
                 Thread.sleep(forTimeInterval: 0.1)
             }
         }
-        let folder = record.folder ?? config.defaultFolder
+        let folder = config.folder(of: record)
         let receiverProject = SessionMessage.projectWord((Project.root(of: folder) as NSString).lastPathComponent)
         // The log's words: the receiver's turn, never an id, a Mac, a project or the text.
         FileHandle.standardError.write(Data("varnick-peer: message from a Mac \(delivery.rawValue)\(started ? " started" : ""), \(message.text.utf8.count) bytes\n".utf8))
