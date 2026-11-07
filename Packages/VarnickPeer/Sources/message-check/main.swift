@@ -203,6 +203,10 @@ expect("a list entry with no plugin makes the file invalid", !ChannelPolicy.isVa
 let cache = #"{"numStartups":5,"cachedGrowthBookFeatures":{"tengu_harbor":true,"tengu_harbor_ledger":[{"marketplace":"claude-plugins-official","plugin":"discord"},{"marketplace":"claude-plugins-official","plugin":"slack"}]}}"#
 let cached = ChannelPolicy.cachedSwitches(fromConfig: Data(cache.utf8))
 expect("Anthropic's list and switch are read from the cache", cached?.entries?.map(\.plugin) == ["discord", "slack"] && cached?.channelsOn == true, "\(String(describing: cached))")
+let foreign = #"{"cachedGrowthBookFeatures":{"tengu_harbor_ledger":[{"marketplace":"claude-plugins-official","plugin":"discord"},{"marketplace":"evil","plugin":"x"},{"marketplace":"claude-plugins-official","plugin":""}]}}"#
+expect("only Anthropic's official marketplace is taken from the cache", ChannelPolicy.cachedSwitches(fromConfig: Data(foreign.utf8))?.entries?.map(\.plugin) == ["discord"],
+       "\(String(describing: ChannelPolicy.cachedSwitches(fromConfig: Data(foreign.utf8))?.entries))")
+expect("a cache whose entries are all foreign falls back to the pinned list", !ChannelPolicy.anthropicList(cache: (entries: [], channelsOn: true)).fromCache)
 expect("a cache with no list gives none", ChannelPolicy.cachedSwitches(fromConfig: Data(#"{"cachedGrowthBookFeatures":{}}"#.utf8))?.entries == nil)
 expect("a file with no switches is unreadable", ChannelPolicy.cachedSwitches(fromConfig: Data("{}".utf8)) == nil && ChannelPolicy.cachedSwitches(fromConfig: nil) == nil)
 expect("the cache's list is used when it has one", ChannelPolicy.anthropicList(cache: cached).fromCache && ChannelPolicy.anthropicList(cache: cached).entries.count == 2)
@@ -285,6 +289,50 @@ expect("no pane before passes", ChannelChecklist.panesRow(withoutChannel: 0, res
 let restart = ChannelChecklist.panesRow(withoutChannel: 3, restartable: 1)
 expect("panes started before offer Restart them for the waiting ones", restart.action == .restartPanes && restart.text.contains("3 Claude panes") && restart.text.contains("1"), marks(restart))
 expect("panes that can't be restarted now join at their next start", ChannelChecklist.panesRow(withoutChannel: 2, restartable: 0).action == nil)
+
+// MARK: Installing the file
+
+func install(folder: URL, content: Data, name: String = ChannelPolicy.fileName) -> Int32 {
+    let owner = "\(NSUserName()):\(String(cString: getgrgid(getgid()).pointee.gr_name))"
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ChannelPolicy.installArguments(folder: folder.path, name: name, content: content, owner: owner)
+    process.standardError = FileHandle.nullDevice
+    try? process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
+}
+let policyFolder = scratch.appendingPathComponent("policy/managed-settings.d")
+let policyContent = ChannelPolicy.file(anthropic: ChannelPolicy.pinnedAnthropic)
+let policyTarget = policyFolder.appendingPathComponent(ChannelPolicy.fileName)
+expect("the install script makes a missing folder and puts the content there", install(folder: policyFolder, content: policyContent) == 0 && (try? Data(contentsOf: policyTarget)) == policyContent)
+expect("the installed file is mode 644", ((try? FileManager.default.attributesOfItem(atPath: policyTarget.path))?[.posixPermissions] as? NSNumber)?.intValue == 0o644)
+expect("a newer content replaces it and leaves no temporary file", install(folder: policyFolder, content: Data("{\"channelsEnabled\": true}\n".utf8)) == 0
+       && (try? String(contentsOf: policyTarget, encoding: .utf8)) == "{\"channelsEnabled\": true}\n"
+       && ((try? FileManager.default.contentsOfDirectory(atPath: policyFolder.path)) ?? []) == [ChannelPolicy.fileName])
+try FileManager.default.setAttributes([.posixPermissions: 0o750], ofItemAtPath: policyFolder.path)
+expect("an existing folder's mode is not touched", install(folder: policyFolder, content: policyContent) == 0
+       && ((try? FileManager.default.attributesOfItem(atPath: policyFolder.path))?[.posixPermissions] as? NSNumber)?.intValue == 0o750)
+expect("content with quotes, braces and line breaks arrives byte for byte", { () -> Bool in
+    let odd = Data("{\"a\": \"it's $HOME `x` \\n\"}\n\n".utf8)
+    return install(folder: policyFolder, content: odd) == 0 && (try? Data(contentsOf: policyTarget)) == odd
+}())
+let elsewhere = scratch.appendingPathComponent("elsewhere")
+try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+let linkedFolder = scratch.appendingPathComponent("policy/linked.d")
+try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: elsewhere)
+expect("a folder that is a link is refused and nothing is written through it", install(folder: linkedFolder, content: policyContent) == 11
+       && ((try? FileManager.default.contentsOfDirectory(atPath: elsewhere.path)) ?? ["x"]).isEmpty)
+let victim = scratch.appendingPathComponent("victim")
+try Data("keep".utf8).write(to: victim)
+let linkedFolder2 = scratch.appendingPathComponent("policy/target.d")
+try FileManager.default.createDirectory(at: linkedFolder2, withIntermediateDirectories: true)
+try FileManager.default.createSymbolicLink(at: linkedFolder2.appendingPathComponent(ChannelPolicy.fileName), withDestinationURL: victim)
+expect("a target that is a link is refused and the file it names is untouched", install(folder: linkedFolder2, content: policyContent) == 13
+       && (try? String(contentsOf: victim, encoding: .utf8)) == "keep")
+expect("every failure status has words of its own", Set((11...16).map { ChannelPolicy.installFailure(status: Int32($0)) }).count == 5
+       && !ChannelPolicy.installFailure(status: 11).contains("\u{2014}"))
+expect("the script reads no file but the one it writes", !ChannelPolicy.installScript.contains("$src") && !ChannelPolicy.installScript.contains("install -m"))
 
 // MARK: Claude Code's user settings
 

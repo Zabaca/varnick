@@ -62,7 +62,8 @@ extension PanelAccess {
         // A caller that receives messages (option 01 of `sessions-cant-reach-each-other-reliably`) is reached by pane, as `opener`: the note holds its pane and
         // its conversation, and nothing is read from Claude Code's file. Otherwise the opener as Claude Code names it, by the caller's current conversation
         // (its file is the one place its name is): the new session is told it.
-        let callerReceives = Settings.shared.messagesBetweenSessions && MessageQueue.receives(caller.id)
+        // The new pane must start with the channel as well, or it would be promised a reply path it doesn't get.
+        let callerReceives = Settings.shared.messagesBetweenSessions && MessagesSetup.shared.startsWithChannel && MessageQueue.receives(caller.id)
         let openerConversation = caller.record.conversationID
         let openerName = callerReceives ? nil : await Task.detached(operation: { ClaudeSessionFile.name(ofSession: openerConversation) }).value
         let (openerTab, _) = try Self.callingTab(caller.id, model, was: tab)

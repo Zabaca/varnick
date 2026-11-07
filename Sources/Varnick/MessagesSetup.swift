@@ -255,28 +255,24 @@ final class MessagesSetup: ObservableObject {
         }
     }
 
-    /// Where Varnick stages its policy file before the administrator copy.
-    private static var staging: URL { SupportFolder.url.appendingPathComponent("channel-policy", isDirectory: true).appendingPathComponent(ChannelPolicy.fileName) }
     private static var installed: String { ChannelPolicy.directory + "/" + ChannelPolicy.dropInFolderName + "/" + ChannelPolicy.fileName }
 
-    /// Approve and Update: Varnick's policy file is written in its own support folder, checked as JSON and for the two keys Claude Code reads, then copied by
-    /// one fixed command run as root behind the system's password dialog into the policy's drop-in folder, owned by root and writable by root alone. It is read
-    /// back and compared. A cancel, a wrong password or two minutes without an answer leave nothing changed and say which.
+    /// Approve and Update: Varnick's policy file is made and checked as JSON and for the two keys Claude Code reads, then one fixed command run as root behind
+    /// the system's password dialog puts it in the policy's drop-in folder, owned by root and writable by root alone. The content travels in the command
+    /// itself (`ChannelPolicy.installScript`), never as a file root would read from the support folder, and the script reads the target back and removes it
+    /// if it differs. A cancel, a wrong password or two minutes without an answer leave nothing changed and say which.
     private func install() {
         working = "Waiting for the administrator password"
         Task {
             let cache = ChannelPolicy.cachedSwitches(fromConfig: try? Data(contentsOf: ClaudeTrust.configFile))
             let data = ChannelPolicy.file(anthropic: ChannelPolicy.anthropicList(cache: cache).entries)
             guard ChannelPolicy.isValidFile(data) else { working = nil; outcome = "Varnick's policy file did not check out, so nothing was installed."; return }
-            let staged = Self.staging
-            do { try OwnerOnlyFile.replace(staged, with: data) } catch { working = nil; outcome = "Varnick couldn't write its policy file: \(error)."; return }
-            let script = #"dir="$1"; src="$2"; dst="$dir/$3"; /usr/bin/install -d -m 755 -o root -g wheel "$dir" && /usr/bin/install -m 644 -o root -g wheel "$src" "$dst""#
             let folder = ChannelPolicy.directory + "/" + ChannelPolicy.dropInFolderName
-            let failure = await Self.runAsAdministrator("/bin/sh", ["-c", script, "sh", folder, staged.path, ChannelPolicy.fileName])
+            let failure = await Self.runAsAdministrator("/bin/sh", ChannelPolicy.installArguments(folder: folder, content: data))
             working = nil
             if let failure { outcome = "Nothing was changed: \(failure)."; refresh(); return }
             let readBack = try? Data(contentsOf: URL(fileURLWithPath: Self.installed))
-            outcome = readBack == data ? "Varnick's channel is approved on this Mac." : "The file was copied but reads back differently, so it may not be in effect."
+            outcome = readBack == data ? "Varnick's channel is approved on this Mac." : "The file reads back differently, so it may not be in effect."
             refresh()
         }
     }
@@ -304,7 +300,12 @@ final class MessagesSetup: ObservableObject {
         let result = await Subprocess.run("/usr/bin/osascript", ["-e", script], environment: ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin", "TERM": "dumb"], timeout: 120)
         if result.launchFailed { return "osascript could not start" }
         if result.timedOut || result.cancelled { return "nobody entered the password in 2 minutes" }
-        return result.status == 0 ? nil : PhonePage.administratorFailure(result.error)
+        if result.status == 0 { return nil }
+        // A script that exits with a status of the install script's is reported by osascript as "(status)" in its message.
+        if let range = result.error.range(of: #"\((1[1-6])\)"#, options: .regularExpression),
+           let status = Int32(result.error[range].dropFirst().dropLast()) { return ChannelPolicy.installFailure(status: status) }
+        let failure = PhonePage.administratorFailure(result.error)
+        return failure
     }
 
     // MARK: The test

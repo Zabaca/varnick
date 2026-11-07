@@ -22,11 +22,12 @@ public enum ChannelPolicy {
 
     /// Anthropic's approved channel plugins as Claude Code's cache listed them on 2026-11-07 (Discord, Telegram, a test chat and iMessage, all from Anthropic's
     /// official marketplace). Used only when the cache can't be read: a policy list replaces Anthropic's, so Varnick's file repeats it to leave those working.
+    public static let officialMarketplace = "claude-plugins-official"
     public static let pinnedAnthropic = [
-        Entry(marketplace: "claude-plugins-official", plugin: "discord"),
-        Entry(marketplace: "claude-plugins-official", plugin: "telegram"),
-        Entry(marketplace: "claude-plugins-official", plugin: "fakechat"),
-        Entry(marketplace: "claude-plugins-official", plugin: "imessage"),
+        Entry(marketplace: officialMarketplace, plugin: "discord"),
+        Entry(marketplace: officialMarketplace, plugin: "telegram"),
+        Entry(marketplace: officialMarketplace, plugin: "fakechat"),
+        Entry(marketplace: officialMarketplace, plugin: "imessage"),
     ]
 
     /// Where Claude Code reads machine policy on a Mac: the main file and the folder of drop-ins beside it.
@@ -117,8 +118,11 @@ public enum ChannelPolicy {
               let features = object["cachedGrowthBookFeatures"] as? [String: Any] else { return nil }
         var entries: [Entry]?
         if let list = features["tengu_harbor_ledger"] as? [[String: Any]] {
+            // The entries go into machine policy, which applies to every account on the Mac, so only Anthropic's official marketplace is taken from a
+            // file the user can write.
             entries = list.compactMap { item in
-                guard let marketplace = item["marketplace"] as? String, let plugin = item["plugin"] as? String else { return nil }
+                guard let marketplace = item["marketplace"] as? String, marketplace == officialMarketplace, let plugin = item["plugin"] as? String,
+                      !plugin.isEmpty else { return nil }
                 return Entry(marketplace: marketplace, plugin: plugin)
             }
         }
@@ -142,6 +146,46 @@ public enum ChannelPolicy {
         let object: [String: Any] = ["channelsEnabled": true, "allowedChannelPlugins": list]
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes])) ?? Data()
         return data + Data("\n".utf8)
+    }
+
+    // MARK: Installing it
+
+    /// The owner Varnick's file and the drop-in folder (when it makes it) get: root, and a group no user is in.
+    public static let installOwner = "root:wheel"
+
+    /// What the administrator step runs as root (`sh -c`, with `installArguments` after it). The content travels in the command itself, base64, so no file a
+    /// user can write is ever read as root (a source left in the support folder could be swapped, or made a link, while the password dialog waits). It
+    /// refuses a drop-in folder or a target that is a link, makes the folder only when it is missing (an existing one's owner and mode are not touched),
+    /// writes a new file beside the target, owned and mode 644, moves it into place, and reads the target back: one that differs is removed. Exit status:
+    /// 11 the folder is a link, 12 it couldn't be made, 13 the target is a link, 14 the content couldn't be written, 15 it couldn't be put in place,
+    /// 16 it read back differently (and was removed).
+    public static let installScript = #"""
+    dir="$1"; name="$2"; b64="$3"; owner="$4"
+    [ ! -L "$dir" ] || exit 11
+    [ -d "$dir" ] || /usr/bin/install -d -m 755 -o "${owner%%:*}" -g "${owner##*:}" "$dir" || exit 12
+    dst="$dir/$name"; tmp="$dir/.$name.new"
+    [ ! -L "$dst" ] || exit 13
+    rm -f "$tmp"
+    printf '%s' "$b64" | /usr/bin/base64 -D > "$tmp" || { rm -f "$tmp"; exit 14; }
+    /usr/sbin/chown "$owner" "$tmp" && /bin/chmod 644 "$tmp" && /bin/mv -f "$tmp" "$dst" || { rm -f "$tmp"; exit 15; }
+    printf '%s' "$b64" | /usr/bin/base64 -D | /usr/bin/cmp -s - "$dst" || { rm -f "$dst"; exit 16; }
+    """#
+
+    /// The arguments of `installScript` for a drop-in folder, the file's name, its content and the owner.
+    public static func installArguments(folder: String, name: String = fileName, content: Data, owner: String = installOwner) -> [String] {
+        ["-c", installScript, "sh", folder, name, content.base64EncodedString(), owner]
+    }
+
+    /// What an install's exit status means, in words for the row.
+    public static func installFailure(status: Int32) -> String {
+        switch status {
+        case 11: "the policy's drop-in folder is a link, which Varnick won't write through"
+        case 12: "the drop-in folder couldn't be made"
+        case 13: "Varnick's file in the drop-in folder is a link, which Varnick won't write through"
+        case 14, 15: "the file couldn't be put in place"
+        case 16: "the file read back differently and was removed"
+        default: "the command failed (status \(status))"
+        }
     }
 
     /// Whether `data` is the file `file(anthropic:)` makes, as JSON and for the two keys Claude Code's schema reads: `channelsEnabled` true and a list of
