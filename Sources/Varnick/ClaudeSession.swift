@@ -180,6 +180,15 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// This Mac's own pane now shows the card of another Mac or the phone in control: a Take over (`LauncherModel.paneTakenOver`).
     var onControlled: () -> Void = {}
 
+    /// The Claude session of this Mac runs now: started, with no client gone, no end asked for and no restart under way. Messages are queued only for a
+    /// session that does (option 01 of `sessions-cant-reach-each-other-reliably`).
+    var runsNow: Bool {
+        guard isClaude, !isOnPeer, !finished, !endedByUser, !restarting else { return false }
+        // A session another Mac controls runs here all the same, with no client of this Mac's attached.
+        if case .controlled = away { return true }
+        return started && !clientEnded && away == nil
+    }
+
     /// The user took this pane, so the session that opened it may no longer close it. True when it was one a session opened.
     func clearOpenedBy() -> Bool {
         guard record.openedBy != nil else { return false }
@@ -630,6 +639,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: record.id)
         PaneFolder.clearSubagentWork(for: record.id)
         PaneFolder.clearMessage(for: record.id)
+        // Nothing sent to an earlier run of the pane reaches this one, and the old run's channel mark goes.
+        MessageQueue.clear(for: record.id)
         if restarting { PaneFolder.clearStop(for: record.id) }
         // claude exits on an unknown --agent, so a session whose agent file has since gone
         // resumes without it.
@@ -646,6 +657,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
         // The voice session (option 09 of `listening-never-answers`) has a pane's full set and the search tool, and two more hooks.
         let isVoice = record.isVoice
+        // Messages between sessions (option 01 of `sessions-cant-reach-each-other-reliably`): a pane that gets the pane tools loads Varnick's channel plugin
+        // and lists `send` while the switch is on and the checklist's rows pass (read from the last result, so a start never waits on a fresh read).
+        let receivesMessages = !isRun && !isVoice && MessagesSetup.shared.startsWithChannel
+        MessagesSetup.shared.noteStart()
+        if receivesMessages { ChannelPlugin.write(command: PeerLink.mcpCommand) }
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
@@ -657,9 +673,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                                                     voiceSearch: isVoice,
                                                                                     panes: !isRun && !isVoice,
                                                                                     outlineAppend: record.automation != nil && record.taskRun == nil && !isVoice
-                                                                                        && OutlineAppendTool.isNamed(in: record.allowedTools ?? [])),
+                                                                                        && OutlineAppendTool.isNamed(in: record.allowedTools ?? []),
+                                                                                    messages: receivesMessages),
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
-                                                 voice: isVoice, appendSystemPrompt: record.opener?.paragraph)
+                                                 voice: isVoice, appendSystemPrompt: record.opener?.paragraph(messages: receivesMessages),
+                                                 channelPlugin: receivesMessages ? ChannelPlugin.folder.path : nil)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.

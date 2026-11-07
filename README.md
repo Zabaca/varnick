@@ -77,6 +77,9 @@ Anything else leaves only when you turn it on:
 - **Screen access** lets Claude sessions read the window in front, or take a picture of it (which shows everything
   on it, typed text included), which goes to Anthropic with the session, and click, type, drag and resize windows
   for you without asking. A picture of your whole screen includes Varnick's own window and every password field.
+- **Messages between sessions** lets a Claude session in one pane send text to another on this Mac, which may act on it with its own
+  permissions without asking you. The text goes to Anthropic with the receiving session, and so does the sender's project name. Turning it on
+  also means approving Varnick's channel in this Mac's Claude Code policy (the administrator password, once) and letting Claude Code send Anthropic usage data.
 - **A model server** you name gets your searches, your prompts and the text it embeds, and nothing goes past it.
 
 Claude sessions in Varnick's panes can also, with no switch, read what Varnick's own panel shows: whether it is open, which tab, pane or

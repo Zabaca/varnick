@@ -210,6 +210,7 @@ final class Settings: ObservableObject {
     nonisolated static let keepSessionsRunningKey = "keepSessionsRunning"
     static let skipPermissionsKey = "skipPermissions"
     static let screenAccessKey = "screenAccess"
+    static let messagesKey = "messagesBetweenSessions"
     static let relevanceFilterOnKey = "relevanceFilterOn"
     static let relevanceFilterKey = "relevanceFilter"
     static let defaultFontSize: Double = 12.5
@@ -220,6 +221,10 @@ final class Settings: ObservableObject {
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
+    /// Messages between sessions (option 01 of `sessions-cant-reach-each-other-reliably`): off by default. On, new Claude panes load Varnick's channel and list
+    /// `send` once the checklist's rows pass (`MessagesSetup`). Read at each pane start and at every `send` call, so turning it off stops new panes and
+    /// refuses a running pane's sends.
+    @Published var messagesBetweenSessions: Bool { didSet { defaults.set(messagesBetweenSessions, forKey: Self.messagesKey) } }
     /// This launch found the retired Automations switch stored off. Read once by `startAutomations`; never stored.
     let automationsWereOff: Bool
     /// Claude and terminal panes run inside zmx and outlive Varnick (ADR 0004). Applies to panes
@@ -434,6 +439,7 @@ final class Settings: ObservableObject {
     private init() {
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
+        messagesBetweenSessions = defaults.bool(forKey: Self.messagesKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
@@ -746,6 +752,12 @@ struct SettingsView: View {
                                 ScreenPermissionsView(askRestart: askRestart)
                                 Toggle("", isOn: $settings.screenAccess).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
+                            SettingRow(title: "Messages between sessions",
+                                       detail: "Lets a Claude session in one pane send text to another Claude pane on this Mac, which may act on it with its own permissions without asking you; a session that asks before its tools can't send to one that skips them. Turning it on shows a checklist that sets up Claude Code with a button for each step, and what reaches Anthropic grows by the message text and the sender's project name. See Anthropic, through Messages between sessions in docs/privacy-and-security.md.") {
+                                Toggle("", isOn: $settings.messagesBetweenSessions).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                                    .onChange(of: settings.messagesBetweenSessions) { _, _ in MessagesSetup.shared.switchChanged() }
+                            }
+                            if settings.messagesBetweenSessions { MessagesChecklistView(setup: MessagesSetup.shared) }
                             Text("Every Claude session can read and act in Varnick's panel and panes, with no switch: the board, any terminal's screen, the Outline, the panel's keys, and opening panes. See Anthropic, through Panel access in docs/privacy-and-security.md.")
                                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)

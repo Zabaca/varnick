@@ -268,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.startAutomations()
         model.startTasks()
         model.startVoiceSession()
+        MessagesSetup.shared.start(model: model, claudeCode: claudeCode)
         PresenceReader.shared.start()
 
         settingsSubs = [
@@ -742,6 +743,18 @@ if let i = CommandLine.arguments.firstIndex(of: "--peer"), i + 1 < CommandLine.a
 if CommandLine.arguments.contains("--mcp") {
     let pane = CommandLine.arguments.firstIndex(of: "--pane").flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil } ?? ""
     exit(ScreenMCP.run(pane: pane, sets: ScreenMCP.Sets(arguments: CommandLine.arguments)))
+}
+
+// `Varnick --channel --pane <id>` is the channel server of the plugin Varnick loads into a Claude pane while Messages between sessions is on (option 01 of
+// `sessions-cant-reach-each-other-reliably`; `ChannelPlugin`, `ChannelServer` in VarnickPeer): JSON-RPC on standard input and output that lists no tools
+// and pushes each message queued in the pane's folder. It never reads or acts on anything else. Like `--mcp` it runs before anything of the app starts.
+if CommandLine.arguments.contains("--channel") {
+    let pane = CommandLine.arguments.firstIndex(of: "--pane").flatMap { $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
+    guard let pane, let id = UUID(uuidString: pane) else {
+        FileHandle.standardError.write(Data("error: --channel needs --pane <id>\n".utf8))
+        exit(2)
+    }
+    exit(ChannelServer.run(pane: id))
 }
 
 // Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): every command-line mode (`MacNotMoved`) refuses on a Mac still running Launchy.

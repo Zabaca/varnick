@@ -134,7 +134,7 @@ public enum ClaudeTrust {
     }
 
     /// A new file made with its permissions from the start, written and flushed; gone again if any step fails.
-    private static func writeNew(_ data: Data, to path: String, permissions: UInt16) -> Bool {
+    static func writeNew(_ data: Data, to path: String, permissions: UInt16) -> Bool {
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(permissions))
         guard fd >= 0 else { return false }
         let wrote = data.withUnsafeBytes { buffer -> Bool in

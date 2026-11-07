@@ -407,6 +407,20 @@ goes to Completed, where ↩ reopens it whole, and search still finds its sessio
 reopening it from Completed makes it yours, and then the session cannot end it. Bringing the tab up to watch it does not count. It is also refused while a session in the tab is working, has background work or waits on you (a permission
 dialog, a question, a plan), for the session's own tab, and for any tab it did not open. A session's `keys` still refuses the Done key.
 
+**Messages between sessions** (Settings › Claude, off by default) gives each Claude session in a pane started while it is on one more tool, **`send`**: it takes a pane id the session was given (by `board_read`,
+`panel`, `pane_open` or `tab_open`, or as the `from` of a message it received) and some text, and Varnick pushes the text into that pane's session, which sees who sent it and from which project and answers with
+`send`. A session opened with `tab_open` reaches the session that opened it as `opener`, whatever restarts either of them; it no longer waits for a name. A session that is waiting starts a turn on the message
+at once; one that is working reads it when its current tool call ends, and nothing is interrupted. The sender is told what the receiver was doing, never that the message was acted on. Any Claude pane on this Mac that
+receives messages can be sent to, except that **a session that skips permission checks takes messages only from one that was started skipping them too**, since a message runs as the receiver, with its permissions; the
+voice session, a run, a Task step, a terminal, a page, an app, a file and a pane of another Mac's tab are refused, and one pane sends at most 10 a minute. The receiving session is told the message comes from your
+own sessions and is never your approval for something that needs you. The pane shows each message as a line of its own, and the transcript keeps it.
+
+The switch opens a checklist, each row a tick, a button that fixes it, or the reason it can't be fixed from here: Claude Code is 2.1.319 or later; it is signed in with Anthropic directly (not Bedrock, Vertex, Foundry or
+a gateway); usage data is allowed (Claude Code withholds Anthropic's switch for channels while `DO_NOT_TRACK`, `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, and **Allow** changes that one
+value in Claude Code's own settings file after saying what it means); this Mac approves Varnick (**Approve** asks for the administrator password in the system's own dialog and adds one file of Varnick's beside
+Claude Code's machine policy, changing none of what is there; **Remove approval** takes it out again); panes started before can join (**Restart them** restarts the ones that are waiting); and a test, in which
+Varnick starts two short sessions out of sight, one sends a word to the other and it answers. Off, new panes start as before and `send` is refused.
+
 Three more tools let a session look for earlier work, with no switch and the voice session included. `find` searches what your own search does, on this Mac and
 your paired Macs: your Claude sessions, and your browsing history and bookmarks. It answers a Sessions section and a Pages section, ranked as the panel ranks them (words and meaning,
 this Mac's open sessions first), each result marked Claude session, page or bookmark, and a session with its project, Mac, when it was used, its tab and whether that is Open, Closed or Done,

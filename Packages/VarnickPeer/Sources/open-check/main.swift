@@ -133,6 +133,21 @@ expect("the note survives its file", (try? JSONDecoder().decode(OpenerNote.self,
 let savedUnaddressed = try JSONEncoder().encode(unaddressed)
 expect("a note with no address survives its file", (try? JSONDecoder().decode(OpenerNote.self, from: savedUnaddressed)) == unaddressed)
 
+// The third form (option 01 of `sessions-cant-reach-each-other-reliably`): the opener could receive messages, so the new session reaches it with `send` to `opener`.
+let messaging = OpenerNote(session: nil, name: nil, project: "Home", tab: "Plan the week", pane: UUID(), conversation: "0f3c2a9e-1111-4222-8333-944455566677")
+let messaged = "This session was opened by another Claude session in Home (its tab: Plan the week), with Varnick's `tab_open`. "
+    + "You can reach it with Varnick's `send`, with `to` set to `opener`; that works whatever restarts either of you. "
+    + "Send it your result when you finish, or a question when you need a decision it can make and the user hasn't. "
+    + "If `send` says it can't be reached, say so here in your own reply, and never send to another pane in its place. "
+    + "The user can see this tab and type into it."
+expect("the third form is the settled wording", messaging.paragraph(messages: true) == messaged, messaging.paragraph(messages: true))
+expect("the third form is one line, with no id, no name and no SendMessage",
+       !messaging.paragraph(messages: true).contains("\n") && !messaging.paragraph(messages: true).contains("SendMessage") && !messaging.paragraph(messages: true).contains("0f3c2a9e"))
+expect("an opener that could receive, in a session that cannot send, gets the old form", messaging.paragraph(messages: false) == messaging.paragraph && !messaging.paragraph.contains("`send`"))
+expect("a session that can send but whose opener could not receive gets the old form", addressed.paragraph(messages: true) == settled && unaddressed.paragraph(messages: true) == unaddressed.paragraph)
+let savedMessaging = try JSONEncoder().encode(messaging)
+expect("the third form's note survives its file", (try? JSONDecoder().decode(OpenerNote.self, from: savedMessaging)) == messaging)
+
 // MARK: Where the paragraph goes in the command
 
 func arguments(append: String? = nil, resuming: String? = nil, prompt: String = "Say hello") -> [String] {
