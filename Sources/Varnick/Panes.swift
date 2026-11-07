@@ -226,6 +226,13 @@ indirect enum PaneLayout: Codable, Equatable {
         }
     }
 
+    /// The layout with every opened-by mark that names a pane outside it dropped: only `tab_open` puts such a mark on a pane, and a tab reopened is no
+    /// longer the opener's to end (option 06 of `sessions-cant-start-sessions-in-other-projects`). A `pane_open` mark names a pane of the tab, and stays.
+    func droppingForeignMarks() -> PaneLayout {
+        let ids = Set(records.map(\.id))
+        return mapping { if let mark = $0.openedBy, !ids.contains(mark) { $0.openedBy = nil } }
+    }
+
     /// The record with `record`'s id replaced by it, as a pane leaves the layout of a tab being closed.
     func replacing(_ record: SessionRecord) -> PaneLayout {
         mapping { if $0.id == record.id { $0 = record } }

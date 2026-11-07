@@ -2,7 +2,7 @@
 problem: sessions-cant-start-sessions-in-other-projects
 title: "`tab_done`: a session marks Done a tab it opened with `tab_open`, until the user has used it"
 summary: One more tool in the pane tools' set. A session marks Done a tab it opened with `tab_open`, as the user's Done would. Every pane in the tab closes and the tab goes to Completed, where ↩ reopens it whole. The session can do this only while the user hasn't taken the tab over. That follows `pane_close`'s rule (a click, a key, or focus moved to a pane of it), and a Take over on another Mac or the phone also counts. It is also refused while a Claude session in the tab is mid-turn. `tab_open` now saves the opened-by mark `pane_open` saves, which is how the tab is known to be the caller's. Done on any other tab stays the user's, and `keys` still refuses the Done key.
-status: accepted
+status: shipped
 ---
 
 ## Solution
@@ -178,3 +178,8 @@ No question is asked. The refusals below stand in for the one the user's Done as
   - A tab reopened by anyone, a session's `find_open` included, comes back the user's.
 - **Unverified:** that a Take over always reaches this Mac as the pane's client exiting. After a restart of Varnick, a pane never shown since has no client until it is shown, so a Take over of it, handed back before this Mac looks, would not clear the mark. The read at the call still refuses while the other machine has it.
 - **Combines with** options 01 and 04 (shipped), and with options 02, 03 and 05.
+
+Follow-ups from the review (2026-11-06, verdict merge after one fix round; the fix clears the opener's mark when another machine's End releases a dormant pane):
+
+- **should-fix:** the hand check after a restart (where-it-breaks, Panel access, `tab_done`, starting with the dormant Take over on the phone) is still owed.
+- **nits:** a narrow race, unverified: `hostEndTab` releases panes one at a time and clears each mark only after its release, so a `tab_done` landing in that gap could pass; clearing the tab's labelled panes' marks before the loop would close it. The turn read can see "waiting" just before background work is recorded (the user's own Done shares this). The guide's "waits on you" list leaves out an MCP request. `TabDone.Pane.id` and the turn inside `waitingOnUser` are never read. Long comment lines in the open-check header and the `paneTakenOver` doc comment.

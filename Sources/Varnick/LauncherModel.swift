@@ -2352,6 +2352,10 @@ final class LauncherModel: ObservableObject {
             guard let self, let kept = ref, let tab = self.tabs.first(where: { $0.contains(kept) }) else { return }
             self.closing[tab.id] = nil
         }
+        session.onControlled = { [weak self] in
+            guard let self, let pane = ref else { return }
+            self.paneTakenOver(pane)
+        }
         session.tabAsksBeforeDone = { [weak self] in
             guard let self, let pane = ref else { return false }
             return self.tabs.first(where: { $0.contains(pane) })?.asksBeforeDone ?? false
@@ -3027,7 +3031,8 @@ final class LauncherModel: ObservableObject {
         claudeError = nil
         if let host = record.host { return reopenOnPeer(record, on: host, keepOnFailure: keepOnFailure) }
         let held = openHere
-        guard let layout = record.layout.pruned({ $0.restorable && !($0.isClaude && held.contains($0.conversationID)) }) else {
+        // A reopened tab is the user's: a session that opened it with `tab_open` cannot mark it Done again.
+        guard let layout = record.layout.droppingForeignMarks().pruned({ $0.restorable && !($0.isClaude && held.contains($0.conversationID)) }) else {
             if let holder = tabs.first(where: { tab in
                 tab.claudeSessions.contains { pane in record.claudeRecords.contains { $0.conversationID == pane.record.conversationID } }
             }) { activate(holder) }
@@ -3451,6 +3456,15 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
+    /// Another Mac or the phone took this Mac's pane (it now shows their card, or `hostEnd` and `hostEndTab` hand it back, which proves it had the pane):
+    /// a mark naming a pane outside its tab, which only `tab_open` sets, is cleared. Typing there reaches no key handler here, so without this a tab the user worked in on the phone would still be its opener's to end
+    /// (`tab_done`). A mark naming a pane of the tab is `pane_open`'s and stays, so `pane_close` in a controlled tab keeps its rules.
+    func paneTakenOver(_ pane: ClaudeSession) {
+        guard let tab = tabs.first(where: { $0.contains(pane) }), let mark = pane.record.openedBy,
+              !tab.sessions.contains(where: { $0.id == mark }), pane.clearOpenedBy() else { return }
+        saveSessions()
+    }
+
     /// ⌘W: ends the focused pane; its exit handler picks what to show next.
     func endClaude() {
         activeSession?.end()
@@ -3738,6 +3752,8 @@ final class LauncherModel: ObservableObject {
         }
         if let pane, !Zmx.sameID(Zmx.origin(in: labels), peer) {
             guard await Task.detached(operation: { Zmx.release(name) }).value else { return .failure("zmx wouldn't release the session") }
+            // A release proves the other machine had the pane, also when this Mac never saw its client go (a restored pane never shown).
+            paneTakenOver(pane)
             pane.goLiveAfterRelease()
             var reply = PeerReply.success()
             reply.released = true
@@ -3796,7 +3812,7 @@ final class LauncherModel: ObservableObject {
         }
         // As the launch restores a tab, less a pane that wouldn't restore and a conversation that is open in a pane here already.
         let held = openHere
-        guard let layout = closed.layout.pruned({ $0.restorable && !($0.isClaude && held.contains($0.conversationID)) }) else {
+        guard let layout = closed.layout.droppingForeignMarks().pruned({ $0.restorable && !($0.isClaude && held.contains($0.conversationID)) }) else {
             return .failure("Nothing in that tab can be reopened on \(here)")
         }
         // The tab is made for the asker: its Claude and terminal panes start now, labelled for it, and name it as their origin.
@@ -3856,7 +3872,10 @@ final class LauncherModel: ObservableObject {
         var refused = 0
         for (pane, _) in labelled {
             let name = Zmx.sessionName(pane.id)
-            if await Task.detached(operation: { Zmx.release(name) }).value { pane.goLiveAfterRelease() } else { refused += 1 }
+            if await Task.detached(operation: { Zmx.release(name) }).value {
+                paneTakenOver(pane)
+                pane.goLiveAfterRelease()
+            } else { refused += 1 }
         }
         guard refused == 0 else { return .failure("zmx wouldn't release \(refused) of the tab's panes") }
         var reply = PeerReply.success()

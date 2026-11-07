@@ -28,13 +28,14 @@ extension PanelAccess {
             case .here, .nobody: break
             }
         }
-        // `tab_open` changes no layout of the calling tab, so a lock on it does not stop it.
-        if controller == nil, request.tool != PaneMCP.tabOpen, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
+        // `tab_open` and `tab_done` change no layout of the calling tab, so a lock on it does not stop them.
+        if controller == nil, request.tool != PaneMCP.tabOpen, request.tool != PaneMCP.tabDone, let reason = model.layoutLockReason(of: tab) { throw PanelRefusal.bad("This tab can't change: \(reason)") }
         do {
             switch request.tool {
             case PaneMCP.open: return try open(request.args, model, tab: tab, caller: session, controller: controller)
             case PaneMCP.close: return try await close(request.args, model, tab: tab, caller: session, controller: controller)
             case PaneMCP.tabOpen: return try await tabOpen(request.args, model, tab: tab, caller: session, controller: controller)
+            case PaneMCP.tabDone: return try await tabDone(request.args, model, tab: tab, caller: session, controller: controller)
             default: throw PanelRefusal.unknownTool(request.tool)
             }
         } catch let refusal as PanelRefusal where controller != nil {

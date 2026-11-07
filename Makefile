@@ -204,7 +204,8 @@ check-work:
 
 # The pure parts of `tab_open` (`TabOpen`, `ClaudeSessionFile`, `OpenerNote`, Packages/VarnickPeer; option 01 of sessions-cant-start-sessions-in-other-projects)
 # and of the note option 04 gives the session it opens: which project a word means, a session's name picked out of sample session files by id (in a scratch
-# folder), the paragraph and its saved form, and where the appended system prompt goes in the claude command. No Varnick, no claude and no network. Built
+# folder), the paragraph and its saved form, and where the appended system prompt goes in the claude command; and the decision of `tab_done` (`TabDone`, option 06):
+# which marks, turns, closing and control let a session mark a tab Done, and which refusal is told first. No Varnick, no claude and no network. Built
 # the same way as check-slots.
 check-open:
 	@swift run --package-path Packages/VarnickPeer open-check

@@ -4,7 +4,7 @@ import VarnickPeer
 // `make check-open`: the pure parts of `tab_open` (option 01 of `sessions-cant-start-sessions-in-other-projects`) and of the note option 04 gives the
 // session it opens, over a table of cases, with no Varnick, no claude and no network: which project a word means, a session's name picked out of sample
 // session files by session id (in a scratch folder), the note's paragraph and its saved form, and where the appended system prompt goes in the claude
-// command. Neither Varnick nor this package has a test target; this is how `check-slots` checks the slot function. One `error:` line a failed case,
+// command. Option 06 adds the decision of `tab_done` (`TabDone`). Neither Varnick nor this package has a test target; this is how `check-slots` checks the slot function. One `error:` line a failed case,
 // exit 1 if there was any.
 
 var failures = 0
@@ -155,6 +155,48 @@ expect("everything else is the same with the note", told.filter { $0 != "--appen
 let resumed = arguments(append: addressed.paragraph, resuming: "0f3c2a9e-1111-4222-8333-944455566677", prompt: "")
 expect("a resume passes it again", resumed.contains("--append-system-prompt") && resumed.contains("--resume"), "\(resumed)")
 expect("a resume has no prompt operand", !resumed.contains("--"))
+
+// MARK: Whether a session may mark a tab Done (option 06)
+
+let opener = UUID(), stranger = UUID(), helper = UUID()
+func decide(_ panes: [TabDone.Pane], own: Bool = false, closing: Bool = false, control: TabDone.Control? = nil) -> TabDone.Refusal? {
+    TabDone.decide(panes: panes, caller: opener, isCallersTab: own, isClosing: closing, control: control)
+}
+func mine(_ turn: Turn? = nil, by mark: UUID? = opener) -> TabDone.Pane { TabDone.Pane(id: UUID(), openedBy: mark, turn: turn) }
+
+expect("a tab the caller opened and nobody has used is allowed", decide([mine()]) == nil)
+expect("a helper that is waiting for its next prompt is allowed", decide([mine(.waiting)]) == nil)
+expect("a helper stopped on an API error is allowed", decide([mine(.failed)]) == nil)
+expect("a terminal beside the helper that the helper opened is allowed", decide([mine(.waiting), mine(by: helper)]) == nil)
+expect("the caller's own tab is refused", decide([mine()], own: true) == .ownTab)
+expect("the caller's own tab is refused before anything else", decide([mine(.working)], own: true, closing: true, control: .machine) == .ownTab)
+expect("no pane with the caller's mark is refused", decide([mine(by: nil)]) == .notOpenedByCaller)
+expect("another session's mark is refused", decide([mine(by: stranger)]) == .notOpenedByCaller)
+expect("a tab with no pane is refused", decide([]) == .notOpenedByCaller)
+expect("a pane with no mark beside the caller's is refused (the user added it or used it)", decide([mine(), mine(by: nil)]) == .notOpenedByCaller)
+expect("the unmarked pane is refused whichever side it is on", decide([mine(by: nil), mine()]) == .notOpenedByCaller)
+expect("a pane marked by another session beside the caller's is allowed", decide([mine(), mine(by: stranger)]) == nil)
+expect("closing is refused", decide([mine()], closing: true) == .closing)
+expect("not opened is told before closing", decide([mine(by: nil)], closing: true) == .notOpenedByCaller)
+expect("working is refused", decide([mine(.working)]) == .working)
+expect("background work is refused", decide([mine(.background)]) == .background)
+for turn in [Turn.permission, .question, .plan, .input] {
+    expect("a session waiting on the user (\(turn)) is refused", decide([mine(turn)]) == .waitingOnUser(turn), "\(String(describing: decide([mine(turn)])))")
+}
+expect("a session beside the helper that works is refused", decide([mine(.waiting), mine(.working, by: helper)]) == .working)
+expect("waiting on the user is told before working", decide([mine(.working), mine(.permission, by: helper)]) == .waitingOnUser(.permission))
+expect("working is told before background work", decide([mine(.background), mine(.working, by: helper)]) == .working)
+expect("closing is told before a turn", decide([mine(.working)], closing: true) == .closing)
+expect("control here is allowed", decide([mine()], control: .here) == nil)
+expect("control by nobody is allowed", decide([mine()], control: .nobody) == nil)
+expect("another machine's control is refused", decide([mine()], control: .machine) == .controlledElsewhere)
+expect("mixed control is refused", decide([mine()], control: .mixed) == .changingHands)
+expect("a turn is told before control", decide([mine(.working)], control: .machine) == .working)
+expect("only dialogs and questions wait on the user",
+       Turn.permission.waitsOnUser && Turn.question.waitsOnUser && Turn.plan.waitsOnUser && Turn.input.waitsOnUser
+           && !Turn.working.waitsOnUser && !Turn.waiting.waitsOnUser && !Turn.background.waitsOnUser && !Turn.failed.waitsOnUser)
+expect("every refusal has a log word of its own",
+       Set([TabDone.Refusal.ownTab, .notOpenedByCaller, .closing, .working, .background, .waitingOnUser(.plan), .controlledElsewhere, .changingHands].map(\.word)).count == 8)
 
 print("check-open: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
