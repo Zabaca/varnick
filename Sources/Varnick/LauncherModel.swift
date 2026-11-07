@@ -3456,8 +3456,8 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
-    /// Another Mac or the phone took this Mac's pane (it now shows their card): a mark naming a pane outside its tab, which only `tab_open` sets, is
-    /// cleared. Typing there reaches no key handler here, so without this a tab the user worked in on the phone would still be its opener's to end
+    /// Another Mac or the phone took this Mac's pane (it now shows their card, or `hostEnd` and `hostEndTab` hand it back, which proves it had the pane):
+    /// a mark naming a pane outside its tab, which only `tab_open` sets, is cleared. Typing there reaches no key handler here, so without this a tab the user worked in on the phone would still be its opener's to end
     /// (`tab_done`). A mark naming a pane of the tab is `pane_open`'s and stays, so `pane_close` in a controlled tab keeps its rules.
     func paneTakenOver(_ pane: ClaudeSession) {
         guard let tab = tabs.first(where: { $0.contains(pane) }), let mark = pane.record.openedBy,
@@ -3752,6 +3752,8 @@ final class LauncherModel: ObservableObject {
         }
         if let pane, !Zmx.sameID(Zmx.origin(in: labels), peer) {
             guard await Task.detached(operation: { Zmx.release(name) }).value else { return .failure("zmx wouldn't release the session") }
+            // A release proves the other machine had the pane, also when this Mac never saw its client go (a restored pane never shown).
+            paneTakenOver(pane)
             pane.goLiveAfterRelease()
             var reply = PeerReply.success()
             reply.released = true
@@ -3870,7 +3872,10 @@ final class LauncherModel: ObservableObject {
         var refused = 0
         for (pane, _) in labelled {
             let name = Zmx.sessionName(pane.id)
-            if await Task.detached(operation: { Zmx.release(name) }).value { pane.goLiveAfterRelease() } else { refused += 1 }
+            if await Task.detached(operation: { Zmx.release(name) }).value {
+                paneTakenOver(pane)
+                pane.goLiveAfterRelease()
+            } else { refused += 1 }
         }
         guard refused == 0 else { return .failure("zmx wouldn't release \(refused) of the tab's panes") }
         var reply = PeerReply.success()
