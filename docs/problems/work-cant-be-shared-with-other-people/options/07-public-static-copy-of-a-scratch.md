@@ -2,7 +2,8 @@
 problem: work-cant-be-shared-with-other-people
 title: A public link to a built, static copy of a Scratch, uploaded to the user's own Cloudflare storage
 summary: The Share button builds the Scratch's page with Vite, shows what the build holds, and uploads it to R2 on the user's own Cloudflare account, served by a small Worker at a link of the same shape as option 04's. Publishing again replaces it at the same link; Unpublish removes it; an expiry is optional. It works with the Mac off and exposes no dev server at all, but it is a snapshot, which the user said is not what they want: viewers see no change until it is published again. Kept as a short alternative, not recommended. Rough effort is about three days.
-status: proposed
+status: rejected
+reason: James picked 04 on 2026-11-08
 ---
 
 ## Solution
