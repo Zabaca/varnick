@@ -39,7 +39,20 @@ extension PanelAccess {
             do { targetID = try target(word, caller: callerID) } catch { known = false }
         }
 
-        let destination = targetID.map { whereIs($0, in: model) } ?? Destination.nowhere
+        var destination = targetID.map { whereIs($0, in: model) } ?? Destination.nowhere
+        // An id this session was given that no list holds now: the paired machines' lists are read again once (unless asked a moment ago) before the pane is
+        // called gone, since it may be a session opened on one of them since the lists were last asked.
+        var unreached: [String] = []
+        // Only for a send that would otherwise go: both switches on, text there, the rate cap not reached (a refusal for those comes first, and asks no machine).
+        let mayGo = Settings.shared.messagesBetweenSessions && Settings.shared.messagesBetweenMacs
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= SessionMessage.longestText
+            && (sendRates[callerID] ?? SendRate()).canSend(at: Date())
+        if case .nowhere = destination, let targetID, mayGo {
+            unreached = await model.bringPeerListsUpToDate(maxAge: PeerListRefresh.retryAge)
+            // The caller may have closed while this waited.
+            guard CallingPane.find(callerID.uuidString, in: model).located != nil else { throw PanelRefusal.noPane }
+            destination = whereIs(targetID, in: model)
+        }
         // On the session the id resolved to: a tab's card id can mean the caller's own session.
         var resolved: UUID?
         switch destination {
@@ -64,6 +77,8 @@ extension PanelAccess {
         if let refusal = SendRules.decide(switchOn: Settings.shared.messagesBetweenSessions, text: text, rateAllowed: limiter.canSend(at: Date()),
                                           toSelf: SendRules.isSelf(resolved: resolved, caller: callerID), target: target, openerRefusal: openerRefusal, targetKnown: known,
                                           senderSkips: sender.record.skippedAtStart == true) {
+            // Gone after the lists were read again: say which machines could not be asked, since the pane may be on one.
+            if refusal == .gone, !unreached.isEmpty { throw PanelRefusal.macRefused(PeerListRefresh.goneWords(unreached: unreached), kind: refusal.word) }
             throw PanelRefusal.notSent(refusal)
         }
         let project = SessionMessage.projectWord((Project.root(of: sender.record.directory) as NSString).lastPathComponent)

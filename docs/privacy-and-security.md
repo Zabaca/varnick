@@ -351,8 +351,9 @@ the tab and panes in it (the session board's selected card, Settings or the Rest
 and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session
 it lists, on this Mac or a paired one, the title (which can be a prompt's first line or a name you gave it), the
 folder, the Mac, the turn and how long, any background work, the card's note, the problem or option it is linked
-to, and for the Problems tab the problems' titles, projects and the sessions on them. A paired Mac's cards are as
-last fetched: the read asks no paired Mac. They can also read **the text on the screen of any terminal pane**
+to, and for the Problems tab the problems' titles, projects and the sessions on them. Before it answers, the read asks each
+paired Mac and headless host what is open on it (the same request Varnick's own panel makes, over the same link), unless
+they were asked in the last few seconds, and waits up to 5 seconds; a machine that does not answer in time is named in the reply. They can also read **the text on the screen of any terminal pane**
 (`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
 you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
 echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
