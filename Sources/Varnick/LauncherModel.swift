@@ -279,6 +279,13 @@ final class LauncherModel: ObservableObject {
     private var peerRowRetryAt: [String: Date] = [:]
     private var peerOpenSessionsTask: Task<Void, Never>?
     private var peerOpenSessionsAskedAt = Date.distantPast
+    /// Whether the ask behind `peerOpenSessionsTask` is still out, the machines it has not heard from, and those whose last ask failed. A session's ask
+    /// (`bringPeerListsUpToDate`) joins an ask that is out, and names the machines in either set.
+    private var peerOpenSessionsRunning = false
+    private var peerOpenSessionsPending: Set<String> = []
+    private var peerOpenSessionsFailed: Set<String> = []
+    /// Which ask is the current one, so an ask replaced by a newer one does not mark the newer one finished.
+    private var peerOpenSessionsGeneration = 0
     /// How long the board waits on a Mac, so a silent one loses its cards within the 5 s between asks.
     private static let boardAskTimeout: TimeInterval = 4
     /// When each paired Mac last answered with its open sessions: a board card's turn age counts from
@@ -1383,21 +1390,47 @@ final class LauncherModel: ObservableObject {
         let sentAt = Date()
         peerOpenSessionsAskedAt = sentAt
         let peers = PeerManager.shared.peers.filter { PeerManager.shared.status[$0.id] == .answered }
-        // A Mac that isn't asked (it stopped answering, or was never reachable) shows nothing.
+        // A Mac that isn't asked (it stopped answering, or was never reached) shows nothing.
         let asked = Set(peers.map(\.id))
         for id in peerOpenSessions.keys where !asked.contains(id) { updatePeerTabs(nil, for: id) }
         // With the board showing a silent Mac is dropped after `boardAskTimeout`, not the usual 15 s.
         let timeout: TimeInterval? = showingBoard ? Self.boardAskTimeout : nil
+        peerOpenSessionsGeneration += 1
+        let generation = peerOpenSessionsGeneration
+        peerOpenSessionsRunning = true
+        peerOpenSessionsPending = asked
         peerOpenSessionsTask?.cancel()
         peerOpenSessionsTask = Task { [weak self] in
             await withTaskGroup(of: (String, [PeerTab]?).self) { group in
                 for peer in peers { group.addTask { (peer.id, await PeerManager.shared.tabs(on: peer.id, timeout: timeout)) } }
                 for await (id, found) in group {
                     guard !Task.isCancelled, let self else { return }
+                    self.peerOpenSessionsPending.remove(id)
+                    if found == nil { self.peerOpenSessionsFailed.insert(id) } else { self.peerOpenSessionsFailed.remove(id) }
                     self.updatePeerTabs(found, for: id, sentAt: sentAt)
                 }
             }
+            // A newer ask replaced this one (and cancelled it): the newer one says when it is done.
+            if generation == self?.peerOpenSessionsGeneration { self?.peerOpenSessionsRunning = false }
         }
+    }
+
+    /// For a session that asks (`board_read`, a `send` that cannot find its pane): the paired Macs' open tabs are asked first unless they were asked within
+    /// `maxAge`, so the answer does not depend on what the panel last showed. An ask that is out is joined, never doubled; the ask is the panel's own
+    /// (`refreshPeerOpenSessions`), so a Mac that answers is taken in as it is there. Waits at most `PeerListRefresh.wait` and answers with the names of the
+    /// machines that were not reached (not answering, not heard from in time, or failed); a late answer still lands in the lists. Nothing runs in the
+    /// background: a call that finds the lists current asks nothing.
+    func bringPeerListsUpToDate(maxAge: TimeInterval = PeerListRefresh.maxAge) async -> [String] {
+        guard !PeerManager.shared.peers.isEmpty else { return [] }
+        let plan = PeerListRefresh.plan(now: Date(), askedAt: peerOpenSessionsAskedAt, running: peerOpenSessionsRunning, maxAge: maxAge)
+        if plan == .ask { refreshPeerOpenSessions() }
+        if plan != .held {
+            // The flag, not the task: an ask replaced by a newer one is followed to the newer. Checks local state every 0.1 s, never a machine.
+            let deadline = Date().addingTimeInterval(PeerListRefresh.wait)
+            while peerOpenSessionsRunning, Date() < deadline, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        let machines = PeerManager.shared.peers.map { PeerListRefresh.Machine(id: $0.id, name: $0.name, answering: PeerManager.shared.status[$0.id] == .answered) }
+        return PeerListRefresh.unreached(machines: machines, pending: peerOpenSessionsPending, failed: peerOpenSessionsFailed)
     }
 
     /// While the board shows, on opening and on each tick: the paired Macs' open sessions, every 5 s.

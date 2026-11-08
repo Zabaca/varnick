@@ -93,9 +93,10 @@ struct BoardPanelView: PanelAccessView {
             + "project, the Mac it runs on when that is another, the turn and how long (\"Working 12m\") of its most urgent session, a mark "
             + "when that waits on the user, its note (\"Controlled on…\"), and the problem or option it is linked to. Under each card its "
             + "Claude sessions, each with its own id (the one `pane_read` takes), title, turn, background work, mark and note, and \"this "
-            + "session\" on the caller's own. With `tab: problems`, the Problems tab's cards instead, by stage. It reads the board as the model holds it, whether the "
-            + "board is showing or not, and asks no paired Mac: those cards are as last fetched. The titles and notes go to Anthropic with "
-            + "this session.",
+            + "session\" on the caller's own. With `tab: problems`, the Problems tab's cards instead, by stage. It reads the board whether it is showing or not. "
+            + "Before answering with the Sessions tab it asks the paired Macs and headless hosts what is open on them, unless they were asked in the last few "
+            + "seconds, and waits up to 5 seconds for them; the reply names the machines that did not answer in time, whose cards are then missing or as last "
+            + "fetched. The Problems tab asks no machine. The titles and notes go to Anthropic with this session.",
         properties: ["tab": ["type": "string", "enum": ["sessions", "problems"],
                              "description": "sessions (the default), or problems while the Problems board switch is on."]])
 
@@ -103,9 +104,12 @@ struct BoardPanelView: PanelAccessView {
 
     @MainActor init(model: LauncherModel) { self.model = model }
 
-    @MainActor func read(_ args: PanelArguments, caller: UUID) throws -> String {
+    @MainActor func read(_ args: PanelArguments, caller: UUID) async throws -> String {
         switch args["tab"]?.lowercased() {
-        case nil, "", "sessions": return sessions(caller: caller)
+        case nil, "", "sessions":
+            // The paired machines' tab lists first, so a session opened on one a moment ago is on the board though nobody is at this Mac.
+            let unreached = await model.bringPeerListsUpToDate()
+            return sessions(caller: caller) + (PeerListRefresh.note(unreached: unreached).map { "\n" + $0 } ?? "")
         case "problems": return try problems(caller: caller)
         default: throw PanelRefusal.bad("tab is sessions or problems")
         }
@@ -124,7 +128,7 @@ struct BoardPanelView: PanelAccessView {
     }
 
     @MainActor private func sessions(caller: UUID) -> String {
-        // One refresh, the tick's own stat of each pane's turn file. It starts no tick, no zmx check and no ask to a paired Mac.
+        // One refresh, the tick's own stat of each pane's turn file. It starts no tick and no zmx check; the paired Macs were asked by `read`.
         model.board.refresh()
         let now = Date()
         var lines = ["Session board, Sessions tab" + (model.showingBoard ? "" : " (not showing)")]

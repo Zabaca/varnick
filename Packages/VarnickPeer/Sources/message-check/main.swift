@@ -1003,5 +1003,40 @@ expect("a record with no folder whose conversation is in Home resumes in Home", 
 expect("a record with no folder and no transcript yet starts in Home", folderOf(nil) == hostHome)
 expect("a record with no folder and no transcript yet starts in the configured folder when there is one", folderOf(nil, configured: "/srv/work") == "/srv/work")
 
+// MARK: The paired machines' lists, brought up to date when a session asks (PeerListRefresh)
+
+let listNow = Date(timeIntervalSince1970: 1_000_000)
+func listPlan(askedAgo: TimeInterval?, running: Bool = false, maxAge: TimeInterval = PeerListRefresh.maxAge) -> PeerListRefresh.Plan {
+    PeerListRefresh.plan(now: listNow, askedAt: askedAgo.map { listNow.addingTimeInterval(-$0) } ?? .distantPast, running: running, maxAge: maxAge)
+}
+expect("a list never asked is asked", listPlan(askedAgo: nil) == .ask)
+expect("a list asked longer ago than the age is asked again", listPlan(askedAgo: 5.1) == .ask && listPlan(askedAgo: 600) == .ask)
+expect("a list asked just now, or within the age, is used as it is", listPlan(askedAgo: 0) == .held && listPlan(askedAgo: 4.9) == .held)
+expect("the age itself is stale: a list asked exactly that long ago is asked again", listPlan(askedAgo: PeerListRefresh.maxAge) == .ask)
+expect("an ask that is out is joined, however old the last ask was and whatever the age", listPlan(askedAgo: 0.1, running: true) == .join
+       && listPlan(askedAgo: 14, running: true) == .join && listPlan(askedAgo: nil, running: true) == .join && listPlan(askedAgo: 3, running: true, maxAge: 1) == .join)
+expect("a send's shorter age asks again after a second and not before", listPlan(askedAgo: 0.5, maxAge: PeerListRefresh.retryAge) == .held && listPlan(askedAgo: 1.5, maxAge: PeerListRefresh.retryAge) == .ask)
+expect("the send's age is under the read's, and the wait is a few seconds", PeerListRefresh.retryAge < PeerListRefresh.maxAge && PeerListRefresh.wait >= 1 && PeerListRefresh.wait <= 10)
+// Coalescing: ten asks 0.3 s apart. The first starts an ask, which is out until the seventh; the rest join it or find the lists current.
+var asks = 0, askedAt = Date.distantPast, running = false
+for step in 0..<10 {
+    let clock = listNow.addingTimeInterval(Double(step) * 0.3)
+    if step == 6 { running = false }
+    if PeerListRefresh.plan(now: clock, askedAt: askedAt, running: running, maxAge: PeerListRefresh.maxAge) == .ask { asks += 1; askedAt = clock; running = true }
+}
+expect("ten asks within three seconds start one ask", asks == 1, "\(asks)")
+
+let machines = [PeerListRefresh.Machine(id: "a", name: "Studio", answering: true), PeerListRefresh.Machine(id: "b", name: "Host", answering: true),
+                PeerListRefresh.Machine(id: "c", name: "Laptop", answering: false)]
+expect("a machine that answered and was heard from is reached; one that is not answering is not", PeerListRefresh.unreached(machines: machines, pending: [], failed: []) == ["Laptop"])
+expect("a machine whose ask is out or failed is not reached, in the order of the machines", PeerListRefresh.unreached(machines: machines, pending: ["b"], failed: ["a"]) == ["Studio", "Host", "Laptop"])
+expect("a machine that is not paired any more is not named", PeerListRefresh.unreached(machines: machines, pending: ["gone"], failed: ["gone"]) == ["Laptop"])
+expect("no machines, none unreached", PeerListRefresh.unreached(machines: [], pending: ["a"], failed: ["a"]) == [])
+expect("all reached says nothing", PeerListRefresh.note(unreached: []) == nil)
+expect("the note names the machines and says what to expect", PeerListRefresh.note(unreached: ["Host", "Laptop"]) == "Not reached just now: Host, Laptop. Sessions there may be missing or out of date.")
+expect("a gone pane with every machine reached is option 01's words", PeerListRefresh.goneWords(unreached: []) == SendRules.Refusal.gone.message)
+expect("a gone pane names the machines that could not be asked and sends nothing", PeerListRefresh.goneWords(unreached: ["Host"]).contains("(Host)") && PeerListRefresh.goneWords(unreached: ["Host"]).hasSuffix("Nothing was sent."))
+expect("the words have no em dash", !PeerListRefresh.note(unreached: ["Host"])!.contains("\u{2014}") && !PeerListRefresh.goneWords(unreached: ["Host"]).contains("\u{2014}"))
+
 print("check-messages: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
