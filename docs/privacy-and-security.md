@@ -338,6 +338,10 @@ Varnick pane can, with no setting to refuse it, through Varnick itself (ADR 0031
 - **start a Claude session in any of your projects, in a new tab of its own** (`tab_open`): a repository under Settings › Claude › Project folders, behind your work, on your Claude subscription,
   with your Skip permissions setting only when the session that opened it was itself started skipping permission checks. Varnick reads that session's name, and the opener's, from the small file Claude Code keeps
   for each running session, and tells the new session who opened it, adding the opener's name, session id and project to its system prompt, so they go to Anthropic with it;
+- **list the projects of any of your machines, and start a session on another one** (`project_search`, and `tab_open` with `machine`): the names and paths of a paired Mac's or the headless host's projects, with whether
+  its Claude Code trusts them, go to Anthropic with the session that asks, as file paths on this Mac already do. The new session runs on that machine, in a project its Claude Code has trusted, on your Claude subscription,
+  skipping permission checks only when Skip permissions is on on this Mac and the session that opened it was itself started skipping them, whatever the other machine's own setting says. Opening a tab there needs messages both
+  ways (Also between my Macs and hosts on, and that machine ready), and the new session is told which session opened it and the name of this Mac, which goes to Anthropic with its system prompt. A listed device cannot start sessions this way;
 - **mark Done a tab it opened with `tab_open`** (`tab_done`), as your own Done would: every pane in it closes, with what runs in them, and it goes to Completed, where ↩ reopens it. Only a tab you have not used:
   a click, a key, a pane you added or focused, or a take over on the phone or another Mac makes it yours, and so does reopening it. It is refused while a session in it works, has background work or waits on you.
 
@@ -405,7 +409,7 @@ or in a Browser pane beside the session. It opens only a page that is in your hi
 counts and the time, never a query, a name, an address or a conversation id.
 
 Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page
-or a file beside their own pane, in their own tab on this Mac, close the panes they opened until you first use one, and mark Done a tab they opened with `tab_open` until you first use that. They read
+or a file beside their own pane, in their own tab on this Mac, close the panes they opened until you first use one, and mark Done a tab they opened with `tab_open`, on this Mac or another of your machines, until you first use that. They read
 nothing more than the tools above let them, but opening a pane is not free of risk: a custom app they open runs that app's code
 outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, and a Claude session
 they open draws on your Claude subscription. Whether it skips permission checks is in the guide (Panel access); the limits are in

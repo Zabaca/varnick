@@ -53,7 +53,8 @@ if CommandLine.arguments.contains("--mcp") {
         // The pane's project and whether it was started skipping, from the host's record of it.
         let record = (try? state.sessions())?.first { $0.id == pane.uuidString.lowercased() }
         let folder = (try? host.get()).flatMap { config in record.map { config.folder(of: $0) } ?? config.startFolder(nil) } ?? record?.folder ?? NSHomeDirectory()
-        return HostSendServer.Facts(project: ((Project.root(of: folder) as NSString).lastPathComponent), skips: record?.startedSkipping == true)
+        return HostSendServer.Facts(project: ((Project.root(of: folder) as NSString).lastPathComponent), skips: record?.startedSkipping == true,
+                                    conversation: PaneFolder.reportedConversation(for: pane) ?? record?.conversation ?? pane.uuidString.lowercased())
     })
 }
 

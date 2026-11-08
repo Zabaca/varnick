@@ -512,7 +512,7 @@ final class LauncherModel: ObservableObject {
     private var peerWords: [Substring] { leadingWords.words.filter { $0.hasPrefix(Self.peerPrefix) } }
 
     private func peers(answeringTo word: Substring) -> [Peer] {
-        PeerManager.shared.peers.filter { $0.handles.contains(Peer.handle(word.dropFirst())) }
+        PeerManager.shared.peers.filter { $0.handles.contains(MachineWord.handle(word.dropFirst())) }
     }
 
     /// The projects a `#` word means: this Mac's, or the named peer's as it last said.
@@ -624,7 +624,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func matches(_ peer: Peer, _ word: Substring) -> Bool {
-        peer.handles.contains(Peer.handle(word.dropFirst()))
+        peer.handles.contains(MachineWord.handle(word.dropFirst()))
     }
 
     /// `#group/name`, or `#name` when no other project has that name (an ambiguous bare
@@ -1003,9 +1003,9 @@ final class LauncherModel: ObservableObject {
 
     /// Asks a peer for its projects and keeps them in `peerProjects`; why not, when it can't.
     private func askProjects(of peer: Peer) async -> PeerManager.Refusal? {
-        switch await PeerManager.shared.send(PeerRequest(.projects), to: peer.id) {
-        case .success(let reply):
-            peerProjects[peer.id] = (reply.projects ?? []).map { Project(path: $0.path, lastUsed: $0.lastUsed) }
+        switch await PeerManager.shared.projects(on: peer.id) {
+        case .success(let found):
+            peerProjects[peer.id] = found.map { Project(path: $0.path, lastUsed: $0.lastUsed) }
             return nil
         case .failure(let refusal): return refusal
         }
@@ -2865,6 +2865,30 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// A session's `tab_done` on a tab another machine hosts (option 07 of `sessions-cant-start-sessions-in-other-projects`): the host is asked to close it, refusing unless this Mac
+    /// still controls every running pane and none is mid-turn, and the view here closes as a Done flagged as the host's mark when it answers. Nil once done, else the host's words.
+    func markDoneOnHost(_ tab: ClaudeTab, host: String) async -> String? {
+        let id = tab.id
+        if case .inFlight = hostAsk[id] { return "A Done on that tab is already under way. Nothing was ended." }
+        let name = PeerManager.shared.name(of: host)
+        hostAsk[id] = .inFlight("Marking done on \(name)…")
+        if showingBoard { board.refresh() }
+        noteActed(on: id)
+        let refusal = await PeerManager.shared.done(tab: id, on: host, mark: true, unlessBusy: true)
+        if refusal == nil { noteActed(on: id) }
+        hostAsk[id] = nil
+        if showingBoard { board.refresh() }
+        if let refusal { return refusal }
+        // The host's sessions went with the tab, so a pane here may have closed already: it waits for the host's Recent, which has the mark.
+        guard let copy = tabs.first(where: { $0.id == id && $0.host == host }) else {
+            refreshPeerRecent(only: [host])
+            return nil
+        }
+        beginDone(of: copy, hostHoldsDone: true)
+        copy.close(.hostTookDone)
+        return nil
+    }
+
     /// Sends the host a Done for its tab and waits (ADR 0045); the card says so meanwhile and, when the host refuses, why (and over `pane`). Whether it took it.
     private func askHostDone(_ id: UUID, on host: String, from pane: ClaudeSession? = nil) async -> Bool {
         let name = PeerManager.shared.name(of: host)
@@ -3564,6 +3588,48 @@ final class LauncherModel: ObservableObject {
         return await replyOnceRunning(session, in: target, tab: tab)
     }
 
+    /// A peer's `openTab` (option 07 of `sessions-cant-start-sessions-in-other-projects`): a session on that Mac opened a tab here. As `hostStart`, the session runs in a
+    /// background tab of this Mac's strip, labelled for the asker, who controls it; unlike it, this Mac decides first (`RemoteTabOpen.decide`, which the headless relay runs too):
+    /// Keep sessions running and ready for messages, one of its Projects in a fresh scan, the agent, the folder's trust. The record carries the opener's note, so the new session is
+    /// told who opened it and `send` to `opener` reaches that Mac's pane. Replies once the session runs.
+    func hostOpenTab(_ request: PeerRequest, by peer: String) async -> PeerReply {
+        let here = PeerIdentity.name ?? "this Mac"
+        guard Zmx.isEnabled else {
+            return .failure("Keep sessions running is off on \(here). Turn it on in Settings there, since a session another Mac attaches to runs in zmx.")
+        }
+        guard let open = request.open, let id = UUID(uuidString: open.id) else { return .failure("The request had no session id") }
+        guard !tabs.flatMap(\.sessions).contains(where: { $0.id == id }) else { return .failure("That session already exists on \(here)") }
+        let roots = Settings.shared.projectFolders
+        let ready = MessagesSetup.shared.hostState
+        let hasOpener = open.opener.flatMap { UUID(uuidString: $0.pane) } != nil
+        let decision = await Task.detached(priority: .userInitiated) {
+            RemoteTabOpen.decide(word: open.project, among: Project.scan(roots: roots), agent: open.agent, ready: ready.ready, notReadyBecause: ready.reason, hasOpener: hasOpener,
+                                 agentsIn: { Agent.available(in: $0).map(\.name) }, trusted: { ClaudeTrust.isTrusted($0) })
+        }.value
+        let project: Project
+        switch decision {
+        case .failure(let refusal): return .failure(RemoteTabOpen.words(refusal, machine: here))
+        case .success(let found): project = found
+        }
+        guard let opener = open.opener, let openerPane = UUID(uuidString: opener.pane) else { return .failure("The request had no opening session") }
+        var record = SessionRecord(id: id, prompt: open.prompt, title: "", directory: project.path, startedAt: Date(), lastUsed: Date())
+        if let agent = open.agent?.trimmingCharacters(in: .whitespaces), !agent.isEmpty { record.agent = agent }
+        // The asking Mac decided the skip rule from its own setting and its caller; it is kept for the session's restarts, whatever this Mac's setting says.
+        record.skipPermissions = open.skipPermissions
+        record.origin = peer
+        record.opener = OpenerNote(session: nil, name: nil, project: opener.project, tab: opener.tab, pane: openerPane, conversation: opener.conversation,
+                                   machine: peer.lowercased(), machineName: opener.macName)
+        let session = makeSession(record, resuming: false, query: "")
+        session.startedFor = peer
+        let tab = makeTab(PaneNode(session: session))
+        tabs.append(tab)
+        saveSessions()
+        session.start()
+        var reply = await replyOnceRunning(session, in: project.path, tab: tab)
+        if reply.ok { reply.project = project.name }
+        return reply
+    }
+
     /// A peer's `start` of a file, picked in the tree it shows of this Mac's folders: it opens as a pick in this Mac's own tree does. The file
     /// and the tree's folder must be inside the tab's folders (as `file` reads them) and the file a regular file.
     private func hostOpenFile(_ request: PeerRequest, start: PeerStart, id: UUID, here: String, by peer: String) async -> PeerReply {
@@ -3927,6 +3993,14 @@ final class LauncherModel: ObservableObject {
             // An open tab carries no mark: a clear has nothing to take off it.
             if mark {
                 guard !tab.claudeSessions.isEmpty else { return .failure("That tab has no Claude session to mark done") }
+                // A session's `tab_done` on a tab opened here (option 07 of `sessions-cant-start-sessions-in-other-projects`): the asking Mac read the turns and the control a moment ago,
+                // and either can have changed while the request travelled, so both are read again here, right before the tab closes.
+                if request.unlessBusy == true, let asker = request.by {
+                    let controls = await runningLabels(of: tab).map { Zmx.control(in: $0) }
+                    if let refusal = TabDone.hostRefusal(controls: controls, asker: asker, turns: tab.claudeSessions.map { $0.turn?.turn }) {
+                        return .failure(refusal.words(machine: here))
+                    }
+                }
                 beginDone(of: tab)
                 tab.close(.askedByPeer)
                 guard await closed(tab: id, within: 6) else {
@@ -3959,9 +4033,9 @@ final class LauncherModel: ObservableObject {
     /// last opened here should show.
     func hostProjects() async -> PeerReply {
         let roots = Settings.shared.projectFolders
-        let found = await Task.detached(priority: .userInitiated) { Project.scan(roots: roots) }.value
+        let listed = await Task.detached(priority: .userInitiated) { PeerProject.listing(of: Project.scan(roots: roots)) }.value
         var reply = PeerReply.success()
-        reply.projects = found.map { PeerProject(path: $0.path, lastUsed: $0.lastUsed) }
+        reply.projects = listed
         return reply
     }
 

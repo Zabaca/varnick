@@ -331,16 +331,27 @@ public enum SendRules {
     /// `tab_open`, or by a session that could not receive); `opener` is that pane now, nil when it has closed.
     public enum Opener: Equatable, Sendable {
         case pane(UUID)
+        /// The opener runs on another Mac (option 07 of `sessions-cant-start-sessions-in-other-projects`): its pane there, and the conversation it held at the open, which
+        /// that Mac checks (`openerMoved`); a `gone` from it is read as `openerGone`.
+        case remote(machine: String, pane: UUID, conversation: String?)
         case refused(Refusal)
     }
 
     public static func resolveOpener(note: OpenerNote?, opener: (pane: UUID, conversation: String)?) -> Opener {
         guard let note, let pane = note.pane else { return .refused(.noOpener) }
+        if let machine = note.machine { return .remote(machine: machine, pane: pane, conversation: note.conversation) }
         guard let opener else { return .refused(.openerGone) }
         guard opener.pane == pane else { return .refused(.openerGone) }
         // A note saved with no conversation is one the opener's was never read for: it holds for the pane, as the note's other fields do.
         if let wanted = note.conversation, wanted.lowercased() != opener.conversation.lowercased() { return .refused(.openerMoved) }
         return .pane(pane)
+    }
+
+    /// Whether a message to `opener` names a conversation that the receiving pane no longer holds (`expected` is the sender's note's, nil for any other message): the Mac that
+    /// receives it refuses with `openerMoved` (option 07 of `sessions-cant-start-sessions-in-other-projects`).
+    public static func openerMoved(expected: String?, current: String) -> Bool {
+        guard let expected, !expected.isEmpty else { return false }
+        return expected.lowercased() != current.lowercased()
     }
 
     /// The session a tab's card id means: its one Claude session; nil when the tab has none or several (then a pane id is needed).

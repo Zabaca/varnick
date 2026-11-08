@@ -16,9 +16,9 @@ public enum PeerProtocol {
     public static func answersAnyVersion(_ op: PeerOp) -> Bool { op == .upgrade || op == .restart }
 
     /// The requests a listed device is refused, whatever else it may ask: the search sync's `rows` and `pages`, `arrange`, the five automation requests a Mac
-    /// sends a headless host, and the two frozen maintenance requests (ADR 0011). Every other request is a device's to send, and `PeerRelay` lets it.
+    /// sends a headless host, `openTab` (option 07 of `sessions-cant-start-sessions-in-other-projects`: a device does not start sessions this way), and the two frozen maintenance requests (ADR 0011). Every other request is a device's to send, and `PeerRelay` lets it.
     public static func isMacsOnly(_ op: PeerOp) -> Bool {
-        op == .rows || op == .pages || op == .arrange || isAutomationRequest(op) || isMessageRequest(op) || isHostMessageRequest(op) || answersAnyVersion(op)
+        op == .rows || op == .pages || op == .arrange || op == .openTab || isAutomationRequest(op) || isMessageRequest(op) || isHostMessageRequest(op) || answersAnyVersion(op)
     }
 
     /// The two requests of messages to a headless host (option 07 of `sessions-cant-reach-each-other-reliably`, no protocol bump), for a listed Mac only: the host's
@@ -220,6 +220,9 @@ public enum PeerOp: String, Codable, Sendable, CaseIterable {
     /// A Mac collecting the messages the host's sessions have for it, and handing over its receipts for the last ones (`PeerCollectAsk`). The host holds it for up to 20 s.
     /// For a listed Mac only; a host that does not know it answers "Unknown request".
     case collectMessages
+    /// A session on a Mac opened a tab on the receiving machine (`PeerRequest.open`, `PeerOpenTabAsk`; option 07 of `sessions-cant-start-sessions-in-other-projects`, no protocol bump): one of its
+    /// Projects its Claude Code trusts, started at once and labelled for the asker, with the opener's note. For a listed Mac only; a build that does not know it answers "Unknown request".
+    case openTab
 }
 
 /// What kind of machine answers an `upgrade`.
@@ -444,10 +447,14 @@ public enum PeerResume: String, Codable, Sendable {
 public struct PeerProject: Codable, Equatable, Sendable {
     public var path: String
     public var lastUsed: Date?
+    /// Whether the answering machine's Claude Code trusts the folder (option 07 of `sessions-cant-start-sessions-in-other-projects`). Nil from a build before it, or when
+    /// that machine's config could not be read: `project_search` says "not known". Optional, so no protocol change; the phone ignores it.
+    public var trusted: Bool?
 
-    public init(path: String, lastUsed: Date? = nil) {
+    public init(path: String, lastUsed: Date? = nil, trusted: Bool? = nil) {
         self.path = path
         self.lastUsed = lastUsed
+        self.trusted = trusted
     }
 }
 
@@ -857,6 +864,11 @@ public struct PeerRequest: Codable, Sendable {
     public var hostCheck: PeerHostCheckAsk?
     /// CollectMessages: the receipts for the last messages.
     public var collect: PeerCollectAsk?
+    /// OpenTab: the tab to open.
+    public var open: PeerOpenTabAsk?
+    /// Done: refuse unless every running pane of the tab names the asker and no Claude session in it is mid-turn (option 07 of `sessions-cant-start-sessions-in-other-projects`),
+    /// which a session's `tab_done` on a tab hosted elsewhere sets. Nil or false is the Done of ADR 0045, which a host carries out without asking.
+    public var unlessBusy: Bool?
 
     public init(_ op: PeerOp) {
         v = PeerProtocol.version
@@ -953,6 +965,9 @@ public struct PeerReply: Codable, Sendable {
 
     /// CollectMessages: the messages the host's sessions have for the asking Mac; empty when the hold ended with none.
     public var collected: [PeerHostMessage]?
+
+    /// OpenTab: the opened project's folder name, for the opener's answer.
+    public var project: String?
 
     /// Set when the receiving Mac doesn't list the sender as a peer, so the sender stops asking it for
     /// anything (its prompts above all) until it is added again.

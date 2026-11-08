@@ -27,3 +27,8 @@ The rule is across machines and the protocol encodes it (version 33), so it is h
 - **A listed device can now end any tab of a host by Done,** not only a tab it made. That is within what a listed device can already do on a host (`docs/privacy-and-security.md`); if the user ever shares a host, it is the rule to revisit.
 - **Undo is a reopen:** Resume from the Phone page's Recent, or ↩ on a Completed card on a Mac, reopens the tab and takes it out of Completed everywhere.
 - **Sending a Done again once its host answers stays out,** as in ADR 0032.
+
+## Amendment: a `done` may ask its host to refuse unless the asker controls the tab and nothing in it is working (2026-11-08)
+
+At the user's word (option 07 of `sessions-cant-start-sessions-in-other-projects`), a session's `tab_done` also ends a tab it opened on another machine. That Mac asks the host for the tab's turns and who controls it, decides as option 06 does, and sends `done` with one more optional field, `unlessBusy`. With it the host refuses unless every running pane of the tab names the asker and no Claude session in it is mid-turn (working, background work, or waiting on the user), checked right before it closes the tab, since a turn could start in the seconds the request travels. Without it `done` is as above: global, and carried out without asking. An older host ignores the field, but it never sees this request, since it could not have opened the tab. A user's Done from the panel, the board or the phone is unchanged. No protocol bump.
+

@@ -13,6 +13,9 @@ extension PanelAccess {
     func tabDone(_ args: PanelArguments, _ model: LauncherModel, tab callerTab: ClaudeTab, caller: ClaudeSession, controller: String?) async throws -> Answered {
         let target = try self.target(args["id"], caller: caller.id)
         guard let tab = Self.tab(for: target, in: model) else { throw PanelRefusal.gone }
+        if let host = tab.host {
+            return try await tabDoneOnHost(tab, host: host, target: target, model, callerTab: callerTab, caller: caller, controller: controller)
+        }
         try refuseUnlessDone(tab, model, caller: caller, callerTab: callerTab, control: nil, machine: nil)
 
         let running = tab.sessions.filter(\.runsInZmx).map(\.id)
@@ -49,6 +52,43 @@ extension PanelAccess {
         return Answered(text: text, action: "done" + (showing ? " showing" : "") + (controller == nil ? "" : " controlled"))
     }
 
+    /// A tab another machine hosts, shown here as a view this Mac controls (option 07 of `sessions-cant-start-sessions-in-other-projects`). In order: the marks and the turns as this
+    /// Mac has them, then the host's `status` for the tab's panes (each turn and who controls it, read fresh), then the decision again with those, then `done` to the host with its
+    /// own check right before it closes the tab, and the view closing as a Done when the host answers. Nothing is awaited between the last decision and the host's request.
+    private func tabDoneOnHost(_ tab: ClaudeTab, host: String, target: UUID, _ model: LauncherModel, callerTab: ClaudeTab, caller: ClaudeSession,
+                               controller: String?) async throws -> Answered {
+        try refuseUnlessDone(tab, model, caller: caller, callerTab: callerTab, control: nil, machine: nil)
+        let machine = PeerManager.shared.name(of: host)
+        let running = tab.sessions.filter(\.runsInZmx).map(\.id)
+        let names = running.map(Zmx.sessionName)
+        guard let statuses = await PeerManager.shared.sessionStatuses(names, on: host) else {
+            throw PanelRefusal.bad("\(machine) did not answer, so that tab's turns and who controls it could not be read: try again in a moment")
+        }
+        _ = try Self.callingTab(caller.id, model, was: callerTab)
+        guard model.tabs.contains(where: { $0 === tab }), tab.host == host, tab.sessions.filter(\.runsInZmx).map(\.id) == running else {
+            throw PanelRefusal.bad("That tab changed while it was being worked on: try again in a moment")
+        }
+        let live = names.compactMap { statuses[$0] }.filter(\.running)
+        let control = TabDone.control(labels: live.map(\.control), me: PeerIdentity.id ?? "")
+        var turns: [UUID: Turn] = [:]
+        for (id, name) in zip(running, names) { if let turn = statuses[name]?.turn { turns[id] = turn } }
+        // Who holds it, for the words: the first label that is not this Mac (nil is the host itself).
+        let other = live.map(\.control).first { !Zmx.sameID($0, PeerIdentity.id) }
+        try refuseUnlessDone(tab, model, caller: caller, callerTab: callerTab, control: control, machine: other.map { PeerManager.shared.name(of: $0) } ?? machine, turns: turns)
+
+        let place = tab.claudeSessions.first.map { (Project.root(of: $0.record.directory) as NSString).lastPathComponent }
+        if let refused = await model.markDoneOnHost(tab, host: host) {
+            _ = try Self.callingTab(caller.id, model, was: callerTab)
+            throw PanelRefusal.macRefused(refused, kind: "host refused")
+        }
+        var text = "Marked done the tab" + (place.map { " in \($0)" } ?? "") + " on \(machine) (\(id(for: target, caller: caller.id))): its panes are closing there and it goes to Completed."
+        if let controller {
+            text += " This session's tab is controlled by \(PeerManager.shared.name(of: controller)); the tab that was ended is on \(machine), in this Mac's strip."
+        }
+        // The log's words: that it was on another machine, never its name, a project or an id.
+        return Answered(text: text, action: "done remote" + (controller == nil ? "" : " controlled"))
+    }
+
     /// The tab an id means: the tab holding that pane, else the tab with that id (a board card's).
     private static func tab(for target: UUID, in model: LauncherModel) -> ClaudeTab? {
         model.tabs.first { $0.sessions.contains { $0.id == target } } ?? model.tabs.first { $0.id == target }
@@ -56,15 +96,16 @@ extension PanelAccess {
 
     /// Throws when `TabDone.decide` refuses the tab as it is now. The calling pane and the tab are checked first, since they can have gone while a read waited.
     private func refuseUnlessDone(_ tab: ClaudeTab, _ model: LauncherModel, caller: ClaudeSession, callerTab: ClaudeTab, control: TabDone.Control?,
-                                  machine: String?) throws {
+                                  machine: String?, turns: [UUID: Turn]? = nil) throws {
         _ = try Self.callingTab(caller.id, model, was: callerTab)
         guard model.tabs.contains(where: { $0 === tab }) else { throw PanelRefusal.gone }
-        let panes = tab.sessions.map { TabDone.Pane(id: $0.id, openedBy: $0.record.openedBy, turn: $0.isClaude ? $0.turn?.turn : nil) }
+        // `turns` are the host's, read just now, for a tab it hosts; otherwise each session's own.
+        let panes = tab.sessions.map { session in
+            TabDone.Pane(id: session.id, openedBy: session.record.openedBy, turn: session.isClaude ? (turns == nil ? session.turn?.turn : turns?[session.id]) : nil)
+        }
         // A close the user began (the tab's ×, a Done) or a question of theirs (in the pane, or on the board's card) holds the tab.
         let closing = model.closing[tab.id] != nil || tab.sessions.contains { $0.asking != nil || $0.confirmingEnd } || model.board.confirming?.id == tab.id
-        // A paired Mac's tab shown here carries no mark of this session; its Done is the host's.
-        let refusal = tab.host != nil ? TabDone.Refusal.notOpenedByCaller
-            : TabDone.decide(panes: panes, caller: caller.id, isCallersTab: tab === callerTab, isClosing: closing, control: control)
+        let refusal = TabDone.decide(panes: panes, caller: caller.id, isCallersTab: tab === callerTab, isClosing: closing, control: control)
         if let refusal { throw PanelRefusal.notDone(refusal, Self.words(for: refusal, machine: machine)) }
         guard !tab.claudeSessions.isEmpty else {
             throw PanelRefusal.bad("That tab has no Claude session left, so Done has nothing to mark: it is the user's to close")

@@ -3,7 +3,7 @@ import VarnickPeer
 
 // Pane tools for sessions (option 01 of `panes-open-only-by-hand-at-a-mac`), the relay half: what `Varnick --mcp --panes` lists. Their calls travel as
 // Panel access's requests (`PanelRequest`, no new request type) and are answered by `PanelAccess`, in `PaneOpening` (`tab_open`, option 01 of
-// `sessions-cant-start-sessions-in-other-projects`, in `TabOpening`; `tab_done`, option 06, in `TabDoneAccess`). The server never reads or acts.
+// `sessions-cant-start-sessions-in-other-projects`, in `TabOpening`; `tab_done`, option 06, in `TabDoneAccess`; `project_search`, option 07, in `ProjectSearchAccess`). The server never reads or acts.
 
 /// The kinds `pane_open` takes, in the order its schema lists them.
 enum OpenedPaneKind: String, CaseIterable {
@@ -22,12 +22,13 @@ enum PaneMCP {
     static let close = "pane_close"
     static let tabOpen = "tab_open"
     static let tabDone = "tab_done"
+    static let projectSearch = "project_search"
 
-    /// The four tools, as `tools/list` gives them.
-    static var tools: [[String: Any]] { [openTool, closeTool, tabOpenTool, tabDoneTool] }
+    /// The five tools, as `tools/list` gives them.
+    static var tools: [[String: Any]] { [openTool, closeTool, tabOpenTool, tabDoneTool, projectSearchTool] }
 
     /// The names `tools` lists: the only ones a call may use.
-    static let names: Set<String> = [open, close, tabOpen, tabDone]
+    static let names: Set<String> = [open, close, tabOpen, tabDone, projectSearch]
 
     private static func tool(_ name: String, summary: String, properties: [String: Any], required: [String] = []) -> [String: Any] {
         var schema: [String: Any] = ["type": "object", "properties": properties]
@@ -79,12 +80,31 @@ enum PaneMCP {
             + "notify_when_idle you get one notice when it has nothing left to do (only from this session's main conversation, not from a subagent). Its name can change if "
             + "it restarts or the user renames it: look it up again with `claude agents --json`. The name may be missing from the reply when the session was still "
             + "starting; the tab is open all the same. "
-            + "Once you have what you needed from it, mark it Done with tab_done, as long as the user has not used it (pane_close does not reach it: it is in another tab). This Mac's projects only.",
+            + "Once you have what you needed from it, mark it Done with tab_done, as long as the user has not used it (pane_close does not reach it: it is in another tab). "
+            + "With `machine` (a paired Mac or the headless host, named as board_read names it after \"on\", or by one word of its name) the tab is opened on that machine instead: "
+            + "`project` is then one of that machine's Projects, named as project_search lists it (or its absolute path there), `agent` one found in that project there, and the folder must be one that machine's Claude Code has trusted. "
+            + "The session runs on that machine, so its files are that machine's, not this Mac's; the tab is in this Mac's strip, controlled from here, not brought up. "
+            + "It needs messages both ways: this session must have `send`, Also between my Macs and hosts must be on, and that machine must be ready for messages; each refusal says what to turn on. "
+            + "The new session reaches this one with `send` to `opener`, and tab_done ends it as it ends a tab here. The call waits up to 14 seconds for the other machine; if it has not answered by then the reply says so, "
+            + "the tab may still open (it will be on board_read), and you should not call again for the same work. Left out, or naming this Mac, the tab opens here. project_search lists the projects of this Mac or of another machine.",
         properties: [
-            "project": ["type": "string", "description": "The Project: its folder's name, or group/name when two projects share a name, or its absolute path."],
+            "project": ["type": "string", "description": "The Project: its folder's name, or group/name when two projects share a name, or its absolute path (on `machine` when that is given)."],
+            "machine": ["type": "string", "description": "A paired Mac or the headless host to open the tab on, named as board_read names it after \"on\", or by one word of its name. Left out, the tab opens on this Mac."],
             "agent": ["type": "string", "description": "A Claude Code agent found in that project's folder, as @name would find it there."],
             "prompt": ["type": "string", "description": "The new session's first message, at most 20000 bytes. Left out, the session waits for one."],
         ], required: ["project"])
+
+    private static let projectSearchTool = tool(projectSearch,
+        summary: "Lists the Projects (repositories under a machine's project folders) of this Mac, a paired Mac or the headless host, so tab_open can be given one: one line each, those Claude used "
+            + "most recently first, at most 50 with a note of how many more match. A line holds: first the word tab_open's `project` takes there (the folder's name, or group/name when two projects share a name), "
+            + "then its group, its path on that machine (its files are there, not on this Mac), when Claude last used it, and whether that machine's Claude Code trusts the folder (\"trusted\", \"not trusted\", "
+            + "which tab_open on that machine refuses until the user opens a session there once, or \"not known\" for a machine on an older Varnick). Read fresh each time. `machine` is a paired Mac or the headless host, named as "
+            + "board_read names it after \"on\" or by one word of its name; left out, this Mac. `search` is matched, ignoring case, against each project's folder name and group. "
+            + "A machine that is asleep, off the network or not running Varnick is refused in words.",
+        properties: [
+            "machine": ["type": "string", "description": "A paired Mac or the headless host, named as board_read names it after \"on\", or by one word of its name. Left out, this Mac."],
+            "search": ["type": "string", "description": "A word matched, ignoring case, against each project's folder name and its group. Left out, every project."],
+        ])
 
     private static let tabDoneTool = tool(tabDone,
         summary: "Marks Done a tab this session opened with tab_open, as the user's Done would: every pane in it closes (a terminal, page, app or file the new session "
@@ -94,7 +114,8 @@ enum PaneMCP {
             + "phone (bringing the tab up to watch it does not count, and the reply says when it was showing); while a session in it is working, has background work or "
             + "waits on the user (wait for it to have nothing left to do, then call again; a session waiting on the user has called the user there, so it is theirs); "
             + "while the user is closing it; for this session's own tab; and for any tab this session did not open, one opened before this build, or one reopened from "
-            + "Completed. In a tab that another Mac or the phone controls it is answered, and ends this Mac's tab.",
+            + "Completed. A tab opened on another machine with tab_open's `machine` is ended too: the machine that hosts it checks again right before it closes the tab that this Mac still controls "
+            + "it and no session in it is working. In a tab that another Mac or the phone controls it is answered, and ends this Mac's tab.",
         properties: ["id": ["type": "string", "description": "The pane's id (s…) from tab_open, or the tab's card id or a pane id from board_read."]],
         required: ["id"])
 }

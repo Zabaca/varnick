@@ -1038,5 +1038,87 @@ expect("a gone pane with every machine reached is option 01's words", PeerListRe
 expect("a gone pane names the machines that could not be asked and sends nothing", PeerListRefresh.goneWords(unreached: ["Host"]).contains("(Host)") && PeerListRefresh.goneWords(unreached: ["Host"]).hasSuffix("Nothing was sent."))
 expect("the words have no em dash", !PeerListRefresh.note(unreached: ["Host"])!.contains("\u{2014}") && !PeerListRefresh.goneWords(unreached: ["Host"]).contains("\u{2014}"))
 
+// MARK: `opener` across machines (option 07 of sessions-cant-start-sessions-in-other-projects)
+
+let openerMac = "11111111-2222-4333-8444-555555555555"
+let farNote = OpenerNote(session: nil, name: nil, project: "home", tab: "Plan", pane: openerPane, conversation: "aaaa-1", machine: openerMac, machineName: "the laptop")
+expect("a note with a machine resolves to that machine's pane, with the conversation it holds", SendRules.resolveOpener(note: farNote, opener: nil) == .remote(machine: openerMac, pane: openerPane, conversation: "aaaa-1"),
+       "\(SendRules.resolveOpener(note: farNote, opener: nil))")
+expect("it does not look for the pane on this Mac", SendRules.resolveOpener(note: farNote, opener: (UUID(), "zzz")) == .remote(machine: openerMac, pane: openerPane, conversation: "aaaa-1"))
+expect("a note with a machine and no pane has no opener", SendRules.resolveOpener(note: OpenerNote(session: nil, name: nil, project: "home", tab: nil, machine: openerMac, machineName: "x"), opener: nil) == .refused(.noOpener))
+expect("a note with no machine still resolves on this Mac", SendRules.resolveOpener(note: note, opener: (openerPane, "aaaa-1")) == .pane(openerPane))
+expect("a message to the same conversation passes", !SendRules.openerMoved(expected: "AAAA-1", current: "aaaa-1"))
+expect("a message to another conversation is the opener having moved", SendRules.openerMoved(expected: "aaaa-1", current: "bbbb"))
+expect("a message that names no conversation is never refused for it", !SendRules.openerMoved(expected: nil, current: "bbbb") && !SendRules.openerMoved(expected: "", current: "bbbb"))
+expect("openerMoved and openerGone keep the words a Mac gives", SendRules.Refusal.openerMoved.message.contains("another conversation") && SendRules.Refusal.openerGone.message.contains("has closed"))
+let farMessage = PeerSessionMessage(from: "aaaaaaaa-1111-4222-8333-944455566677", fromProject: "kestrel", fromMac: "the desktop", skips: false, text: "done", expectsConversation: "aaaa-1")
+expect("the conversation a message to opener expects crosses the wire", PeerJSON.decode(PeerSessionMessage.self, from: PeerJSON.line(farMessage)) == farMessage)
+expect("a message from a build before the field has none", PeerJSON.decode(PeerSessionMessage.self, from: #"{"from":"a","fromProject":"p","fromMac":"m","skips":false,"text":"t"}"#)?.expectsConversation == nil)
+
+// The host's table of senders gets `opener` at the open.
+let helperPane = UUID(), farMacPane = "aaaaaaaa-1111-4222-8333-944455566677"
+expect("seeding the opener writes the entry", SenderTable.seedOpener(mac: openerMac.uppercased(), pane: farMacPane.uppercased(), name: "the laptop", project: "home", session: helperPane.uuidString.uppercased(),
+                                                                   expects: "AAAA-1", receiver: helperPane))
+let seeded = SenderTable.entry("opener", receiver: helperPane)
+expect("the send server finds it by the word, with the Mac, its pane, its name and project", seeded?.mac == openerMac && seeded?.pane == farMacPane && seeded?.name == "the laptop" && seeded?.project == "home", "\(String(describing: seeded))")
+expect("it keeps the conversation the helper was opened on and the one the opener held, in lower case", seeded?.session == helperPane.uuidString.lowercased() && seeded?.expects == "aaaa-1")
+expect("the word is read in any case and with spaces", SenderTable.entry(" Opener ", receiver: helperPane) == seeded)
+expect("the same Mac pane messaging the helper later gets an id of its own and leaves the opener entry alone",
+       SenderTable.id(mac: openerMac, pane: farMacPane, name: "the laptop", project: "home", receiver: helperPane) == "s1" && SenderTable.entry("opener", receiver: helperPane) == seeded
+       && SenderTable.entry("s1", receiver: helperPane)?.session == nil)
+expect("an entry saved before the fields loads without them", { () -> Bool in
+    let old = try? JSONDecoder().decode(SenderTable.Entry.self, from: Data(#"{"mac":"m","pane":"p","name":"n","project":"x"}"#.utf8))
+    return old != nil && old?.session == nil && old?.expects == nil
+}())
+expect("another pane has no opener", SenderTable.entry("opener", receiver: UUID()) == nil)
+
+// The host session's send to opener.
+let openerEntry = SenderTable.Entry(mac: openerMac, pane: farMacPane, name: "the laptop", project: "home", session: "bbbb-2", expects: "aaaa-1")
+expect("opener is allowed while the helper is on the conversation it was opened on", HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: true, word: "opener", session: "BBBB-2") == nil)
+expect("opener is refused once the helper has moved to another conversation, in option 01's words", HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: true, word: "opener", session: "cccc-3") == .noOpener
+       && HostSend.Refusal.noOpener.words == SendRules.Refusal.noOpener.message)
+expect("a helper whose conversation is not known is treated as moved", HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: true, word: "opener", session: nil) == .noOpener)
+expect("the same entry under its id is not tied to the conversation", HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: true, word: "s1", session: "cccc-3") == nil)
+expect("the moved check comes after the id and before the Mac being asked about", HostSend.decide(text: "done", rateAllowed: true, entry: nil, collecting: true, word: "opener", session: "cccc-3") == .unknownID
+       && HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: false, word: "opener", session: "cccc-3") == .noOpener)
+expect("an opener whose Mac is not collecting is refused at once, as any sender is", HostSend.decide(text: "done", rateAllowed: true, entry: openerEntry, collecting: false, word: "opener", session: "bbbb-2") == .notCollecting)
+let openerClock = Clock()
+openerClock.now = Date()
+var openerRate = SendRate()
+func callOpener(conversation: String, whileWaiting: @escaping () -> Void = {}) -> MCPResult {
+    HostSendServer.call(["to": "opener", "text": "built it"], pane: helperPane, rate: &openerRate, facts: { HostSendServer.Facts(project: "kestrel", skips: false, conversation: conversation) },
+                        now: { openerClock.now }, sleep: { openerClock.now += $0; whileWaiting() })
+}
+HostOutbox.markCollecting(mac: openerMac)
+openerClock.now = Date()
+var openerSeen: [PeerHostMessage] = []
+let openerCall = callOpener(conversation: helperPane.uuidString.lowercased()) {
+    for message in HostOutbox.claim(mac: openerMac) {
+        openerSeen.append(message)
+        HostOutbox.writeReceipt(PeerReceipt(id: message.id, sent: PeerMessageReply(delivery: .waiting, started: true, taken: true, project: "home")), mac: openerMac)
+    }
+}
+expect("a send to opener from the helper reaches the opener's Mac with its pane, the helper as sender and the conversation to check", openerSeen.count == 1 && openerSeen[0].pane == farMacPane
+       && openerSeen[0].from == helperPane.uuidString.lowercased() && openerSeen[0].expects == "aaaa-1" && openerSeen[0].text == "built it", "\(openerSeen)")
+expect("the helper is told what a session is told, naming the opener's Mac", !openerCall.isError && (openerCall.content.first?["text"] as? String) == "Sent to opener (home on the laptop). Its turn started on it.", "\(openerCall.content)")
+openerClock.now = Date()
+let movedCall = callOpener(conversation: "cccc-3")
+expect("a helper that moved on is refused and nothing is written", movedCall.isError && (movedCall.content.first?["text"] as? String) == SendRules.Refusal.noOpener.message && HostOutbox.claim(mac: openerMac).isEmpty)
+expect("a message to a Mac pane other than opener carries no conversation to check", { () -> Bool in
+    _ = try? HostOutbox.post(pane: farMacPane, from: helperPane.uuidString.lowercased(), fromProject: "kestrel", skips: false, text: "x", mac: openerMac)
+    return HostOutbox.claim(mac: openerMac).first?.expects == nil
+}())
+expect("a collected message with the field survives its file", { () -> Bool in
+    let message = PeerHostMessage(id: "1-2-3", pane: farMacPane, from: "f", fromProject: "p", skips: false, text: "t", expects: "aaaa-1")
+    return PeerJSON.decode(PeerHostMessage.self, from: PeerJSON.line(message)) == message
+}())
+expect("a message from a build before the field has none", PeerJSON.decode(PeerHostMessage.self, from: #"{"id":"1","pane":"p","from":"f","fromProject":"x","skips":false,"text":"t"}"#)?.expects == nil)
+// The early mark of the host: written before the open, so the host's first answer is taken.
+let markedPane = UUID()
+expect("before the mark, a host's message for the pane is unknown to this Mac", HostMessages.macDecision(paneOpen: true, sentToHost: SentHosts.contains(openerMac, pane: markedPane)) == .unknownID)
+SentHosts.add(openerMac, pane: markedPane)
+expect("once the mark is written at the open, the host's message is taken", HostMessages.macDecision(paneOpen: true, sentToHost: SentHosts.contains(openerMac, pane: markedPane)) == nil)
+expect("a pane that closed after the open is gone to the host's session", HostMessages.macDecision(paneOpen: false, sentToHost: SentHosts.contains(openerMac, pane: markedPane)) == .gone)
+
 print("check-messages: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

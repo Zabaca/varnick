@@ -121,9 +121,9 @@ struct FindArguments: Equatable {
             if project.hasPrefix("/") { filter.folder = project.withoutTrailingSlash } else { filter.folderNames = [project.lowercased()] }
         }
         if let mac = args.text("mac") {
-            if Peer.handle(mac) == Peer.handle("this Mac") {
+            if MachineWord.handle(mac) == MachineWord.handle("this Mac") {
                 filter.thisMacOnly = true
-            } else if let found = peers.first(where: { Peer.handle($0.name) == Peer.handle(mac) }) {
+            } else if let found = peers.first(where: { MachineWord.handle($0.name) == MachineWord.handle(mac) }) {
                 filter.host = found.id
             } else {
                 let names = ["this Mac"] + peers.map(\.name)

@@ -45,25 +45,14 @@ struct Peer: Codable, Identifiable, Equatable {
 }
 
 extension Peer {
-    /// Letters and digits only, lowercased: what a `^name` word is compared as.
-    static func handle(_ text: some StringProtocol) -> String {
-        String(text.lowercased().filter { $0.isLetter || $0.isNumber })
-    }
-
     /// The one wording for who is in control, on the bar, in the session rows and in the peers' rows.
     /// Without a client attached the Mac only last had control.
     static func controlledText(on mac: String, attached: Bool) -> String {
         (attached ? "Controlled on " : "Last controlled on ") + mac
     }
 
-    /// What `^name` can say to mean this Mac: its whole name run together, and each word of it
-    /// ("Alex’s MacBook Pro" answers to `^alexsmacbookpro`, `^alexs`, `^macbook` and `^pro`).
-    var handles: [String] {
-        let whole = Self.handle(name)
-        guard !whole.isEmpty else { return [] }
-        let words = name.split(whereSeparator: \.isWhitespace).map { Self.handle($0) }.filter { !$0.isEmpty && $0 != whole }
-        return [whole] + words
-    }
+    /// What `^name` can say to mean this Mac (`MachineWord.handles(ofName:)`).
+    var handles: [String] { MachineWord.handles(ofName: name) }
 
     /// The handles to offer as the shortcut, best first: the last word that isn't only digits ("linux box 2"
     /// offers `^box`, not `^2`), then the whole name run together. All of `handles` still match.
@@ -932,6 +921,24 @@ final class PeerManager: ObservableObject {
         }
     }
 
+    /// A peer's projects as it lists them, each with whether its Claude Code trusts the folder when it says (`projects`; the panel's `^machine #project` and `project_search`).
+    func projects(on host: String) async -> Result<[PeerProject], Refusal> {
+        switch await send(PeerRequest(.projects), to: host) {
+        case .failure(let refusal): return .failure(refusal)
+        case .success(let reply): return .success(reply.projects ?? [])
+        }
+    }
+
+    /// A session's `tab_open` on a peer (`openTab`, option 07 of `sessions-cant-start-sessions-in-other-projects`, no protocol bump): the machine checks and starts the session, and
+    /// answers once it runs. A build that does not know the request answers "Unknown request", which the caller turns into "update it". `timeout` is the panel's start (40 s):
+    /// the caller's own deadline is shorter, and a late answer still adds the tab.
+    func openTab(_ open: PeerOpenTabAsk, on host: String, timeout: TimeInterval = 40) async -> Result<PeerReply, Refusal> {
+        var request = PeerRequest(.openTab)
+        request.by = PeerIdentity.id
+        request.open = open
+        return await send(request, to: host, timeout: timeout)
+    }
+
     /// A session message to a session on a paired Mac (`sendMessage`, protocol 35, option 02 of `sessions-cant-reach-each-other-reliably`): the host applies option 01's
     /// checks and answers with what it did. A Mac that doesn't answer, speaks another protocol or has removed this one is the failure, never held for later.
     func sendMessage(_ message: PeerSessionMessage, pane: UUID, to host: String) async -> Result<PeerMessageReply, Refusal> {
@@ -994,16 +1001,19 @@ final class PeerManager: ObservableObject {
     }
 
     /// Done on a tab of the host (`done`, ADR 0045). Nil once the host took it, else why not (a host that can't be reached is a refusal too).
-    /// A failure is logged, and nothing sends it again.
-    func done(tab id: UUID, on host: String, mark: Bool) async -> String? {
+    /// A failure is logged, and nothing sends it again. `unlessBusy` asks the host to refuse unless this Mac still controls every running pane and none is mid-turn
+    /// (a session's `tab_done`).
+    func done(tab id: UUID, on host: String, mark: Bool, unlessBusy: Bool = false) async -> String? {
         guard status[host] != .removedThisMac else { return "\(name(of: host)) doesn't list this Mac any more" }
         var request = PeerRequest(.done)
         request.by = PeerIdentity.id
         request.tab = id.uuidString.lowercased()
         request.mark = mark
+        if unlessBusy { request.unlessBusy = true }
         switch await send(request, to: host) {
         case .failure(let refusal):
-            NSLog("Varnick: couldn't \(mark ? "mark" : "unmark") tab \(id.uuidString.lowercased()) done on \(self.name(of: host)): \(refusal.message)")
+            // A session's `tab_done` (option 07 of `sessions-cant-start-sessions-in-other-projects`) logs its own words, which hold no machine, id or reason.
+            if !unlessBusy { NSLog("Varnick: couldn't \(mark ? "mark" : "unmark") tab \(id.uuidString.lowercased()) done on \(self.name(of: host)): \(refusal.message)") }
             return refusal.message
         case .success:
             return nil
@@ -1097,6 +1107,13 @@ final class PeerManager: ObservableObject {
                 return PeerJSON.line(PeerReply.success())
             }
             return PeerJSON.line(await PanelAccess.shared.receiveMessage(request, by: by, model: model))
+        case .openTab:
+            // A session's `tab_open` on this Mac (option 07 of `sessions-cant-start-sessions-in-other-projects`): for a Mac in the list alone, as messages are; a device is refused here and in the relay.
+            guard let by = request.by, UUID(uuidString: by) != nil, peers.contains(where: { Zmx.sameID($0.id, by) }) else {
+                return PeerJSON.line(PeerReply.unlisted("\(PeerIdentity.name ?? "That Mac") doesn't list the Mac that asked"))
+            }
+            guard let model else { return starting }
+            return PeerJSON.line(await model.hostOpenTab(request, by: by))
         case .start, .resume, .end, .arrange, .reopen, .restartPane, .done:
             guard let model else { return starting }
             // These change what runs here, so only for a Mac in the list, or a device (read from the file the relay reads, so a hand edit

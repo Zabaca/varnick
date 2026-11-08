@@ -263,7 +263,7 @@ final class PanelAccess {
     /// `panes-open-only-by-hand-at-a-mac`; `tab_open` too, which adds a tab of this Mac's own, and `tab_done`, which ends one) and, at the user's word of 2026-10-17, the reads that only describe (`panel`, `board_read`, `pane_read`).
     /// Whatever presses a key, shows a view or acts on the Outline keeps the refusal: the card has no screen of its own to act on.
     /// `find` and `session_read` describe too (option 01 of `sessions-cant-search-sessions`); `find_open` adds a pane there, and refuses what would open on this Mac.
-    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, PaneMCP.tabDone, SendMCP.send, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
+    static let answersControlled: Set<String> = [PaneMCP.open, PaneMCP.close, PaneMCP.tabOpen, PaneMCP.tabDone, PaneMCP.projectSearch, SendMCP.send, "panel", "\(BoardPanelView.name)_read", "\(PanePanelView.name)_read",
                                                  FindMCP.find, FindMCP.sessionRead, FindMCP.open]
 
     /// In order: Varnick starting, the pane, then the tool.
@@ -272,6 +272,8 @@ final class PanelAccess {
         let lifted = Self.answersControlled.contains(request.tool)
         let caller = try callingPane(request.pane, in: model, allowingControlled: lifted)
         prune(in: model)
+        // `project_search` only reads, from any pane that lists the pane tools: nothing of the calling tab matters to it.
+        if request.tool == PaneMCP.projectSearch { return try await projectSearch(request.args, model) }
         if PaneMCP.names.contains(request.tool) { return try await panes(request, model, caller: caller) }
         if SendMCP.names.contains(request.tool) { return try await send(request.args, model, caller: caller) }
         if request.tool == "panel" { return Answered(text: panelText(model, caller: caller)) }

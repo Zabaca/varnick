@@ -402,10 +402,18 @@ opened it was started skipping them. The session that opened it gets the new ses
 (its id and name, in one paragraph added to its system prompt, not to your prompt) so it can send its result back; that stops applying once you `/clear` the tab or move it to another conversation.
 A folder Claude Code hasn't trusted yet is refused: open a session there once and accept. It starts only in a project of yours, never in a worktree, a folder inside a project or Home.
 
+With **`machine`** (a paired Mac or the headless host, named as the board names it after "on", or by one word of its name) `tab_open` starts the session on that machine, in one of *its* projects:
+the machine hosts the tab and runs the session, so its files are that machine's, and this Mac controls it, as when you type `^machine #project` in the panel. The tab joins the end of this Mac's
+strip, behind your work, and attaches the first time you show it. It needs messages in both directions, so the session that asks must have `send`, Also between my Macs and hosts must be on, and the
+machine must be ready for messages; each refusal says what to turn on. The new session is told which session opened it and on which machine, and reaches it with `send` to `opener`, across
+restarts. Skip permissions follow this Mac, not the other machine's setting. A fifth tool, **`project_search`**, lists the projects of this Mac or of another machine, each with the word `tab_open`
+takes, its path on that machine, when Claude last used it and whether that machine's Claude Code trusts it, so a session picks the right repository instead of opening everything in Home.
+
 A fourth, **`tab_done`**, lets the session that opened such a tab mark it Done once it has the result, exactly as your own Done does: every pane in the tab closes (a terminal or a page the new session opened beside itself too), the tab
 goes to Completed, where ↩ reopens it whole, and search still finds its sessions. It works only while you have not used the tab: a click in it, a key typed in it, a pane you added or focused, a take over on the phone or another Mac, or
 reopening it from Completed makes it yours, and then the session cannot end it. Bringing the tab up to watch it does not count. It is also refused while a session in the tab is working, has background work or waits on you (a permission
-dialog, a question, a plan), for the session's own tab, and for any tab it did not open. A session's `keys` still refuses the Done key.
+dialog, a question, a plan), for the session's own tab, and for any tab it did not open. It also ends a tab opened on another machine: that machine checks again right before it closes the tab that
+this Mac still controls it and nothing in it is working. A session's `keys` still refuses the Done key.
 
 **Messages between sessions** (Settings › Claude, off by default) gives each Claude session in a pane started while it is on one more tool, **`send`**: it takes a pane id the session was given (by `board_read`,
 `panel`, `pane_open` or `tab_open`, or as the `from` of a message it received) and some text, and Varnick pushes the text into that pane's session, which sees who sent it and from which project and answers with

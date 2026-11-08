@@ -28,11 +28,16 @@ extension PanelAccess {
         var targetID: UUID?
         var known = true
         var openerRefusal: SendRules.Refusal?
+        // The opener on another Mac (option 07 of `sessions-cant-start-sessions-in-other-projects`): its pane there, and the conversation that Mac checks.
+        var remoteOpener: (host: String, conversation: String?)?
         if SendRules.isOpenerWord(word) {
             let note = sender.record.opener
             let opener = note?.pane.flatMap { pane in model.claudePane(pane).map { (pane: pane, conversation: $0.record.conversationID) } }
             switch SendRules.resolveOpener(note: note, opener: opener) {
             case .pane(let pane): targetID = pane
+            case .remote(let machine, let pane, let conversation):
+                targetID = pane
+                remoteOpener = (machine, conversation)
             case .refused(let refusal): openerRefusal = refusal
             }
         } else {
@@ -40,6 +45,7 @@ extension PanelAccess {
         }
 
         var destination = targetID.map { whereIs($0, in: model) } ?? Destination.nowhere
+        if let remoteOpener, let targetID { destination = .remote(host: remoteOpener.host, pane: targetID) }
         // An id this session was given that no list holds now: the paired machines' lists are read again once (unless asked a moment ago) before the pane is
         // called gone, since it may be a session opened on one of them since the lists were last asked.
         var unreached: [String] = []
@@ -47,7 +53,7 @@ extension PanelAccess {
         let mayGo = Settings.shared.messagesBetweenSessions && Settings.shared.messagesBetweenMacs
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= SessionMessage.longestText
             && (sendRates[callerID] ?? SendRate()).canSend(at: Date())
-        if case .nowhere = destination, let targetID, mayGo {
+        if case .nowhere = destination, let targetID, mayGo, remoteOpener == nil {
             unreached = await model.bringPeerListsUpToDate(maxAge: PeerListRefresh.retryAge)
             // The caller may have closed while this waited.
             guard CallingPane.find(callerID.uuidString, in: model).located != nil else { throw PanelRefusal.noPane }
@@ -102,12 +108,17 @@ extension PanelAccess {
             let mac = PeerManager.shared.name(of: host)
             let isHost = PeerManager.shared.peers.first(where: { $0.id == host })?.info?.headless == true
             let message = PeerSessionMessage(from: callerID.uuidString.lowercased(), fromProject: project, fromMac: PeerIdentity.name ?? PeerIdentity.computerName(),
-                                             skips: sender.record.skippedAtStart == true, text: text)
+                                             skips: sender.record.skippedAtStart == true, text: text, expectsConversation: remoteOpener?.conversation)
             switch await PeerManager.shared.sendMessage(message, pane: pane, to: host) {
             case .failure(let refusal):
                 // Nothing is held for a Mac that is asleep or on another build: the failure's own words say which.
-                throw PanelRefusal.macRefused("\(mac) was not reached: \(refusal.message). Nothing was sent.", kind: "mac unreachable")
+                throw PanelRefusal.macRefused("\(mac) was not reached: \(refusal.message). Nothing was sent." + (remoteOpener == nil ? "" : " Say so here in your own reply; once it is back you can send again."),
+                                              kind: "mac unreachable")
             case .success(let reply):
+                // A pane that has gone from the opener's Mac is the opener having closed.
+                if remoteOpener != nil, reply.refusal == .gone {
+                    throw PanelRefusal.macRefused(SendRules.Refusal.openerGone.message, kind: SendRules.Refusal.openerGone.word)
+                }
                 if let words = MacMessages.message(for: reply, mac: mac, isHost: isHost), let refusal = reply.refusal {
                     throw PanelRefusal.macRefused(words, kind: refusal.word)
                 }
@@ -210,6 +221,10 @@ extension PanelAccess {
         let found = model.tabs.lazy.compactMap { tab in tab.sessions.first { $0.id == pane }.map { (tab, $0) } }.first
         // A view of another Mac's tab is never the target: it is hosted there.
         guard let (tab, receiver) = found, tab.host == nil, !receiver.isOnPeer else { return answer(PeerMessageReply(refusal: .gone)) }
+        // A message to `opener` names the conversation its sender's note was made for (option 07 of `sessions-cant-start-sessions-in-other-projects`).
+        if SendRules.openerMoved(expected: message.expectsConversation, current: receiver.record.conversationID) {
+            return answer(PeerMessageReply(refusal: .openerMoved))
+        }
         let target = SendRules.Target(kind: receiver.isClaude ? .claude : .other, onOtherMac: false, running: receiver.runsNow,
                                       receives: MessageQueue.receives(receiver.id), neverReceives: receiver.record.isVoice || receiver.record.isRun,
                                       skipsPermissions: receiver.record.skippedAtStart == true)
@@ -243,6 +258,8 @@ extension PanelAccess {
         let open = found.map { $0.0.host == nil && !$0.1.isOnPeer } ?? false
         if let refusal = HostMessages.macDecision(paneOpen: open, sentToHost: SentHosts.contains(host, pane: pane)) { return PeerMessageReply(refusal: refusal) }
         guard let (_, receiver) = found else { return PeerMessageReply(refusal: .gone) }
+        // A message to `opener` names the conversation the host session's note was made for (option 07 of `sessions-cant-start-sessions-in-other-projects`).
+        if SendRules.openerMoved(expected: message.expects, current: receiver.record.conversationID) { return PeerMessageReply(refusal: .openerMoved) }
         let target = SendRules.Target(kind: receiver.isClaude ? .claude : .other, onOtherMac: false, running: receiver.runsNow,
                                       receives: MessageQueue.receives(receiver.id), neverReceives: receiver.record.isVoice || receiver.record.isRun,
                                       skipsPermissions: receiver.record.skippedAtStart == true)

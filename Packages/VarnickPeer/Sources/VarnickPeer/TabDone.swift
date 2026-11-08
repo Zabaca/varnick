@@ -92,3 +92,44 @@ extension Turn {
         }
     }
 }
+
+extension TabDone {
+    /// Why a host refuses a `done` that asked it to check (`PeerRequest.unlessBusy`, option 07 of `sessions-cant-start-sessions-in-other-projects`): the asking Mac read the
+    /// turns and the control a moment ago, and a turn could have started or a take over happened in the seconds the request travelled.
+    public enum HostRefusal: Equatable, Sendable {
+        /// A running pane of the tab does not name the asker: another machine or the phone controls it, or its panes are changing hands.
+        case controlledElsewhere
+        /// A Claude session in it is working, has background work or waits on the user.
+        case busy
+
+        public var word: String {
+            switch self {
+            case .controlledElsewhere: "controlled elsewhere"
+            case .busy: "busy"
+            }
+        }
+
+        public func words(machine: String) -> String {
+            switch self {
+            case .controlledElsewhere: "That tab is no longer controlled by the Mac that asked on \(machine): someone has taken it over, so it is theirs to mark Done."
+            case .busy: "A session in that tab started working on \(machine) while the request travelled, so it was not ended. Wait until it has nothing left to do, then call again."
+            }
+        }
+    }
+
+    /// Who controls a tab hosted elsewhere, from the control labels the host's `status` gives for its running panes (nil: no label, so the host itself) and this Mac's id.
+    public static func control(labels: [String?], me: String) -> Control {
+        guard !labels.isEmpty else { return .nobody }
+        let mine = labels.filter { Zmx.sameID($0, me) }.count
+        if mine == labels.count { return .here }
+        return mine == 0 && Set(labels.map { ($0 ?? "").lowercased() }).count == 1 ? .machine : .mixed
+    }
+
+    /// `controls` is the control label of each running pane of the tab (nil: none), `turns` the turn of each Claude session in it (nil: no turn yet). Control is checked first.
+    public static func hostRefusal(controls: [String?], asker: String, turns: [Turn?]) -> HostRefusal? {
+        if !controls.allSatisfy({ Zmx.sameID($0, asker) }) { return .controlledElsewhere }
+        for case let turn? in turns where turn == .working || turn == .background || turn.waitsOnUser { return .busy }
+        return nil
+    }
+}
+
