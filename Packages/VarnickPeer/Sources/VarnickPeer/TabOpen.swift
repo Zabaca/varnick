@@ -116,14 +116,22 @@ public struct OpenerNote: Codable, Equatable, Sendable {
     /// ignores them.
     public var pane: UUID?
     public var conversation: String?
+    /// The Mac the opener runs on, when it is not the machine that runs the new session (option 07 of `sessions-cant-start-sessions-in-other-projects`): its peer id and its
+    /// name. `send` to `opener` then reaches the pane over that Mac's peer request, and the paragraph says the files there are not the new session's own. Optional so older
+    /// files load; an older build ignores them.
+    public var machine: String?
+    public var machineName: String?
 
-    public init(session: String?, name: String?, project: String, tab: String?, pane: UUID? = nil, conversation: String? = nil) {
+    public init(session: String?, name: String?, project: String, tab: String?, pane: UUID? = nil, conversation: String? = nil, machine: String? = nil,
+                machineName: String? = nil) {
         self.session = session
         self.name = name
         self.project = project
         self.tab = tab
         self.pane = pane
         self.conversation = conversation
+        self.machine = machine
+        self.machineName = machineName
     }
 
     /// Whether the paragraph can give the opener's address.
@@ -138,6 +146,15 @@ public struct OpenerNote: Codable, Equatable, Sendable {
     /// `sessions-cant-reach-each-other-reliably`).
     public func paragraph(messages: Bool) -> String {
         let place = Self.oneLine(project, upTo: 60)
+        if messages, pane != nil, let machineName {
+            let tab = tab.map { Self.oneLine($0, upTo: 60) }.flatMap { $0.isEmpty ? nil : " (its tab: \($0))" } ?? ""
+            return "This session was opened by another Claude session in \(place)\(tab) on \(Self.oneLine(machineName, upTo: 60)), with Varnick's `tab_open`. "
+                + "You run on another machine, so its files are not yours. "
+                + "You can reach it with Varnick's `send`, with `to` set to `opener`; that works whatever restarts either of you. "
+                + "Send it your result when you finish, or a question when you need a decision it can make and the user hasn't. "
+                + "If `send` says it can't be reached (that machine asleep, or that session closed), say so here in your own reply, and never send to another pane in its place. "
+                + "The user can see this tab and type into it."
+        }
         if messages, pane != nil {
             let tab = tab.map { Self.oneLine($0, upTo: 60) }.flatMap { $0.isEmpty ? nil : " (its tab: \($0))" } ?? ""
             return "This session was opened by another Claude session in \(place)\(tab), with Varnick's `tab_open`. "

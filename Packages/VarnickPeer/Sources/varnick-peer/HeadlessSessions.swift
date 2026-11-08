@@ -50,6 +50,9 @@ struct HeadlessSession: Codable, Equatable {
     var startedSkipping: Bool?
     /// A throwaway receiver of a Mac's messages test: kept out of the host's tabs and Recent, and ended by the tick if the Mac does not end it.
     var messageTest: Bool?
+    /// Who opened the session with `tab_open` on a Mac (option 07 of `sessions-cant-start-sessions-in-other-projects`), as it was at the open: `launch` appends its paragraph to the
+    /// system prompt at every start while the session is still on the conversation it was opened as. Optional, so an older relay reads the record as an ordinary session.
+    var opener: OpenerNote?
 
     /// The tab the session is in, as a Mac names it.
     var tabID: String { tab ?? id }

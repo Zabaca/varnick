@@ -93,7 +93,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // watches nothing (the card's live screen, below).
         didSet {
             if case .controlled = away {
-                if !isOnPeer { onControlled() }
+                onControlled()
                 return syncWatch()
             }
             watchRefused = false
@@ -177,7 +177,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// The record has something new to save that no tab change carries (`launchClaude` recording how it started).
     var onRecordChange: () -> Void = {}
 
-    /// This Mac's own pane now shows the card of another Mac or the phone in control: a Take over (`LauncherModel.paneTakenOver`).
+    /// This pane now shows the card of another Mac or the phone in control: a Take over (`LauncherModel.paneTakenOver`). A view of a tab another machine hosts too (option 07 of
+    /// `sessions-cant-start-sessions-in-other-projects`), where the mark of the session that opened it is cleared the same way.
     var onControlled: () -> Void = {}
 
     /// The Claude session of this Mac runs now: started, with no client gone, no end asked for and no restart under way. Messages are queued only for a

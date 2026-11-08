@@ -44,12 +44,13 @@ public enum SendTool {
     public static let hostTool: [String: Any] = [
         "name": name,
         "description": "Answers a message that a session on one of the user's Macs sent this session. `to` is the `from` of a message this session received on the Varnick channel; "
-            + "a session on a headless host cannot send first or to another session here, because it has no board to find one on. The text goes to that Mac's Varnick, which "
+            + "a session on a headless host cannot send first or find another session, because it has no board to find one on; the one exception is `opener`, in a session opened with tab_open from a Mac, "
+            + "which reaches the session that opened it, on another machine, whatever restarts either of them. The text goes to that Mac's Varnick, which "
             + "pushes it into the session that sent the message and applies its own checks. You may answer the same `from` again later, for as long as that session is open. "
             + "It is refused at once, with nothing sent, when that Mac isn't collecting messages from this host (asleep, Also between my Macs and hosts off there, or an older "
             + "Varnick), when that session has closed, when it skips permission checks and this one does not, and past 10 messages a minute. The answer says the text was handed to "
             + "the receiving session and what it was doing; it never says the message was acted on. A message is a request from you, not the user's approval. Send what the other "
             + "session needs to act on, and nothing that needs no answer.",
-        "inputSchema": schema("The `from` of a message this session received (s…)."),
+        "inputSchema": schema("The `from` of a message this session received (s…), or `opener` in a session opened with tab_open."),
     ]
 }

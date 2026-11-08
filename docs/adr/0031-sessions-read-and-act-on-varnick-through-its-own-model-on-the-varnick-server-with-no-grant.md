@@ -197,3 +197,18 @@ At the user's word (option 07 of `sessions-cant-reach-each-other-reliably`, buil
 - **Sessions on the host start as before** until its checklist passes, and after Remove approval; the ones running keep their channel until they restart.
 
 What the tool promises and what it does not is in docs/agents/where-it-breaks.md, Messages between sessions (To and from a headless host) and its Peers entry; what it adds to what sessions and the machine's policy may do is in docs/privacy-and-security.md.
+
+## Amendment: a session lists the projects of the user's machines and opens a tab on another machine (2026-11-08)
+
+At the user's word (option 07 of `sessions-cant-start-sessions-in-other-projects`, built on options 01, 04 and 06 and on options 02 and 07 of `sessions-cant-reach-each-other-reliably`), the pane tools gain `project_search`, and `tab_open` gains `machine`. Until now a session could start a session only on this Mac; this lets it start one on a paired Mac or the headless host, in a project of that machine's. No peer protocol bump (ADR 0007's amendment of 2026-11-07): one Mac-only request and optional fields.
+
+- **Which sessions get it.** The `--panes` set lists `project_search` after `tab_done`, so the rule of the amendment of 2026-10-17 covers it unchanged. No switch; a session gains it at its start.
+- **`project_search` reads.** It lists the Projects of this Mac, a paired Mac or the headless host (their names, groups, paths on that machine, when Claude last used them, and whether that machine's Claude Code trusts them), through the `projects` request the panel and the phone already use. The names and paths of every machine's projects therefore go to Anthropic with the session that asks, as file paths on this Mac already do.
+- **`tab_open` on another machine.** That machine hosts the tab and runs the session; this Mac controls it, as when the user types `^machine #project` in the panel, so the tab joins the end of this Mac's strip, not brought up. The machine checks, not the caller: the project must be one of its Projects that its Claude Code has trusted, the agent one found there, and it must be ready for messages; an unknown name is refused with the close matches there. The request is a Mac's alone, so a listed device cannot start sessions this way.
+- **Messages both ways, or nothing.** A session without `send`, or a machine not ready for messages, is refused with what to turn on: without the return path the new session would be out of the caller's reach, since Claude Code's own messages do not cross machines. The new session is told who opened it and on which machine, and reaches it with `send` to `opener`, across restarts of either side and of Varnick; on the host the opener is put in the session's table of senders at the open, so its answer-only rule allows it. What reaches Anthropic grows by the opener's machine name, sent with the new session's system prompt.
+- **Permissions follow the caller's Mac.** The new session skips permission checks only while Skip permissions is on on the caller's Mac and the caller was itself started skipping them, whatever the other machine's own setting says; the choice is kept by that machine for the session's restarts.
+- **No new power.** A session that could already `send` to a machine's sessions can now also start one there, in a Project that machine's Claude Code trusts, never skipping more than it does.
+- **Log.** The tool, whether another machine was asked, the outcome's kind and the time; never a machine's name, a project, a search word, a path, a prompt or an id.
+
+What the tools promise and what they do not is in docs/agents/where-it-breaks.md, Panel access; what they add to what sessions may do is in docs/privacy-and-security.md.
+

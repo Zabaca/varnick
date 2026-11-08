@@ -23,7 +23,7 @@ extension HeadlessPeerHost {
         case .resume: return .reply(resumeConversation(request, by: by))
         case .end: return .reply(end(request, by: by))
         case .restartPane: return .reply(restartPane(request, by: by))
-        case .done: return .reply(done(request))
+        case .done: return .reply(done(request, by: by))
         case .arrange: return .reply(arrange(request, by: by))
         case .reopen: return .reply(reopen(request, by: by))
         case .projects: return .reply(projects())
@@ -42,6 +42,7 @@ extension HeadlessPeerHost {
         case .sendMessage: return .reply(receiveMessage(request, by: by))
         case .hostChecklist: return .reply(hostChecklist(request))
         case .collectMessages: return .reply(collectMessages(request, by: by))
+        case .openTab: return .reply(openTab(request, by: by))
         case .messageAsk: return .reply(.failure("\(name) is a headless host: it can't be asked to join. Its checklist is on a Mac, in Settings › Claude"))
         default: return .reply(.failure("The request isn't one a host answers"))
         }
@@ -401,7 +402,7 @@ extension HeadlessPeerHost {
 
     /// `done` (ADR 0045): an open tab's records end with the mark in one write and their sessions are killed; a closed tab is marked or cleared.
     /// A Mac host's equivalent is `LauncherModel.hostDone`.
-    private func done(_ request: PeerRequest) -> PeerReply {
+    private func done(_ request: PeerRequest, by: String) -> PeerReply {
         guard let tab = request.tab, let id = UUID(uuidString: tab)?.uuidString.lowercased() else { return .failure("Not a Varnick tab id") }
         state.reconcile()
         let mark = request.mark ?? true
@@ -418,6 +419,15 @@ extension HeadlessPeerHost {
             }
             guard open.contains(where: { !$0.isTerminal }) else { return .failure("That tab has no Claude session to mark done") }
             guard Zmx.isAvailable else { return .failure("zmx isn't installed next to Varnick on \(name)") }
+            // A session's `tab_done` on a tab opened here (option 07 of `sessions-cant-start-sessions-in-other-projects`): the asking Mac read the turns and the control a moment ago,
+            // and either can have changed while the request travelled, so it is read again here, right before the records end.
+            if request.unlessBusy == true {
+                let controls = runningControls(of: id)
+                if controls.refusal == nil {
+                    let turns = open.filter { !$0.isTerminal }.map { record in UUID(uuidString: record.id).flatMap { PeerTurn.read(for: $0)?.turn } }
+                    if let refusal = TabDone.hostRefusal(controls: controls.labels, asker: by, turns: turns) { return .failure(refusal.words(machine: name)) }
+                }
+            }
             // The records end first and all at once, so a reconcile can't shrink the layout meanwhile and the tab keeps it whole for a `reopen`.
             let ended = try state.markTabDone(id) ?? []
             return killedAll(ended.compactMap(UUID.init(uuidString:))) ?? .success()
@@ -431,7 +441,7 @@ extension HeadlessPeerHost {
     /// `projects`: scanned fresh over the configured folders, since a repo cloned since may be wanted.
     private func projects() -> PeerReply {
         var reply = PeerReply.success()
-        reply.projects = Project.scan(roots: config.projectFolders).map { PeerProject(path: $0.path, lastUsed: $0.lastUsed) }
+        reply.projects = PeerProject.listing(of: Project.scan(roots: config.projectFolders))
         return reply
     }
 

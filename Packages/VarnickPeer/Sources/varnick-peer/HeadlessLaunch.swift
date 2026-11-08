@@ -74,6 +74,7 @@ extension HeadlessPeerHost {
                 prompt: prompt, problems: problemsBoard,
                 mcpConfig: NotifyTool.relayConfiguration(command: relay, pane: uuid, send: receivesMessages),
                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [],
+                appendSystemPrompt: openerNote(for: record, startingOn: conversation ?? freshUnder ?? record.id)?.paragraph(messages: receivesMessages),
                 channelPlugin: receivesMessages ? ChannelPlugin.folder.path : nil))
         }
         guard let command = Zmx.attachCommand(uuid, running: account.shell, shellArguments, control: control, origin: origin) else {
@@ -129,6 +130,12 @@ extension HeadlessPeerHost {
         // A record is a tab under its id, unless a `resume` put it in another (ADR 0032).
         reply.tab = record.tabID
         return reply
+    }
+
+    /// The opener's note while the session is still on the conversation it was opened as (its pane id); a session that moved on (`/clear`, `/resume`) was not opened by that
+    /// session, as on a Mac (`ClaudeSession.checkConversation`).
+    private func openerNote(for record: HeadlessSession, startingOn conversation: String) -> OpenerNote? {
+        record.opener.flatMap { conversation.lowercased() == record.id.lowercased() ? $0 : nil }
     }
 
     /// The environment claude is given, built here and never taken from the relay's own: HOME and the rest

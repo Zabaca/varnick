@@ -18,14 +18,18 @@ public struct PeerHostMessage: Codable, Equatable, Sendable {
     /// The sending session was started skipping permission checks.
     public var skips: Bool
     public var text: String
+    /// Set for a message to `opener` (option 07 of `sessions-cant-start-sessions-in-other-projects`): the conversation the Mac pane held when it opened the host session. The
+    /// Mac refuses (`openerMoved`) when its pane holds another now. Optional, so an older Mac ignores it.
+    public var expects: String?
 
-    public init(id: String, pane: String, from: String, fromProject: String, skips: Bool, text: String) {
+    public init(id: String, pane: String, from: String, fromProject: String, skips: Bool, text: String, expects: String? = nil) {
         self.id = id
         self.pane = pane
         self.from = from
         self.fromProject = fromProject
         self.skips = skips
         self.text = text
+        self.expects = expects
     }
 }
 
@@ -115,6 +119,8 @@ public enum HostSend {
         case takenBack
         /// The Mac took it and refused it, or answered.
         case macRefused(String)
+        /// `opener`, from a session that has moved to another conversation than the one its opener opened (option 07 of `sessions-cant-start-sessions-in-other-projects`).
+        case noOpener
 
         public var words: String {
             switch self {
@@ -122,22 +128,25 @@ public enum HostSend {
             case .tooLong: SendRules.Refusal.tooLong.message
             case .rateCap: SendRules.Refusal.rateCap.message
             case .unknownID:
-                "No such id. A session on a headless host can only answer: `to` is the `from` of a message this session received. Nothing was sent."
+                "No such id. A session on a headless host can only answer: `to` is the `from` of a message this session received, or `opener` when it was opened with tab_open. Nothing was sent."
             case .notCollecting:
                 "That Mac isn't collecting messages from this host now (asleep, Also between my Macs and hosts off there, or an older Varnick). Nothing was sent."
             case .takenBack:
                 "That Mac isn't collecting messages from this host now (asleep, Also between my Macs and hosts off there, or an older Varnick); the message was taken back. Nothing was sent."
             case .macRefused(let words): words
+            case .noOpener: SendRules.Refusal.noOpener.message
             }
         }
     }
 
-    /// The first refusal, or nil: the text, the rate cap, the id, then whether the Mac is collecting.
-    public static func decide(text: String, rateAllowed: Bool, entry: SenderTable.Entry?, collecting: Bool) -> Refusal? {
+    /// The first refusal, or nil: the text, the rate cap, the id, the opener's conversation, then whether the Mac is collecting. `session` is the conversation the host
+    /// session is on now: an `opener` entry written at the open names the one it was given for.
+    public static func decide(text: String, rateAllowed: Bool, entry: SenderTable.Entry?, collecting: Bool, word: String? = nil, session: String? = nil) -> Refusal? {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .empty }
         if text.utf8.count > SessionMessage.longestText { return .tooLong }
         if !rateAllowed { return .rateCap }
         if entry == nil { return .unknownID }
+        if let entry, SenderTable.isOpenerWord(word), let given = entry.session, given.lowercased() != (session ?? "").lowercased() { return .noOpener }
         if !collecting { return .notCollecting }
         return nil
     }
@@ -170,13 +179,26 @@ public enum SenderTable {
         /// The Mac's name and the pane's project as the last message said them, for the sender's answer.
         public var name: String
         public var project: String
+        /// For the entry `opener` only (option 07 of `sessions-cant-start-sessions-in-other-projects`): the conversation the host session was on when it was opened, which `opener`
+        /// is refused after it leaves, and the one the Mac pane held, which the Mac checks. Optional, so older files load.
+        public var session: String?
+        public var expects: String?
 
-        public init(mac: String, pane: String, name: String, project: String) {
+        public init(mac: String, pane: String, name: String, project: String, session: String? = nil, expects: String? = nil) {
             self.mac = mac
             self.pane = pane
             self.name = name
             self.project = project
+            self.session = session
+            self.expects = expects
         }
+    }
+
+    /// The word a host session addresses the session that opened it by.
+    public static let openerWord = "opener"
+
+    public static func isOpenerWord(_ text: String?) -> Bool {
+        (text ?? "").trimmingCharacters(in: .whitespaces).lowercased() == openerWord
     }
 
     private struct File: Codable {
@@ -213,13 +235,28 @@ public enum SenderTable {
         let mac = mac.lowercased(), pane = pane.lowercased()
         return withLock(receiver) { () -> String? in
             var table = read(receiver)
-            let existing = table.entries.first { $0.value.mac == mac && $0.value.pane == pane }?.key
+            // `opener` is a word for the pane that opened this session, not an id the receiver gives: the same pane messaging it later gets an id of its own.
+            let existing = table.entries.first { $0.key != openerWord && $0.value.mac == mac && $0.value.pane == pane }?.key
             let id = existing ?? "s\(table.next)"
             if existing == nil { table.next += 1 }
             table.entries[id] = Entry(mac: mac, pane: pane, name: name, project: project)
             guard let data = try? JSONEncoder().encode(table), (try? OwnerOnlyFile.replace(file(for: receiver), with: data)) != nil else { return nil }
             return id
         } ?? nil
+    }
+
+    /// The entry `opener` for a host session just opened by a Mac's pane (option 07 of `sessions-cant-start-sessions-in-other-projects`): the session's `send` to `opener` goes to
+    /// that pane without the pane having messaged it first. `session` is the conversation the host session is on, `expects` the one the Mac pane holds. False when the table
+    /// couldn't be written.
+    @discardableResult
+    public static func seedOpener(mac: String, pane: String, name: String, project: String, session: String, expects: String?, receiver: UUID) -> Bool {
+        withLock(receiver) { () -> Bool in
+            var table = read(receiver)
+            table.entries[openerWord] = Entry(mac: mac.lowercased(), pane: pane.lowercased(), name: name, project: project, session: session.lowercased(),
+                                              expects: expects?.lowercased())
+            guard let data = try? JSONEncoder().encode(table) else { return false }
+            return (try? OwnerOnlyFile.replace(file(for: receiver), with: data)) != nil
+        } ?? false
     }
 
     public static func entry(_ id: String, receiver: UUID) -> Entry? {
@@ -253,11 +290,11 @@ public enum HostOutbox {
     }
 
     /// Writes a message for a Mac and returns its id. Throws when it couldn't be written.
-    public static func post(pane: String, from: String, fromProject: String, skips: Bool, text: String, mac: String) throws -> String {
+    public static func post(pane: String, from: String, fromProject: String, skips: Bool, text: String, mac: String, expects: String? = nil) throws -> String {
         let directory = folder(for: mac)
         try ensure(directory)
         let id = nextID()
-        let message = PeerHostMessage(id: id, pane: pane, from: from, fromProject: fromProject, skips: skips, text: text)
+        let message = PeerHostMessage(id: id, pane: pane, from: from, fromProject: fromProject, skips: skips, text: text, expects: expects)
         let data = try JSONEncoder().encode(message)
         let temporary = directory.appendingPathComponent(".\(id).tmp")
         guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {

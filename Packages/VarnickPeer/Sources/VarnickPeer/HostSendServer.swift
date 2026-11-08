@@ -10,10 +10,13 @@ public enum HostSendServer {
     public struct Facts {
         public var project: String
         public var skips: Bool
+        /// The conversation the session is on now, for `opener` (option 07 of `sessions-cant-start-sessions-in-other-projects`).
+        public var conversation: String?
 
-        public init(project: String, skips: Bool) {
+        public init(project: String, skips: Bool, conversation: String? = nil) {
             self.project = project
             self.skips = skips
+            self.conversation = conversation
         }
     }
 
@@ -41,15 +44,15 @@ public enum HostSendServer {
         let word = (arguments?["to"] as? String)?.trimmingCharacters(in: .whitespaces)
         let entry = word.flatMap { SenderTable.entry($0, receiver: pane) }
         let collecting = entry.map { HostOutbox.isCollecting(mac: $0.mac, now: now()) } ?? false
-        if let refusal = HostSend.decide(text: text, rateAllowed: rate.canSend(at: now()), entry: entry, collecting: collecting) {
+        let known = facts()
+        if let refusal = HostSend.decide(text: text, rateAllowed: rate.canSend(at: now()), entry: entry, collecting: collecting, word: word, session: known.conversation) {
             return MCPResult(text: refusal.words, isError: true)
         }
         guard let entry, let word else { return MCPResult(text: HostSend.Refusal.unknownID.words, isError: true) }
-        let known = facts()
         let id: String
         do {
             id = try HostOutbox.post(pane: entry.pane, from: pane.uuidString.lowercased(), fromProject: SessionMessage.projectWord(known.project), skips: known.skips,
-                                     text: text, mac: entry.mac)
+                                     text: text, mac: entry.mac, expects: SenderTable.isOpenerWord(word) ? entry.expects : nil)
         } catch {
             return MCPResult(text: "Varnick couldn't queue the message. Nothing was sent.", isError: true)
         }

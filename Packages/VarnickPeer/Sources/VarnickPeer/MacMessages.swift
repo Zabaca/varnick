@@ -15,13 +15,17 @@ public struct PeerSessionMessage: Codable, Equatable, Sendable {
     /// The sender was started skipping permission checks (the host decides the skip rule from this).
     public var skips: Bool
     public var text: String
+    /// Set when the sender wrote to `opener` (option 07 of `sessions-cant-start-sessions-in-other-projects`): the conversation the opener's pane held when it opened the
+    /// sender. The receiving Mac refuses (`openerMoved`) when its pane now holds another. Optional, so an older Mac ignores it and an older sender leaves it out.
+    public var expectsConversation: String?
 
-    public init(from: String, fromProject: String, fromMac: String, skips: Bool, text: String) {
+    public init(from: String, fromProject: String, fromMac: String, skips: Bool, text: String, expectsConversation: String? = nil) {
         self.from = from
         self.fromProject = fromProject
         self.fromMac = fromMac
         self.skips = skips
         self.text = text
+        self.expectsConversation = expectsConversation
     }
 }
 

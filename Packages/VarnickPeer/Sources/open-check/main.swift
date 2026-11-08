@@ -213,5 +213,161 @@ expect("only dialogs and questions wait on the user",
 expect("every refusal has a log word of its own",
        Set([TabDone.Refusal.ownTab, .notOpenedByCaller, .closing, .working, .background, .waitingOnUser(.plan), .controlledElsewhere, .changingHands].map(\.word)).count == 8)
 
+// MARK: Another machine's projects (option 07)
+
+let now = Date(timeIntervalSince1970: 1_800_000_000)
+func listed(_ path: String, hoursAgo: Double?) -> Project { Project(path: path, lastUsed: hoursAgo.map { now.addingTimeInterval(-$0 * 3600) }) }
+func item(_ path: String, hoursAgo: Double? = nil, trusted: Bool? = true) -> ProjectSearch.Item { .init(project: listed(path, hoursAgo: hoursAgo), trusted: trusted) }
+let deskItems = [
+    item("/home/made-up/Projects/zabaca/kestrel", hoursAgo: 2),
+    item("/home/made-up/Projects/tools/kestrel-cli", trusted: false),
+    item("/home/made-up/Projects/zabaca/heron", hoursAgo: 30),
+    item("/home/made-up/Projects/personal/heron", hoursAgo: 24 * 100, trusted: nil),
+    item("/home/made-up/Projects/zabaca/alpha", hoursAgo: 0.5),
+]
+let whole = ProjectSearch.answer(machine: "the desktop", search: nil, items: deskItems, now: now).split(separator: "\n").map(String.init)
+expect("the list's first line says where, how many and in which order", whole.first == "Projects on the desktop (5 of 5, most recently used by Claude first):", "\(whole.first ?? "")")
+expect("those Claude used most recently come first, the rest by name",
+       whole.dropFirst().map { $0.components(separatedBy: " · ")[0] } == ["alpha", "kestrel", "zabaca/heron", "personal/heron", "kestrel-cli"], "\(whole)")
+expect("a line gives the word, the group, the path there, the age and the trust",
+       whole[2] == "kestrel · group zabaca · /home/made-up/Projects/zabaca/kestrel · used by Claude 2 h ago · trusted", whole[2])
+expect("an untrusted project says what to do", whole.last == "kestrel-cli · group tools · /home/made-up/Projects/tools/kestrel-cli · never used by Claude · not trusted: open a session there once before tab_open", whole.last ?? "")
+expect("a machine on an older build says not known", whole[4].hasSuffix("used by Claude 3 mo ago · not known"), whole[4])
+expect("minutes and days are told", ProjectSearch.used(now.addingTimeInterval(-600), now: now) == "used by Claude 10 min ago" && ProjectSearch.used(now.addingTimeInterval(-86_400 * 5), now: now) == "used by Claude 5 d ago"
+       && ProjectSearch.used(now, now: now) == "used by Claude just now" && ProjectSearch.used(nil, now: now) == "never used by Claude")
+expect("two projects that share a name each get their group/name word", whole.contains { $0.hasPrefix("zabaca/heron · group zabaca") } && whole.contains { $0.hasPrefix("personal/heron · group personal") })
+let found = ProjectSearch.answer(machine: "the desktop", search: "kest", items: deskItems, now: now).split(separator: "\n").map(String.init)
+expect("a word narrows by folder name", found.count == 3 && found[0] == "Projects on the desktop matching \"kest\" (2 of 5, most recently used by Claude first):", "\(found)")
+expect("a word matches the group too and ignores case", ProjectSearch.answer(machine: nil, search: "PERSONAL", items: deskItems, now: now).contains("personal/heron") &&
+       ProjectSearch.answer(machine: nil, search: "PERSONAL", items: deskItems, now: now).hasPrefix("Projects on this Mac matching \"PERSONAL\" (1 of 5"))
+expect("a word that matches nothing says so and how many there are", ProjectSearch.answer(machine: "the desktop", search: "zzz", items: deskItems, now: now) == "No project on the desktop matching \"zzz\" (5 there). Try a shorter word, or leave `search` out to list them.")
+expect("a machine with no projects says so", ProjectSearch.answer(machine: "the desktop", search: nil, items: [], now: now).hasPrefix("No projects on the desktop"))
+let bulk = (0..<80).map { item("/p/g\($0 % 7)/app\(String(format: "%02d", $0))", hoursAgo: Double($0 + 1)) }
+let capped = ProjectSearch.answer(machine: "the desktop", search: nil, items: bulk, now: now).split(separator: "\n").map(String.init)
+expect("the list is cut at 50 lines with how many more match", capped.count == 52 && capped[0].contains("(50 of 80,") && capped.last == "30 more matches: give `search` a longer word to narrow them.", "\(capped.count) \(capped.last ?? "")")
+expect("one more match is told in the singular", ProjectSearch.answer(machine: nil, search: nil, items: Array(bulk.prefix(51)), now: now).hasSuffix("1 more match: give `search` a longer word to narrow them."))
+expect("a search word with a line break stays on one line", !ProjectSearch.answer(machine: nil, search: "a\nb", items: deskItems, now: now).split(separator: "\n")[0].contains("\nb"))
+
+// What a peer's `projects` line carries, and a build before the field.
+let withTrust = PeerProject(path: "/p/a", lastUsed: nil, trusted: false)
+expect("the trust field survives the wire", PeerJSON.decode(PeerProject.self, from: PeerJSON.line(withTrust)) == withTrust)
+expect("an older build's project line reads as not known", PeerJSON.decode(PeerProject.self, from: #"{"path":"/p/a"}"#)?.trusted == nil)
+let trustConfig = Data(#"{"projects":{"/p/a":{"hasTrustDialogAccepted":true},"/p/b":{"hasTrustDialogAccepted":false}}}"#.utf8)
+let listing = PeerProject.listing(of: [Project(path: "/p/a", lastUsed: nil), Project(path: "/p/b", lastUsed: nil), Project(path: "/p/c", lastUsed: nil)], config: trustConfig)
+expect("a machine lists each project with its Claude Code's trust from one read", listing.map(\.trusted) == [true, false, false], "\(listing.map(\.trusted))")
+expect("a config that cannot be read lists every project as not known", PeerProject.listing(of: [Project(path: "/p/a", lastUsed: nil)], config: nil).map(\.trusted) == [nil])
+
+// MARK: Which machine a word means
+
+let desk = (id: "id-desk", name: "Desk Mac Studio"), air = (id: "id-air", name: "Ana’s MacBook Air"), host = (id: "id-host", name: "build box 9"), laptop = (id: "id-pro", name: "Work MacBook Pro")
+let machines = [desk, air, host, laptop]
+func machine(_ word: String) -> MachineWord.Match { MachineWord.match(word, own: ["Home Mac", "this Mac"], peers: machines) }
+expect("a machine's whole name, as board_read shows it", machine("Ana’s MacBook Air") == .peer("id-air"), "\(machine("Ana’s MacBook Air"))")
+expect("one word of its name", machine("box") == .peer("id-host") && machine("studio") == .peer("id-desk"))
+expect("the panel's ^ word, in any case", machine("^BuildBox9") == .peer("id-host") && machine("BUILD BOX 9") == .peer("id-host"))
+expect("this Mac by either name", machine("this Mac") == .thisMac && machine("home mac") == .thisMac && machine("^homemac") == .thisMac)
+expect("a word that fits two machines is ambiguous and names them", machine("macbook") == .ambiguous(["Ana’s MacBook Air", "Work MacBook Pro"]), "\(machine("macbook"))")
+expect("a word that fits none is unknown", machine("desktop") == .unknown && machine("   ") == .unknown && machine("^") == .unknown)
+expect("handles are the whole name run together and each word", MachineWord.handles(ofName: "Alex’s MacBook Pro") == ["alexsmacbookpro", "alexs", "macbook", "pro"])
+
+// MARK: What a host decides before it opens a tab for a Mac
+
+let hostProjects = [project("/home/made-up/Projects/zabaca/kestrel"), project("/home/made-up/Projects/zabaca/heron"), project("/home/made-up/Projects/personal/heron"),
+                    project("/home/made-up/Projects/other/kestrel-tools")]
+func decideOpen(_ word: String = "kestrel", agent: String? = nil, ready: Bool = true, why: String? = nil, opener: Bool = true, agents: [String] = ["builder"],
+                trusted: Bool? = true) -> Result<Project, RemoteTabOpen.Refusal> {
+    RemoteTabOpen.decide(word: word, among: hostProjects, agent: agent, ready: ready, notReadyBecause: why, hasOpener: opener, agentsIn: { _ in agents }, trusted: { _ in trusted })
+}
+func refusal(_ result: Result<Project, RemoteTabOpen.Refusal>) -> RemoteTabOpen.Refusal? { if case .failure(let refusal) = result { refusal } else { nil } }
+expect("a trusted project with nothing else wrong is found", decideOpen() == .success(hostProjects[0]) || { if case .success(let p) = decideOpen() { p == hostProjects[0] } else { false } }())
+expect("a host that is not ready refuses first, with its reason", refusal(decideOpen("nothing", ready: false, why: "its checklist hasn't passed")) == .notReady("its checklist hasn't passed"))
+expect("a request with no opener is refused", refusal(decideOpen(opener: false)) == .noOpener)
+expect("readiness is told before the opener", refusal(decideOpen(ready: false, opener: false)) == .notReady(nil))
+expect("an ambiguous name is refused with the words that would work", refusal(decideOpen("heron")) == .ambiguous(["personal/heron", "zabaca/heron"]), "\(String(describing: refusal(decideOpen("heron"))))")
+expect("an unknown name is refused with close names", refusal(decideOpen("kest")) == .unknown(["kestrel", "kestrel-tools"]))
+expect("a folder that is not a project there is refused", refusal(decideOpen("/home/made-up/Projects/zabaca/kestrel/Sources")) == .notAProject)
+expect("a project by its absolute path there is found", { if case .success(let p) = decideOpen("/home/made-up/Projects/zabaca/kestrel") { p == hostProjects[0] } else { false } }())
+expect("an agent found there is allowed", { if case .success = decideOpen(agent: "builder") { true } else { false } }())
+expect("an agent not found there is refused with those that are", refusal(decideOpen(agent: "planner")) == .unknownAgent(["builder"]))
+expect("a blank agent is no agent", { if case .success = decideOpen(agent: "  ") { true } else { false } }())
+expect("a folder its Claude Code has not trusted is refused", refusal(decideOpen(trusted: false)) == .untrusted(ClaudeTrust.abbreviated("/home/made-up/Projects/zabaca/kestrel")))
+expect("a trust that cannot be told is no reason to refuse", { if case .success = decideOpen(trusted: nil) { true } else { false } }())
+expect("the project is told before the agent, the agent before the trust", refusal(decideOpen("zzz", agent: "planner", trusted: false)) == .unknown([]) && refusal(decideOpen(agent: "planner", trusted: false)) == .unknownAgent(["builder"]))
+expect("every refusal has a log word of its own", Set([RemoteTabOpen.Refusal.notReady(nil), .noOpener, .ambiguous([]), .unknown([]), .notAProject, .unknownAgent([]), .untrusted("~/x")].map(\.word)).count == 7)
+let desktop = "the desktop"
+expect("the refusal's words name the machine and point to project_search", RemoteTabOpen.words(.unknown(["kestrel"]), machine: desktop) ==
+       "No project by that name on the desktop. Projects there with a similar name: kestrel. project_search lists the machine's projects.", RemoteTabOpen.words(.unknown(["kestrel"]), machine: desktop))
+expect("an untrusted folder's words tell the user's step, naming the machine", RemoteTabOpen.words(.untrusted("~/x"), machine: desktop).contains("Claude Code on the desktop hasn't trusted ~/x") && RemoteTabOpen.words(.untrusted("~/x"), machine: desktop).contains("on the desktop once"))
+expect("a host that is not ready says where to look", RemoteTabOpen.words(.notReady("Messages between sessions is off in its Settings"), machine: desktop).contains("the desktop isn't ready for messages (Messages between sessions is off in its Settings)"))
+expect("no refusal's words are empty or run to two lines", [RemoteTabOpen.Refusal.notReady(nil), .noOpener, .ambiguous(["a"]), .unknown([]), .notAProject, .unknownAgent([]), .untrusted("~/x")].allSatisfy {
+    let words = RemoteTabOpen.words($0, machine: desktop); return !words.isEmpty && !words.contains("\n") })
+// What the asking side checks before any request: messages must go both ways.
+func asker(_ on: Bool = true, channel: Bool = true, receives: Bool = true, macs: Bool = true) -> String? {
+    RemoteTabOpen.askerRefusal(messagesOn: on, startsWithChannel: channel, callerReceives: receives, macsOn: macs)
+}
+expect("a session that can send, with the Also switch on, may ask", asker() == nil)
+expect("messages off is refused, saying what to turn on", asker(false)?.contains("Messages between sessions is off in Settings") == true)
+expect("messages not ready is refused", asker(channel: false)?.contains("isn't ready on this Mac") == true)
+expect("a session without send is refused, saying to restart the pane", asker(receives: false)?.contains("restart") == true || asker(receives: false)?.contains("Restart") == true)
+expect("the Also switch off is refused", asker(macs: false)?.contains("Also between my Macs and hosts is off") == true)
+expect("the switch is told before the channel, the channel before the pane", asker(false, channel: false, receives: false, macs: false)?.contains("is off in Settings") == true && asker(channel: false, receives: false)?.contains("isn't ready") == true)
+
+// The request and its notes cross the wire, and an open tab asks for nothing a device can send.
+let ask = PeerOpenTabAsk(project: "kestrel", agent: "builder", prompt: "go", skipPermissions: false, id: "0f3c2a9e-1111-4222-8333-944455566677",
+                         opener: PeerOpener(pane: "aaaaaaaa-1111-4222-8333-944455566677", conversation: "bbbbbbbb-1111-4222-8333-944455566677", project: "Home", tab: "Plan", macName: "Laptop"))
+var openRequest = PeerRequest(.openTab)
+openRequest.open = ask
+openRequest.by = "cccccccc-1111-4222-8333-944455566677"
+expect("the open request survives the wire", PeerJSON.decode(PeerRequest.self, from: PeerJSON.line(openRequest))?.open == ask)
+expect("a device is refused the open request", PeerProtocol.isMacsOnly(.openTab))
+expect("an old build's unknown operation is not decoded", PeerJSON.decode(PeerRequest.self, from: #"{"v":35,"op":"openTabNext"}"#) == nil)
+
+// MARK: The note across machines (option 07)
+
+let remote = OpenerNote(session: nil, name: nil, project: "home", tab: "Plan the release", pane: UUID(), conversation: "0f3c2a9e-1111-4222-8333-944455566677",
+                        machine: "id-laptop", machineName: "the laptop")
+let remoteWords = "This session was opened by another Claude session in home (its tab: Plan the release) on the laptop, with Varnick's `tab_open`. "
+    + "You run on another machine, so its files are not yours. "
+    + "You can reach it with Varnick's `send`, with `to` set to `opener`; that works whatever restarts either of you. "
+    + "Send it your result when you finish, or a question when you need a decision it can make and the user hasn't. "
+    + "If `send` says it can't be reached (that machine asleep, or that session closed), say so here in your own reply, and never send to another pane in its place. "
+    + "The user can see this tab and type into it."
+expect("the paragraph across machines is the settled wording", remote.paragraph(messages: true) == remoteWords, remote.paragraph(messages: true))
+expect("it is one line, names no id and no SendMessage", !remote.paragraph(messages: true).contains("\n") && !remote.paragraph(messages: true).contains("SendMessage") && !remote.paragraph(messages: true).contains("0f3c2a9e"))
+expect("a session that cannot send gets the form that gives no way back", !remote.paragraph(messages: false).contains("`send`") && remote.paragraph(messages: false) == remote.paragraph)
+expect("the form on one machine is unchanged by the new fields", messaging.paragraph(messages: true) == messaged)
+let savedRemote = try JSONEncoder().encode(remote)
+expect("the note across machines survives its file", (try? JSONDecoder().decode(OpenerNote.self, from: savedRemote)) == remote)
+expect("a note saved before the machine fields loads without them", { () -> Bool in
+    let old = try? JSONDecoder().decode(OpenerNote.self, from: Data(#"{"project":"Home","pane":"AAAAAAAA-1111-4222-8333-944455566677"}"#.utf8))
+    return old != nil && old?.machine == nil && old?.machineName == nil
+}())
+let remoteArguments = arguments(append: remote.paragraph(messages: true))
+expect("the command carries the paragraph across machines", remoteArguments.contains(remote.paragraph(messages: true)) && remoteArguments.contains("--append-system-prompt"))
+
+// MARK: Whether a session may mark Done a tab another machine hosts (option 07)
+
+let me = "11111111-2222-4333-8444-555555555555", elsewhere = "99999999-2222-4333-8444-555555555555"
+expect("every pane on this Mac's id is control here", TabDone.control(labels: [me, me.uppercased()], me: me) == .here)
+expect("no running pane is control by nobody", TabDone.control(labels: [], me: me) == .nobody)
+expect("panes labelled for another machine are that machine's", TabDone.control(labels: [elsewhere, elsewhere], me: me) == .machine)
+expect("a pane with no label is the host's own", TabDone.control(labels: [nil], me: me) == .machine)
+expect("some panes here and some elsewhere are changing hands", TabDone.control(labels: [me, elsewhere], me: me) == .mixed)
+expect("two other machines are changing hands, not one machine's", TabDone.control(labels: [elsewhere, "88888888-2222-4333-8444-555555555555"], me: me) == .mixed)
+expect("a tab this Mac controls, read from the host's status, is allowed", decide([mine(.waiting)], control: TabDone.control(labels: [me], me: me)) == nil)
+expect("a tab taken over, read from the host's status, is refused", decide([mine(.waiting)], control: TabDone.control(labels: [elsewhere], me: me)) == .controlledElsewhere)
+expect("a turn the host reports is refused", decide([mine(.working)], control: TabDone.control(labels: [me], me: me)) == .working)
+// The host's own check, right before it closes the tab.
+expect("the host allows a tab the asker controls with nothing in a turn", TabDone.hostRefusal(controls: [me, me], asker: me, turns: [.waiting, nil]) == nil)
+expect("the host allows a tab with nothing running", TabDone.hostRefusal(controls: [], asker: me, turns: []) == nil)
+expect("the host refuses a pane another machine holds", TabDone.hostRefusal(controls: [me, elsewhere], asker: me, turns: [.waiting]) == .controlledElsewhere)
+expect("the host refuses a pane with no label", TabDone.hostRefusal(controls: [nil], asker: me, turns: [.waiting]) == .controlledElsewhere)
+for turn in [Turn.working, .background, .permission, .question, .plan, .input] {
+    expect("the host refuses a session in a \(turn) turn that started while the request travelled", TabDone.hostRefusal(controls: [me], asker: me, turns: [.waiting, turn]) == .busy)
+}
+expect("the host allows a session that failed or waits", TabDone.hostRefusal(controls: [me], asker: me, turns: [.failed, .waiting]) == nil)
+expect("control is told before a turn", TabDone.hostRefusal(controls: [elsewhere], asker: me, turns: [.working]) == .controlledElsewhere)
+expect("the host's words name the machine", TabDone.HostRefusal.busy.words(machine: "the desktop").contains("on the desktop") && TabDone.HostRefusal.controlledElsewhere.words(machine: "the desktop").contains("on the desktop"))
+
 print("check-open: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

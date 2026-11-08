@@ -1,4 +1,5 @@
 import Foundation
+import os
 import VarnickPeer
 
 // `tab_open` (option 01 of `sessions-cant-start-sessions-in-other-projects`) with the note of option 04, the running Varnick's half: a session opens a new
@@ -22,6 +23,15 @@ extension PanelAccess {
             throw PanelRefusal.bad("project is needed: a Project's folder name (group/name when two share a name) or its absolute path")
         }
 
+        // Another machine (option 07 of `sessions-cant-start-sessions-in-other-projects`): it hosts the tab and runs the session, this Mac controls it.
+        if let machine = args["machine"]?.trimmingCharacters(in: .whitespacesAndNewlines), !machine.isEmpty {
+            switch try Self.machine(named: machine) {
+            case .thisMac: break
+            case .peer(let peer):
+                return try await tabOpenOnPeer(peer, word: word, args: args, prompt: prompt, model, tab: tab, caller: caller, controller: controller, began: began)
+            }
+        }
+
         var projects = model.projects
         var choice = TabOpen.choose(word, among: projects)
         switch choice {
@@ -39,7 +49,7 @@ extension PanelAccess {
             throw PanelRefusal.bad("More than one project has that name. Name one of: " + forms.joined(separator: ", "))
         case .unknown(let near):
             throw PanelRefusal.bad("No project by that name under Settings > Claude > Project folders."
-                                   + (near.isEmpty ? "" : " Projects with a similar name: " + near.joined(separator: ", ")))
+                                   + (near.isEmpty ? "" : " Projects with a similar name: " + near.joined(separator: ", ") + ".") + " project_search lists this Mac's projects.")
         case .notAProject:
             throw PanelRefusal.bad("That folder is not one of the user's Projects. A Project is a repository under Settings > Claude > Project folders: a worktree, a folder inside a project and the home folder are not.")
         }
@@ -124,6 +134,136 @@ extension PanelAccess {
         let action = callerReceives ? "messages" + (controller == nil ? "" : " controlled")
             : (name == nil ? "unnamed" : "named") + (note.addressed ? " opener" : " no-opener") + (controller == nil ? "" : " controlled")
         return Answered(text: text, action: action)
+    }
+}
+
+// MARK: On another machine
+
+extension PanelAccess {
+    /// How long a call waits for another machine's answer: a second inside the relay's 15 s (`ScreenMCP.callTimeout`), counted from the call's arrival. The open itself was measured
+    /// on 2026-11-08 at 0.3 to 0.7 s on a paired Mac and on the headless host, cold or warm; the ask goes on for the panel's own 40 s after this, so a slow answer still adds the tab.
+    static let remoteDeadline: Duration = .seconds(ScreenMCP.callTimeout - 1)
+
+    enum Machine {
+        case thisMac
+        case peer(Peer)
+    }
+
+    /// The machine a `machine` argument names, as `board_read` names one after "on" and as the panel's `^` word does (`MachineWord`). Refused, with the machines that answer, when it
+    /// is none or several.
+    static func machine(named word: String) throws -> Machine {
+        let manager = PeerManager.shared
+        let own = [PeerIdentity.name ?? PeerIdentity.computerName(), "this Mac"]
+        switch MachineWord.match(word, own: own, peers: manager.peers.map { (id: $0.id, name: $0.name) }) {
+        case .thisMac: return .thisMac
+        case .peer(let id):
+            guard let peer = manager.peers.first(where: { $0.id == id }) else { break }
+            return .peer(peer)
+        case .ambiguous(let names):
+            throw PanelRefusal.bad("More than one machine answers to that: " + names.joined(separator: ", ") + ". Name one by more of its name.")
+        case .unknown: break
+        }
+        let answering = manager.peers.filter { manager.status[$0.id] == .answered }.map(\.name)
+        throw PanelRefusal.bad("No such machine. These answer: " + (["this Mac"] + answering).joined(separator: ", "))
+    }
+
+    /// The words for a peer's refusal of a request of this kind: its own words when they name it, else the machine and the failure ("Didn't answer in time", "Can't reach it");
+    /// a build that does not know the request is asked to update.
+    static func words(for refusal: PeerManager.Refusal, from machine: String) -> String {
+        if PeerManager.unknownRequest(refusal) { return "\(machine) runs an older Varnick that can't do this. Update it from its row in Settings › Peers, then call again." }
+        return refusal.message.contains(machine) ? refusal.message : "\(machine): \(refusal.message)"
+    }
+
+    /// What `ask` answers, or nil once `deadline` has passed first. A race of two unstructured tasks, not a task group: a group waits for every child, and the ask must go on past the
+    /// deadline (a late answer still adds the tab).
+    private static func firstOf(_ ask: Task<Result<PeerReply, PeerManager.Refusal>, Never>, until deadline: ContinuousClock.Instant) async -> Result<PeerReply, PeerManager.Refusal>? {
+        let done = OSAllocatedUnfairLock(initialState: false)
+        func first() -> Bool { done.withLock { taken in defer { taken = true }; return !taken } }
+        return await withCheckedContinuation { continuation in
+            Task {
+                let result = await ask.value
+                if first() { continuation.resume(returning: result) }
+            }
+            Task {
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if first() { continuation.resume(returning: nil) }
+            }
+        }
+    }
+
+    /// `tab_open` with `machine` naming a paired Mac or the headless host. In order: this session being able to receive messages and the Also switch, the request with the
+    /// opener and the skip rule, which the machine checks in full (`RemoteTabOpen.decide`), and the view of the new tab at the end of this Mac's strip, not shown. The call
+    /// answers by its deadline whatever the machine does; an answer that comes later still adds the tab.
+    private func tabOpenOnPeer(_ peer: Peer, word: String, args: PanelArguments, prompt: String, _ model: LauncherModel, tab: ClaudeTab, caller: ClaudeSession,
+                               controller: String?, began: ContinuousClock.Instant) async throws -> Answered {
+        if let why = RemoteTabOpen.askerRefusal(messagesOn: Settings.shared.messagesBetweenSessions, startsWithChannel: MessagesSetup.shared.startsWithChannel,
+                                                callerReceives: MessageQueue.receives(caller.id), macsOn: Settings.shared.messagesBetweenMacs) {
+            throw PanelRefusal.bad(why)
+        }
+        let isHost = peer.info?.headless == true
+        let machine = peer.name
+        let agent = args.text("agent")
+        let opener = PeerOpener(pane: caller.id.uuidString.lowercased(), conversation: caller.record.conversationID,
+                                project: (Project.root(of: caller.record.directory) as NSString).lastPathComponent, tab: tab.name ?? caller.label,
+                                macName: PeerIdentity.name ?? PeerIdentity.computerName())
+        // `pane_open`'s rule, decided here and kept by the machine for the session's restarts: skipping only while the setting is on here and the caller skips too.
+        let skips = Settings.shared.skipPermissions && caller.record.skippedAtStart == true
+        let open = PeerOpenTabAsk(project: word, agent: agent, prompt: prompt, skipPermissions: skips, id: UUID().uuidString.lowercased(), opener: opener)
+        // The mark that lets the host's session answer this pane and this Mac collect its answers, written before the ask so an answer is taken even if this Mac restarts while it waits.
+        if isHost { SentHosts.add(peer.id, pane: caller.id) }
+
+        let ask = Task { await PeerManager.shared.openTab(open, on: peer.id) }
+        let answered = await Self.firstOf(ask, until: began + Self.remoteDeadline)
+        let callerID = caller.id
+
+        guard let answered else {
+            // Past the deadline: the call answers now, and the ask goes on; if the machine opens the tab, it is added the same way.
+            Task { @MainActor [weak model] in
+                guard case .success(let reply) = await ask.value, let model else { return }
+                _ = model.addOpenedViewTab(open, reply: reply, host: peer.id, openedBy: callerID)
+                if isHost { HostMessageCollector.shared.refresh() }
+            }
+            return Answered(text: "\(machine) has not answered yet (asleep or slow). It may still open the tab: if it does, the tab will be in this Mac's strip and on board_read. "
+                            + "Do not call tab_open again for the same work; look at board_read first.", action: "remote late")
+        }
+        switch answered {
+        case .failure(let refusal):
+            throw PanelRefusal.bad(Self.words(for: refusal, from: machine))
+        case .success(let reply):
+            // The calling pane may have gone while the machine answered; the tab is on the machine all the same, so it is added whatever.
+            let session = model.addOpenedViewTab(open, reply: reply, host: peer.id, openedBy: callerID)
+            if isHost { HostMessageCollector.shared.refresh() }
+            let paneID = id(for: session.id, caller: callerID)
+            let project = reply.project ?? "that project"
+            let asAgent = agent.map { " as @\($0)" } ?? ""
+            var text = "Opened a new tab in \(project) on \(machine), not brought up: \(paneID), a Claude session\(asAgent). "
+            text += "It runs on \(machine), in this Mac's strip and controlled from here, so its files are \(machine)'s, not this Mac's. "
+            text += "Send it work with `send` to \(paneID). It was told it can reach this session with `send` to `opener`, and its result comes back as a message from it."
+            if let controller {
+                text += " This tab is controlled by \(PeerManager.shared.name(of: controller)); the new tab is in this Mac's strip, so the user there finds it in this Mac's open tabs."
+            }
+            // The log's words: that it was another machine, never its name, a project, a prompt or an id.
+            return Answered(text: text, action: "remote" + (isHost ? " host" : " mac") + (controller == nil ? "" : " controlled"))
+        }
+    }
+}
+
+extension LauncherModel {
+    /// The view of a tab another machine opened for a session's `tab_open`: at the end of the strip under the host's tab id, in this Mac's control, not shown and not started (it
+    /// attaches the first time the user shows it, as a remote tab restored after a restart does), and marked as the caller's to end with `tab_done` until the user takes it.
+    @discardableResult
+    func addOpenedViewTab(_ open: PeerOpenTabAsk, reply: PeerReply, host: String, openedBy: UUID) -> ClaudeSession {
+        let id = UUID(uuidString: open.id) ?? UUID()
+        if let existing = tabs.lazy.flatMap(\.sessions).first(where: { $0.id == id }) { return existing }
+        var record = SessionRecord(id: id, prompt: open.prompt, title: "", directory: reply.folder ?? "", startedAt: Date(), lastUsed: Date())
+        record.agent = open.agent
+        record.host = host
+        record.skipPermissions = open.skipPermissions
+        record.openedBy = openedBy
+        let session = makeSession(record, resuming: false, query: "")
+        let tab = addTab(PaneNode(session: session), id: reply.tab.flatMap(UUID.init(uuidString:)), show: false)
+        tab.inControl = true
+        return session
     }
 }
 
