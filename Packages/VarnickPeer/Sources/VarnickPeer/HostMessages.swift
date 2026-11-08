@@ -128,7 +128,7 @@ public enum HostSend {
             case .tooLong: SendRules.Refusal.tooLong.message
             case .rateCap: SendRules.Refusal.rateCap.message
             case .unknownID:
-                "No such id. A session on a headless host can only answer: `to` is the `from` of a message this session received. Nothing was sent."
+                "No such id. A session on a headless host can only answer: `to` is the `from` of a message this session received, or `opener` when it was opened with tab_open. Nothing was sent."
             case .notCollecting:
                 "That Mac isn't collecting messages from this host now (asleep, Also between my Macs and hosts off there, or an older Varnick). Nothing was sent."
             case .takenBack:

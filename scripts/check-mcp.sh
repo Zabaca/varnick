@@ -637,8 +637,13 @@ try:
         for phrase in ("`from` of a message this session received", "cannot send first", "not the user's approval", "10 messages a minute", "never says the message was acted on"):
             if phrase not in words:
                 fail("the host's send description doesn't say %r" % phrase)
-        if "opener" in words or "board_read" in words:
-            fail("the host's send description names opener or board_read, which a host session has not")
+        for phrase in ("`opener`", "tab_open", "another machine"):
+            if phrase not in words:
+                fail("the host's send description doesn't say %r: a host session opened by a Mac reaches its opener" % phrase)
+        if "board_read" in words:
+            fail("the host's send description names board_read, which a host session has not")
+        if "`opener`" not in json.dumps(host_send[0]["inputSchema"]):
+            fail("the host's send `to` doesn't take opener")
     mac_send = [t for t in listed(["--send"], full=True) if t["name"] == "send"]
     if mac_send and host_send and mac_send[0]["description"] == host_send[0]["description"]:
         fail("the host's send description is the Mac's")

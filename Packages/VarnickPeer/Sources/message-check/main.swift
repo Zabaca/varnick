@@ -728,7 +728,9 @@ expect("a host lists notify alone without --send and notify then send with it", 
        && HostSendServer.tools(send: true).compactMap { $0["name"] as? String } == ["notify", "send"])
 let hostDescription = SendTool.hostTool["description"] as? String ?? "", macDescription = SendTool.macTool["description"] as? String ?? ""
 expect("the host's send says it only answers, to the `from` of a message received", hostDescription.contains("`from` of a message this session received") && hostDescription.contains("cannot send first")
-       && !hostDescription.contains("board_read") && !hostDescription.contains("opener") && hostDescription != macDescription)
+       && !hostDescription.contains("board_read") && hostDescription != macDescription)
+expect("the host's send names opener, as its session's paragraph does, and the schema takes it", hostDescription.contains("`opener`") && hostDescription.contains("tab_open")
+       && hostDescription.contains("another machine") && ((SendTool.hostTool["inputSchema"] as? [String: Any])?["properties"] as? [String: Any])?["to"].flatMap { ($0 as? [String: Any])?["description"] as? String }?.contains("`opener`") == true)
 expect("the Mac's send names the machines and the switch's new label", macDescription.contains("Also between my Macs and hosts") && macDescription.contains("opener") && !macDescription.contains("headless host's session is refused"))
 for (name, description) in [("Mac", macDescription), ("host", hostDescription)] {
     expect("the \(name) send description has no em dash and is under 2,400 characters", !description.contains("\u{2014}") && description.count <= 2400, "\(description.count)")
