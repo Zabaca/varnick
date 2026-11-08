@@ -2,8 +2,7 @@
 problem: work-cant-be-shared-with-other-people
 title: A live public link for a Scratch through a Cloudflare Tunnel (cloudflared) from the Mac
 summary: Option 04's Scratch public front, links, confirm and indicator, but carried by Cloudflare's own tunnel daemon, cloudflared, run by Varnick in zmx, instead of a connector and Durable Object written here. A wildcard hostname on the links domain goes through the tunnel to a router on the Mac that picks the link by its hostname. A Worker can still sit in front for the offline page and expiry. It spares writing a tunnel protocol, at the price of a large downloaded binary, a long-running third-party daemon, a tunnel credential on the Mac, and a new dependency. Not recommended unless option 04's protocol proves hard. Rough effort is about six days on top of the public front.
-status: rejected
-reason: James picked 04 on 2026-11-08
+status: proposed
 ---
 
 ## Solution

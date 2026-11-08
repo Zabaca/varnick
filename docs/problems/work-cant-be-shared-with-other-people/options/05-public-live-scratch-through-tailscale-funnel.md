@@ -2,8 +2,7 @@
 problem: work-cant-be-shared-with-other-people
 title: A live public link for a Scratch through Tailscale Funnel on the Mac
 summary: Option 04's Scratch public front, Share button, confirm and indicator, but published by Varnick turning on Tailscale Funnel for one port of this Mac, with the link's secret as a path. No Cloudflare and no relay code, and TLS ends on the Mac. In exchange, every link carries this Mac's machine name and tailnet name in public, Funnel is a switch for the whole machine on a few fixed ports, every link shares one origin, the page has to be served under a path prefix, and Varnick would start running `tailscale funnel`, which ADR 0011 rules out. Not recommended. Rough effort is about four days on top of the public front.
-status: rejected
-reason: James picked 04 on 2026-11-08
+status: proposed
 ---
 
 ## Solution
