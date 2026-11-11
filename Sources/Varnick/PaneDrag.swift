@@ -288,12 +288,26 @@ struct PaneArea: View {
             .coordinateSpace(name: PaneDrag.space)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { tab.paneDrag.area = CGRect(origin: .zero, size: $0) }
             .onPreferenceChange(PaneFrames.self) { tab.paneDrag.frames = $0 }
+            .onPreferenceChange(DividerFrames.self) { tab.dividers.frames = $0 }
+            .background(DividerAnchor(grab: tab.dividers))
+            .onDisappear { tab.dividers.release() }
             .overlay { PaneDropOverlay(drop: tab.paneDrag.drop) }
     }
 }
 
 /// The grip at a pane's top centre: shown while the pointer is over the pane, and for the whole of its own drag.
 struct PaneGrip: View {
+    static let width: CGFloat = 36
+    static let height: CGFloat = 15
+    /// Between the pane's top and the grip.
+    static let inset: CGFloat = 5
+
+    /// Where the grip can be, in a pane's `frame`, with a little to spare: a divider's grab zone (`DividerReach`) leaves it alone.
+    static func zone(in frame: CGRect) -> CGRect {
+        let spare: CGFloat = 4
+        return CGRect(x: frame.midX - width / 2 - spare, y: frame.minY, width: width + 2 * spare, height: inset + height + spare)
+    }
+
     let session: ClaudeSession
     @ObservedObject var drag: PaneDrag
     /// The pointer is over the pane.
@@ -306,12 +320,11 @@ struct PaneGrip: View {
             Image(systemName: "circle.grid.2x3.fill")
                 .font(.system(size: 8))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .frame(height: 15)
+                .frame(width: Self.width, height: Self.height)
                 .background(Color(nsColor: NSColor(white: 0.18, alpha: 0.95)), in: Capsule())
                 .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
                 .contentShape(Capsule())
-                .padding(.top, 5)
+                .padding(.top, Self.inset)
                 .help("Drag to move this pane")
                 .onHover { inside in
                     guard inside != overGrip else { return }

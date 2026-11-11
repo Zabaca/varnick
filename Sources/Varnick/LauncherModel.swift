@@ -2281,6 +2281,16 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
+    /// The mouse in the panel, for the active tab's dividers (`DividerGrab`): nil when a divider's zone took the event. Nothing is taken while the tabs
+    /// are covered, the split picker, the Restart card or a list under the strip shows: they sit over the panes.
+    func grabDivider(_ event: NSEvent) -> NSEvent? {
+        guard showsTerminal, pendingSplit == nil, !askingRestart, strip.openList == nil, let tab = activeTab else {
+            activeTab?.dividers.release()
+            return event
+        }
+        return tab.dividers.handle(event)
+    }
+
     /// A click in a pane's terminal focuses that pane.
     func focusPane(showing view: NSView) {
         guard let tab = activeTab, let session = tab.sessions.first(where: { $0.content === view }) else { return }

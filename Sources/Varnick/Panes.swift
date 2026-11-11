@@ -399,6 +399,8 @@ final class ClaudeTab: ObservableObject {
     var onMove: (_ moved: ClaudeSession, _ change: () -> Bool) -> Void = { _, change in _ = change() }
     /// A pane of the tab being dragged to another place in it.
     let paneDrag = PaneDrag()
+    /// The tab's dividers, grabbed from a zone around each (`DividerGrab`).
+    let dividers = DividerGrab()
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, history: [HeldConversation] = []) {
         self.id = id
@@ -407,6 +409,7 @@ final class ClaudeTab: ObservableObject {
         self.history = history
         self.focused = focused ?? root.leaves[0]
         paneDrag.tab = self
+        dividers.tab = self
     }
 
     var sessions: [ClaudeSession] { root.leaves }
@@ -612,19 +615,9 @@ struct PaneView: View {
                 layout {
                     PaneView(node: node.children[0], tab: tab)
                         .frame(width: sideBySide ? first : nil, height: sideBySide ? nil : first)
-                    SplitDivider(sideBySide: sideBySide, space: node.id) { position in
-                        // Only the machine in control of a tab moves its dividers (ADR 0034).
-                        guard tab.layoutLock() == nil else { return }
-                        let minSize = sideBySide ? Self.minPane.width : Self.minPane.height
-                        let lo = min(0.5, minSize / max(total, 1))
-                        node.fraction = min(1 - lo, max(lo, (position - Self.divider / 2) / max(total, 1)))
-                    } onEnd: {
-                        if let reason = tab.layoutLock() { tab.focused.showRefusal(reason) } else { tab.onChange() }
-                    } onReset: {
-                        if let reason = tab.layoutLock() { return tab.focused.showRefusal(reason) }
-                        node.fraction = 0.5
-                        tab.onChange()
-                    }
+                    // Moved from the event monitor (`DividerGrab`), which has the pointer over a zone around it.
+                    SplitDivider(node: node, grab: tab.dividers, sideBySide: sideBySide, space: node.id, span: sideBySide ? geo.size.width : geo.size.height)
+                        .id(node.id)
                     PaneView(node: node.children[1], tab: tab)
                 }
             }
@@ -959,35 +952,34 @@ struct RestartButton: View {
     }
 }
 
-/// Real space between panes (not an overlay), so it gets the mouse instead of a terminal.
+/// Real space between panes, 7 pt, drawn with an accent line while the pointer is over its grab zone or drags it. It takes no events itself: the
+/// event monitor does (`DividerGrab`), since the panes beside it would answer a pointer a few points off it, and report where it is.
 struct SplitDivider: View {
+    let node: PaneNode
+    @ObservedObject var grab: DividerGrab
     let sideBySide: Bool
-    /// Coordinate space of the enclosing split, so drag positions are along its axis.
+    /// Coordinate space of the enclosing split, so the divider says where its split starts.
     let space: UUID
-    let onDrag: (CGFloat) -> Void
-    let onEnd: () -> Void
-    let onReset: () -> Void
-    @State private var hovering = false
+    /// The split's length along its axis.
+    let span: CGFloat
 
     var body: some View {
         ZStack {
             Color(nsColor: NSColor(white: 0.1, alpha: 1))
             Theme.hairline
                 .frame(width: sideBySide ? 1 : nil, height: sideBySide ? nil : 1)
-                .opacity(hovering ? 3 : 1)
+            if grab.lit == node.id {
+                Theme.dividerLit
+                    .frame(width: sideBySide ? 3 : nil, height: sideBySide ? nil : 3)
+                    .clipShape(Capsule())
+            }
         }
         .frame(width: sideBySide ? PaneView.divider : nil, height: sideBySide ? nil : PaneView.divider)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            guard inside != hovering else { return }
-            hovering = inside
-            if inside { (sideBySide ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() } else { NSCursor.pop() }
-        }
-        .onTapGesture(count: 2, perform: onReset)
-        .gesture(
-            DragGesture(minimumDistance: 1, coordinateSpace: .named(space))
-                .onChanged { onDrag(sideBySide ? $0.location.x : $0.location.y) }
-                .onEnded { _ in onEnd() }
-        )
+        .background(GeometryReader { geo in
+            let gap = geo.frame(in: .named(PaneDrag.space)), inSplit = geo.frame(in: .named(space))
+            Color.clear.preference(key: DividerFrames.self, value: [node.id: DividerFrame(
+                id: node.id, gap: gap, origin: CGPoint(x: gap.minX - inSplit.minX, y: gap.minY - inSplit.minY), span: span, sideBySide: sideBySide)])
+        })
+        .allowsHitTesting(false)
     }
 }
