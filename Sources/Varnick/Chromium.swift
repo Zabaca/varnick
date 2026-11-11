@@ -76,6 +76,8 @@ enum ChromiumEngine {
         do {
             let kit = try Zebkit(framework: frameworkURL)
             try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            // Made before the engine can call `wake`, which it does from its threads during init.
+            _ = ChromiumPump.shared
             _ = kit.setWakeup(wake, nil)
             // Chromium's own switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path alone.
             let settings = try String(data: JSONSerialization.data(withJSONObject: [
@@ -91,7 +93,7 @@ enum ChromiumEngine {
             guard port > 0 else { throw ChromiumFailure("CDP didn't start: " + kit.take(error, or: "no port")) }
             state = .running(kit, cdpPort: port)
             NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, CDP on 127.0.0.1:\(port)")
-            _ = kit.pump()
+            ChromiumPump.shared.wake(afterMilliseconds: 0)
             return .success(kit)
         } catch {
             let reason = (error as? ChromiumFailure)?.reason ?? error.localizedDescription
@@ -125,12 +127,52 @@ struct ChromiumFailure: Error {
     init(_ reason: String) { self.reason = reason }
 }
 
-/// The engine's wakeup, from any of its threads: it only queues a pump on the main queue, as zebkit asks.
+/// The engine's wakeup, from any of its threads, including during init: it only moves the pump timer earlier.
 private func wake(_ delay: Int64, _ data: UnsafeMutableRawPointer?) {
-    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(max(0, delay)))) {
-        MainActor.assumeIsolated {
-            if case .running(let kit, _) = ChromiumEngine.state { _ = kit.pump() }
+    ChromiumPump.shared.wake(afterMilliseconds: delay)
+}
+
+/// The one place the engine is pumped: a timer at the earliest deadline it asked for (zebkit.h, `zebkit_set_wakeup`). Never pump from a
+/// main-queue block: the pump's own event loop holds the main queue there, where the panes' work arrives (ADR 0048).
+final class ChromiumPump: @unchecked Sendable {
+    static let shared = ChromiumPump()
+    private let lock = NSLock()
+    /// When the engine next wants a pump, `.infinity` when it has asked for none. Under `lock`, and never set while the timer is parked.
+    private var deadline = Double.infinity
+    private var timer: CFRunLoopTimer!
+
+    private init() {
+        // Repeating, with an interval that never comes, so a fire leaves it valid for the next deadline.
+        timer = CFRunLoopTimerCreateWithHandler(nil, .greatestFiniteMagnitude, 1e10, 0, 0) { [unowned self] _ in
+            MainActor.assumeIsolated { self.fire() }
         }
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+    }
+
+    /// From any thread. A later deadline never postpones an earlier one.
+    func wake(afterMilliseconds delay: Int64) {
+        let time = CFAbsoluteTimeGetCurrent() + Double(max(0, delay)) / 1000
+        lock.lock()
+        defer { lock.unlock() }
+        guard time < deadline else { return }
+        deadline = time
+        CFRunLoopTimerSetNextFireDate(timer, time)
+    }
+
+    @MainActor private func fire() {
+        // Cleared whatever follows: the fire parked the timer, and a deadline left set would turn every later wakeup away.
+        lock.lock()
+        deadline = .infinity
+        lock.unlock()
+        // A wakeup from before the engine runs is dropped: `start` asks for a pump once it does.
+        guard case .running(let kit, _) = ChromiumEngine.state else { return }
+        let began = CFAbsoluteTimeGetCurrent()
+        let pumped = kit.pump()
+        let took = CFAbsoluteTimeGetCurrent() - began
+        // Long is ordinary when an event the pump delivered ran a loop of its own (a menu, a drag); otherwise it is the engine waiting.
+        if took > 0.25 { NSLog("Varnick: Chromium pump took \(Int(took * 1000)) ms") }
+        // Refused (inside another pump, or the engine not ready): asked again, since its work is still owed.
+        if !pumped { wake(afterMilliseconds: 10) }
     }
 }
 
@@ -338,7 +380,7 @@ final class ChromiumPage: NSView {
                     page.show("The page closed itself. Reload to open it again.")
                 }
             }, me)
-            _ = kit.pump()
+            ChromiumPump.shared.wake(afterMilliseconds: 0)
         }
     }
 
