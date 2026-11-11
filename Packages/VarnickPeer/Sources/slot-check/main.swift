@@ -196,13 +196,17 @@ expect("Allowed tools only is --permission-mode dontAsk, before the agent and th
 expect("the allowed tools join notify's allowance", allowed(strict) == [NotifyTool.qualifiedName, "Bash(git status)", "Edit"], "\(allowed(strict))")
 expect("skip never goes with dontAsk", !arguments(skip: true, dontAsk: true).contains("--permission-mode"))
 expect("skip is the existing flag", arguments(skip: true).contains("--dangerously-skip-permissions"))
-// The hooks of a session that gets the rm-prompt variable have no PermissionRequest entry (Claude Code keeps the prompt on with one).
+// The hooks of a session that gets the delete prompt variable have no PermissionRequest entry (Claude Code keeps the prompt on with one).
 func hooks(_ arguments: [String]) -> [String: [[String: Any]]] {
     guard let at = arguments.firstIndex(of: "--settings"), let data = arguments[at + 1].data(using: .utf8),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
     return json["hooks"] as? [String: [[String: Any]]] ?? [:]
 }
 func matchers(_ entries: [[String: Any]]?) -> [String] { (entries ?? []).compactMap { $0["matcher"] as? String } }
+func commands(_ entries: [[String: Any]]?, matching matcher: String? = nil) -> [String] {
+    (entries ?? []).filter { matcher == nil || $0["matcher"] as? String == matcher }
+        .flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
+}
 func without(_ permissionHooks: Bool, problems: Bool = false) -> [String: [[String: Any]]] {
     hooks(ClaudeCommand.arguments(skipPermissions: true, agent: nil, resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
                                   prompt: "", problems: problems, permissionHooks: permissionHooks))
@@ -212,10 +216,46 @@ expect("by default the PermissionRequest entries are there, for a question, a pl
 expect("with no permission hooks there is no PermissionRequest at all", bare["PermissionRequest"] == nil && bareWithWork["PermissionRequest"] == nil, "\(bare.keys.sorted())")
 expect("a question and a plan are marked from PreToolUse instead", matchers(bare["PreToolUse"]) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bare["PreToolUse"]))")
 expect("the same marks are written: each PreToolUse entry runs the command its PermissionRequest one ran",
-       Set(bare["PreToolUse"]?.map { String(describing: $0["hooks"] ?? "") } ?? []) == Set((usual["PermissionRequest"] ?? []).dropFirst().map { String(describing: $0["hooks"] ?? "") }))
+       commands(bare["PreToolUse"]) == Array(commands(usual["PermissionRequest"]).dropFirst()))
 expect("they still clear on PostToolUse", matchers(bare["PostToolUse"]).contains("AskUserQuestion|ExitPlanMode") && matchers(usual["PostToolUse"]) == matchers(bare["PostToolUse"]))
 expect("the work-link PreToolUse entry comes after them", matchers(bareWithWork["PreToolUse"]).count == 3 && matchers(bareWithWork["PreToolUse"]).prefix(2) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bareWithWork["PreToolUse"]))")
-expect("every other event is the same", Set(usual.keys).subtracting(["PermissionRequest"]) == Set(bare.keys).subtracting(["PreToolUse"]))
+expect("a permission dialog is marked from its notification, beside the idle one", matchers(bare["Notification"]) == ["idle_prompt", "permission_prompt"] && matchers(usual["Notification"]) == ["idle_prompt"], "\(matchers(bare["Notification"]))")
+expect("PostToolBatch has the answered entry first, then the clear", commands(bare["PostToolBatch"]).count == 2 && commands(bare["PostToolBatch"]).first == commands(usual["PostToolBatch"]).first)
+expect("every other event is the same", Set(usual.keys).subtracting(["PermissionRequest"]) == Set(bare.keys).subtracting(["PreToolUse"])
+       && ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "PostToolUse", "SubagentStop", "Elicitation", "ElicitationResult"].allSatisfy { commands(usual[$0]) == commands(bare[$0]) })
+
+// The permission mark's shell, run: a notification marks a working pane, never a question or a plan, and a batch's end gives working back.
+func runHook(_ command: String, folder: URL) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", command]
+    process.environment = ["VARNICK_SESSION_FILE": folder.appendingPathComponent("session").path, "PATH": "/usr/bin:/bin"]
+    process.standardInput = FileHandle.nullDevice
+    try? process.run()
+    process.waitUntilExit()
+}
+let hookFolder = FileManager.default.temporaryDirectory.appendingPathComponent("slot-check-hooks-\(UUID().uuidString)")
+try? FileManager.default.createDirectory(at: hookFolder, withIntermediateDirectories: true)
+let turnFile = hookFolder.appendingPathComponent(PaneFolder.turnFileName)
+func word() -> String { (try? String(contentsOf: turnFile, encoding: .utf8)) ?? "" }
+let notified = commands(bare["Notification"], matching: "permission_prompt")[0], batchEnd = commands(bare["PostToolBatch"])[1]
+for (before, after) in [("working", "permission"), ("waiting", "permission"), ("question", "question"), ("plan", "plan"), ("permission", "permission")] {
+    try? before.write(to: turnFile, atomically: true, encoding: .utf8)
+    runHook(notified, folder: hookFolder)
+    expect("a permission notification over \(before) leaves \(after)", word() == after, word())
+}
+for (before, after) in [("permission", "working"), ("question", "question"), ("plan", "plan"), ("waiting", "waiting"), ("working", "working")] {
+    try? before.write(to: turnFile, atomically: true, encoding: .utf8)
+    runHook(batchEnd, folder: hookFolder)
+    expect("a batch's end over \(before) leaves \(after)", word() == after, word())
+}
+try? "permission".write(to: turnFile, atomically: true, encoding: .utf8)
+runHook(commands(bare["Stop"])[0], folder: hookFolder)
+expect("a stop clears the permission word", word() == "waiting", word())
+try? "permission".write(to: turnFile, atomically: true, encoding: .utf8)
+runHook(commands(bare["UserPromptSubmit"])[0], folder: hookFolder)
+expect("a prompt clears it too", word() == "working", word())
+try? FileManager.default.removeItem(at: hookFolder)
 expect("the prompt stays the last operand after --", strict.suffix(2) == ["--", "Say hello"], "\(strict.suffix(2))")
 
 // `outline_append`: an automation's allowed tools name it by its exact rule, and its arguments' limits (the edit is `--outline-check`'s).

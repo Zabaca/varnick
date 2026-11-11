@@ -517,17 +517,19 @@ prompt, can then act with your account's rights.
 - The Phone page's sessions follow the host's setting.
 - **Skip the delete prompt too** (Settings › Claude, off for every install, never turned on by an upgrade) removes the one prompt
   Claude Code still shows with permission checks skipped: before `rm` on a path it can't resolve, or one that could be your home
-  folder or the project's root, so a command such as `rm -rf ~` can run without asking. Varnick sets Claude Code's
-  `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` for a session only when that session starts with
-  `--dangerously-skip-permissions` and the switch is on, which includes an automation or task step set to Skip. It is read at each
-  start, so it changes new and restarted sessions, not running ones, and it needs Claude Code 2.1.311 or later (an older one
-  ignores it). It is local to the Mac whose Varnick runs the session: a session this Mac starts on a headless host or another Mac
-  doesn't carry it, and a session another Mac starts here follows this Mac's switch. The voice session never gets it. Claude Code
-  keeps the prompt on whatever the variable says in some setups (a `PermissionRequest` hook, a deny or ask rule on Bash, Edit or
-  Read, `permissions.blockReadsOutsideWorkingDirectories`); see its documentation, "Why the critical-path removal prompt stays on".
-  Claude Code also keeps the prompt while any `PermissionRequest` hook exists, so a session that gets the variable is started without Varnick's
-  own: it still marks a question or a plan from `PreToolUse`, but no longer marks a permission dialog as Needs you. Your own `PermissionRequest`
-  hooks, if you have any, still keep the prompt on.
+  folder or the project's root. A command such as `rm -rf ~` can then run without asking.
+  - **Which sessions:** every session that starts with `--dangerously-skip-permissions` while the switch is on, whatever sets that:
+    the Skip permissions setting, an automation or task step set to Skip, or a start request from another Mac that carries Skip.
+    The voice session never gets it. It is read at each start, so it changes new and restarted sessions, not running ones.
+  - **How:** Varnick sets Claude Code's `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` in the session's environment (Claude
+    Code 2.1.311 or later; an older one ignores it), and starts the session without Varnick's `PermissionRequest` hooks, which
+    would keep the prompt on. It still marks a question and a plan from `PreToolUse` and a permission dialog from its notification,
+    so Needs you works, but less exactly when subagents ask.
+  - **Where:** local to the Mac whose Varnick runs the session. A session this Mac starts on a headless host or another Mac doesn't
+    carry it, and one another Mac starts here follows this Mac's switch.
+  - **What still keeps the prompt on** (Claude Code's documentation, "Why the critical-path removal prompt stays on"): your own
+    `PermissionRequest` hook, a permission prompt tool, a deny or ask rule on Bash, Edit or Read,
+    `permissions.blockReadsOutsideWorkingDirectories`, and a `claude` run inside another claude session.
 
 ### Peers over SSH
 

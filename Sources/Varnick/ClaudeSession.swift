@@ -669,10 +669,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let receivesMessages = !isRun && !isVoice && MessagesSetup.shared.startsWithChannel
         MessagesSetup.shared.noteStart()
         if receivesMessages { ChannelPlugin.write(command: PeerLink.mcpCommand) }
-        // Claude Code's rm prompt stays on while a `PermissionRequest` hook exists, so a session that gets the variable starts without those hooks
-        // (`ClaudeCommand.hookSettings`). Only a session that starts skipping permissions, and not the voice session, whose skip is Varnick's and
-        // not the user's choice.
-        let removalPromptOff = skipsPermissions && !isVoice && Settings.shared.skipRemovalPromptOff
+        // The delete prompt switch: only a session that skips permissions, and never the voice session (its skip is Varnick's). It also drops the
+        // `PermissionRequest` hooks, which keep Claude Code's prompt on.
+        let skipsDeletePrompt = skipsPermissions && !isVoice && Settings.shared.skipDeletePrompt
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
@@ -689,7 +688,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                  dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
                                                  voice: isVoice, appendSystemPrompt: record.opener?.paragraph(messages: receivesMessages),
                                                  channelPlugin: receivesMessages ? ChannelPlugin.folder.path : nil,
-                                                 permissionHooks: !removalPromptOff)
+                                                 permissionHooks: !skipsDeletePrompt)
 
         // Minimal clean environment (TERM, LANG, HOME, USER…): the login shell rebuilds
         // PATH, and nothing from the launcher's own environment leaks into claude.
@@ -697,7 +696,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             + ["VARNICK_SESSION_FILE=\(conversationFile.path)", paneIDVariable,
                "VARNICK_PROJECT=\(CustomApp.projectRoot(of: record.directory))",
                ClaudeCommand.presenceEntry(phoneFolder: PhonePage.folder(in: SupportFolder.url))]
-            + (removalPromptOff ? [ClaudeCommand.removalPromptOffEntry] : [])
+            + (skipsDeletePrompt ? [ClaudeCommand.skipDeletePromptEntry] : [])
         // A pane already in zmx stays there whatever the setting says now: a bare claude beside its
         // session would be a second one.
         startInTerminal(Self.claudeShell, ClaudeCommand.shellArguments(claudeArgs), environment: env, alwaysInZmx: inZmx,
