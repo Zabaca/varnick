@@ -177,13 +177,13 @@ if long_title.get("isError") is not False or "title was cut to 80" not in long_t
     fail("a notify call with long text did not say what it cut: %s" % long_title)
 
 # The automation tools (option 01 of prompts-cant-run-on-a-schedule, slice 3): their own set, named by the app for every pane but an automation's
-# run. Named alone it lists the four; with the others it comes after Panel access's and before notify; with none named the
+# run. Named alone it lists the five; with the others it comes after Panel access's and before notify; with none named the
 # server still lists the screen tools alone. NEVER call one of these tools here: with Varnick running, the call reaches it and makes a real
 # automation. Only a call to a server that does not list them is made (below), and that is refused before anything is sent.
-automation_tools = ["automations_list", "automation_create", "automation_edit", "automation_switch"]
+automation_tools = ["automations_list", "automation_create", "automation_edit", "automation_switch", "automation_delete"]
 only_automations, with_all = listed(["--automations"]), listed(["--screen", "--panel", "--automations", "--notify"])
 if only_automations != automation_tools:
-    fail("--automations lists %s, not the four automation tools" % only_automations)
+    fail("--automations lists %s, not the five automation tools" % only_automations)
 if with_all != screen + only_panel + automation_tools + ["notify"]:
     fail("all four sets list %s, not the screen tools, Panel access's, the automation tools and notify" % with_all)
 if listed(["--automations", "--notify"]) != automation_tools + ["notify"]:
@@ -233,6 +233,12 @@ if all(name in described for name in automation_tools):
     switch_schema = described["automation_switch"]["inputSchema"]
     if switch_schema.get("required") != ["id", "on"] or switch_schema.get("properties", {}).get("on", {}).get("type") != "boolean":
         fail("automation_switch is %s: an id and a boolean on, both required" % switch_schema)
+    delete_schema = described["automation_delete"]["inputSchema"]
+    if delete_schema.get("required") != ["id"] or set(delete_schema.get("properties", {})) != {"id"}:
+        fail("automation_delete is %s: an id alone, required" % delete_schema)
+    for phrase in ("can't be undone", "Tell the user"):
+        if phrase not in described["automation_delete"]["description"]:
+            fail("automation_delete's description doesn't say %r" % phrase)
     if described["automations_list"]["inputSchema"].get("required"):
         fail("automations_list requires %s" % described["automations_list"]["inputSchema"].get("required"))
 
@@ -468,7 +474,7 @@ if sending:
 for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
                         (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
                         ([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
-                        ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"),
+                        ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"), (["--screen", "--panel"], "automation_delete"),
                         (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look"),
                         ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
                         ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),

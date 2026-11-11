@@ -497,6 +497,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             show()
             return
         }
+        // A session's deletion of an automation opens Settings › Automations, where the list shows what is left.
+        if model.notifier.deletions.contains(id) {
+            model.notifier.clearDeletion(id)
+            UserDefaults.standard.set(SettingsSection.automations.rawValue, forKey: "settingsSection")
+            if !model.showingSettings { model.toggleSettings() }
+            show()
+            return
+        }
         // A Task Run's notice shows the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
         if model.notifier.notices.first(where: { $0.id == id })?.runLine != nil {
             if let why = model.openTaskRun(id) { model.claudeError = why }

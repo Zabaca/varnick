@@ -95,6 +95,7 @@ final class AutomationAccess {
         case AutomationMCP.create: return try create(request.args, model, caller: caller)
         case AutomationMCP.edit: return try edit(request.args, model, caller: caller)
         case AutomationMCP.switch: return try switchOnOff(request.args, model, caller: caller)
+        case AutomationMCP.delete: return try deleteAutomation(request.args, model, caller: caller)
         default: throw AutomationRefusal.unknownTool(request.tool)
         }
     }
@@ -176,6 +177,20 @@ final class AutomationAccess {
         let marked = next
         guard store.update(current.id, rollingBack: true, { $0 = marked }) else { throw notSaved(model) }
         return (current, on, marked)
+    }
+
+    /// Deletes the automation `args["id"]` names with its run list, as the Settings button does (`LauncherModel.deleteAutomation`: automation first, a failed
+    /// write leaves everything as it was). Nothing of the automation stays to carry a mark, so the menu holds a notice of it until the user chooses it. A
+    /// Skip automation may be deleted: deleting makes no run do more, and the user's Skip is the user's to keep.
+    private func deleteAutomation(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {
+        var problems = args.keys.sorted().filter { $0 != "id" }.map { "\($0) is not an argument: the only argument is id" }
+        let found = automation(args, model.automations)
+        if let problem = found.problem { problems.append(problem) }
+        guard problems.isEmpty, let current = found.automation else { throw AutomationRefusal.refused(problems) }
+        if let refusal = model.deleteAutomation(current.id) { throw AutomationRefusal.notSaved(refusal) }
+        model.notifier.raiseAutomationDeleted(AutomationTools.deletedLine(current, by: Self.title(of: caller)))
+        return "Deleted \"\(current.name)\" and its run list. It can't be brought back. A run that was going goes on as an ordinary tab. Tell the user what you deleted; "
+            + "Varnick's menu shows a line about it until they choose it."
     }
 
     private func edit(_ args: PanelArguments, _ model: LauncherModel, caller: ClaudeSession) throws -> String {

@@ -256,7 +256,7 @@ phone; a run's tab is listed to them marked as a run nobody opened, which other 
 
 An automation kept on a headless host (Settings › Automations, a section for each) is saved on that host over ssh, from any Mac it lists: its name, prompt, folder, cadence and permissions are in `automations.json` there, and what became of its runs in `runs.json`, both owner-only in the relay's state folder, and the prompt goes to Anthropic from that host with the session. The host fires it from a systemd timer that runs its relay once a minute (added with the installer's `--automations`); nothing else is resident.
 
-A Claude session you start can also list, make, edit and switch automations (below). A session that lists
+A Claude session you start can also list, make, edit, switch and delete automations (below). A session that lists
 them sends every automation's name, prompt, folder and cadence to Anthropic with the rest of that session, as anything else it reads
 in the conversation; the tools send nothing else, and the list never leaves this Mac but through that session.
 
@@ -664,14 +664,14 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   a session you leave unattended with the same permissions.
 - **Every install can run unattended prompts, and a session can set them up, with no approval step of Varnick's.** Automations has no
   switch (it had one, off by default, until 2026-10-29; ADR 0040's amendment), so saving an automation is the only consent a run has: it fires on its cadence
-  from its first slot, whoever saved it. Every Claude session started or restarted afterwards can list, make, edit and turn on or off your automations through Varnick's tools
+  from its first slot, whoever saved it. Every Claude session started or restarted afterwards can list, make, edit, delete and turn on or off your automations through Varnick's tools
   (not a run's own session, and not behind Panel access). Claude Code asks you before each call unless Skip permissions is on, which is its own check. What a
   session writes becomes a prompt that runs on a cadence while you are away, so a session that reads something hostile can be steered
   into making one. A session may follow Skip permissions as a prompt you type does, choose Ask or Allowed tools only, and switch an
-  automation you set to Skip. It can't set Skip, edit an automation set to Skip, delete one or run one now, **but it can grant a run tool
+  automation you set to Skip, or delete it. It can't set Skip, edit an automation set to Skip or run one now, **but it can grant a run tool
   rules** (`allowed_tools`, a broad one such as `Bash` included), so with Skip permissions off a session can give an unattended run more
   than a prompt you type gets. That is your decision, recorded on 2026-10-15, and the mark names the rules a session set. You are told by
-  a mark on the automation in Settings and in the Runs tab until you open its editor, switch it or press Seen; there is no notice. Any process on this Mac that can open Varnick's socket can make one the same way, as for Panel access, with no grant.
+  a mark on the automation in Settings and in the Runs tab until you open its editor, switch it or press Seen; there is no notice, except for a delete (**a session can delete an automation, its run list with it, and it can't be undone**; your decision of 2026-11-11), which leaves a line in the menu bar menu naming the automation and the session, until you choose it, and not kept across a restart. Any process on this Mac that can open Varnick's socket can make one the same way, as for Panel access, with no grant.
   The log names the tool and whether it was done, never a name or a prompt.
 
 ### The Voice session acts on what the microphone hears

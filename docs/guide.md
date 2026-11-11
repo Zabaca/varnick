@@ -506,12 +506,12 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   have opened is an ordinary session that raises Done like any. Settings › Notifications › **is done** still applies on top: off there, no run
   raises Done whatever its switch says. A run started before you change the switch keeps the choice it started with.
   The Runs tab also lists the slots that did not run and why: skipped, missed, couldn't start.
-- **Claude sessions can manage them.** Every Claude session you start (or restart) lists four Varnick
-  tools: list, make, edit and turn on or off an automation, so "run this every weekday morning in this repo" works, and "tell me when each run is done" sets the switch. There is no
+- **Claude sessions can manage them.** Every Claude session you start (or restart) lists five Varnick
+  tools: list, make, edit, delete and turn on or off an automation, so "run this every weekday morning in this repo" works, and "tell me when each run is done" sets the switch. There is no
   approval step of Varnick's: with Skip permissions off, Claude Code asks before each call. A session can't set Skip, edit
-  an automation you set to Skip (it can switch it), delete one or run one now, and a run's own session never has the tools.
+  an automation you set to Skip (it can switch or delete it) or run one now, and a run's own session never has the tools.
   What a session did shows under the automation in Settings and in the Runs tab, as a mark, until you open its editor, switch it
-  or press **Seen**.
+  or press **Seen**; a session's delete, which can't be undone, leaves a line in the menu bar menu until you choose it.
 - **It runs only while Varnick does on this Mac,** or, for an automation kept on a headless host, on that host's own timer, with every
   Mac asleep. A slot that passed while the Mac slept or Varnick was quit runs once, when
   the Mac wakes or Varnick starts, if it is under 12 hours old; older ones are marked missed. At most one run of an automation goes

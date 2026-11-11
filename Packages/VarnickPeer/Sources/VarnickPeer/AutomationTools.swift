@@ -329,6 +329,11 @@ public enum AutomationTools {
             .joined(separator: ", ")
     }
 
+    /// What the menu says once a session has deleted an automation, which has no row left to carry a mark: the session's title and the automation's name.
+    public static func deletedLine(_ automation: Automation, by session: String) -> String {
+        "A session deleted an automation: \u{201C}\(automation.name.isEmpty ? "Untitled" : automation.name)\u{201D}, by \u{201C}\(session)\u{201D}"
+    }
+
     private static func rulesText(_ rules: [String]) -> String {
         let text = rules.joined(separator: ", ")
         return text.count > 120 ? String(text.prefix(119)) + "…" : text
