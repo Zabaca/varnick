@@ -22,6 +22,15 @@ ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
+# Chromium panes (prototype, branch chromium-pane): zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary,
+# the one place its helpers start from (Sources/Varnick/Chromium.swift). 44 MB fetched, 154 MB unpacked, never committed. Varnick dlopens it the
+# first time a Chromium pane shows, so a build without it runs and lists no Chromium tile.
+ZEBKIT_VERSION := 0.4.0
+ZEBKIT_SHA256 := b94bf42c6485b6226b667fe5cdb80f341b24d1a4a1d41297039d79ccd02945c8
+ZEBKIT_PACKAGE := zebkit-$(ZEBKIT_VERSION)-aarch64-apple-darwin
+ZEBKIT_URL := https://github.com/ikey4u/zebkit/releases/download/v$(ZEBKIT_VERSION)/$(ZEBKIT_PACKAGE).tar.xz
+ZEBKIT_STAMP := .build/release/zebkit.$(ZEBKIT_SHA256)
+ZEBKIT := .build/release/Zebkit.framework
 # The text helper (ADR 0029) runs on a plain Bun, pinned like zmx and fetched by `make build`: the same binary builds agent.js and ships
 # in Varnick.app. A Bun release is the build tool and the runtime both, so bumping this changes what runs on the user's Mac.
 BUN_VERSION := 1.3.14
@@ -45,6 +54,10 @@ ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
 # bun carries Bun.entitlements: allow-jit and nothing else. Ad hoc, it keeps the signature it was fetched with, as zmx does.
 BUN_SIGNER_STAMP = .build/release/bun.signer.$(SIGN_SHORT)
+# The framework is signed with Varnick's identity so the hardened runtime's library validation lets Varnick load it (same team), its helper first
+# as nested code. Neither gets the hardened runtime: the helper runs Chromium's renderers, whose V8 needs JIT. Ad hoc, it keeps the package's signature.
+ZEBKIT_SIGNER_STAMP = .build/release/zebkit.signer.$(SIGN_SHORT)
+ZEBKIT_CODESIGN = codesign -f -s "$(SIGN_ID)" --timestamp=none
 BUN_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER))
 # Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
@@ -82,7 +95,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice check-work check-open check-messages apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-engine check-voice check-work check-open check-messages apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit zebkit-codesign text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -113,7 +126,7 @@ build-steps:
 	@id=$$(scripts/signing-identity.sh) || exit 1; \
 	  if [ "$$id" = - ] && [ "$$SIGN_IDENTITY" != - ] && ls .build/release/zmx.signer.* 2>/dev/null | grep -qv 'zmx\.signer\.adhoc$$'; then \
 	    echo "error: signing: this checkout has been signed with an identity, and none is usable now. Fix the keychain, or set SIGN_IDENTITY=- to sign ad hoc on purpose." >&2; exit 1; fi; \
-	  $(MAKE) --no-print-directory sign-varnick sign-zmx sign-bun SIGN_ID="$$id"
+	  $(MAKE) --no-print-directory sign-varnick sign-zmx sign-bun sign-zebkit SIGN_ID="$$id"
 	@$(MAKE) --no-print-directory text-helper
 	@$(MAKE) --no-print-directory phone-page
 	@$(MAKE) --no-print-directory apps-catalog
@@ -142,6 +155,10 @@ ifneq ($(SIGN_ID),-)
 endif
 	@test -f $(BUN_STAMP) || $(MAKE) --no-print-directory $(BUN_STAMP)
 	@test -f $(BUN_SIGNER_STAMP) || $(MAKE) --no-print-directory $(BUN_SIGNER_STAMP)
+
+sign-zebkit:
+	@test -f $(ZEBKIT_STAMP) || $(MAKE) --no-print-directory $(ZEBKIT_STAMP)
+	@test -f $(ZEBKIT_SIGNER_STAMP) || $(MAKE) --no-print-directory $(ZEBKIT_SIGNER_STAMP)
 
 # agent.js and the reminders filter next to it. The packages install from the committed lockfile (frozen), without the Agent SDK's
 # optional native Claude Code packages, which the helper never uses (it drives the user's own claude). Each file is written by rename,
@@ -289,6 +306,35 @@ $(BUN_SIGNER_STAMP):
 	fi
 	rm -f .build/release/bun.signer.*
 	@touch $@
+
+# Unpacked and checked in the fetch folder, then moved into place. A Chromium pane open in a running Varnick keeps the framework it mapped; a new pin
+# shows in the next start. The package's Libraries link points at nothing (0.4.0 has no Libraries folder), which codesign refuses, so it goes.
+$(ZEBKIT_STAMP):
+	rm -rf .build/zebkit-fetch && mkdir -p .build/zebkit-fetch
+	curl -sfL -o .build/zebkit-fetch/zebkit.tar.xz $(ZEBKIT_URL)
+	echo "$(ZEBKIT_SHA256)  .build/zebkit-fetch/zebkit.tar.xz" | shasum -a 256 -c -
+	tar -xJf .build/zebkit-fetch/zebkit.tar.xz -C .build/zebkit-fetch $(ZEBKIT_PACKAGE)/Zebkit.framework
+	@if [ -L .build/zebkit-fetch/$(ZEBKIT_PACKAGE)/Zebkit.framework/Libraries ] && [ ! -e .build/zebkit-fetch/$(ZEBKIT_PACKAGE)/Zebkit.framework/Libraries ]; then \
+	  rm .build/zebkit-fetch/$(ZEBKIT_PACKAGE)/Zebkit.framework/Libraries; fi
+	@if [ "$(SIGN_ID)" != - ]; then $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=.build/zebkit-fetch/$(ZEBKIT_PACKAGE)/Zebkit.framework; fi
+	rm -rf $(ZEBKIT) && mv -f .build/zebkit-fetch/$(ZEBKIT_PACKAGE)/Zebkit.framework $(ZEBKIT)
+	rm -rf .build/zebkit-fetch .build/release/zebkit.*
+	@touch $@ $(ZEBKIT_SIGNER_STAMP)
+
+# The same framework signed by another identity (or by the first one): nothing is fetched again.
+$(ZEBKIT_SIGNER_STAMP):
+	@if [ "$(SIGN_ID)" = - ] && ! ls .build/release/zebkit.signer.* >/dev/null 2>&1; then \
+	  echo "zebkit: keeps the signature it was fetched with"; \
+	else \
+	  $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=$(ZEBKIT); \
+	fi
+	rm -f .build/release/zebkit.signer.*
+	@touch $@
+
+zebkit-codesign:
+	@$(ZEBKIT_CODESIGN) "$(ZEBKIT_DIR)/Versions/A/Helpers/Zebkit Helper.app"
+	@$(ZEBKIT_CODESIGN) $(ZEBKIT_DIR)/Versions/A
+	@codesign --verify --strict --deep $(ZEBKIT_DIR)/Versions/A
 
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md):
 # run, install and uninstall touch the Mac's running Launchy and its LaunchAgent, so while our Launchy's support folder exists (an unrelated

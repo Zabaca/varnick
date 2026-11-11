@@ -14,6 +14,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     let view: LocalProcessTerminalView
     /// Web panes only.
     private(set) var webView: WKWebView?
+    /// Chromium panes only (`ChromiumPage`), in place of `webView`.
+    private(set) var chromiumPage: ChromiumPage?
     /// A Task pane's task (option 01 of tasks-cant-be-handed-to-varnick): its steps, its gates and its harness. Nil for any other pane.
     private(set) var task: TaskController?
     /// File panes only.
@@ -372,7 +374,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Source name for icons and colours (Theme).
     var kind: String { isWeb ? "web" : isFile ? "file" : isShell ? "terminal" : isLiveTranscript ? "transcript" : "claude" }
     /// What the pane shows: the terminal, the web view, or the file.
-    var content: NSView { webView ?? fileViewer ?? view }
+    var content: NSView { webView ?? chromiumPage ?? fileViewer ?? view }
 
     init(record: SessionRecord, resuming: Bool, onExit: @escaping (Int32?) -> Void) {
         self.record = record
@@ -388,7 +390,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.nativeForegroundColor = NSColor(white: 0.9, alpha: 1)
         view.caretColor = .systemBlue
         if record.isTask { task = TaskController() }
-        if record.isWeb, !record.staysOnHost { makeWebView() }
+        if record.isChromium {
+            makeChromiumPage()
+        } else if record.isWeb, !record.staysOnHost {
+            makeWebView()
+        }
         task?.session = self
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
@@ -1450,6 +1456,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         exitWatch = nil
         checkConversation()
         fileViewer?.stop()
+        chromiumPage?.close()
         if isApp { try? FileManager.default.removeItem(at: appLog) }
         // Quitting Varnick never gets here, so only a pane ending under a running Varnick kills it.
         // A restored pane never shown may have a session whatever the setting is now. A session on a
@@ -1720,6 +1727,13 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         ]
     }
 
+    private func makeChromiumPage() {
+        let page = ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
+        page.onTitle = { [weak self] title in self?.webChanged(title: title) }
+        page.onURL = { [weak self] text in self?.webChanged(url: URL(string: text)) }
+        chromiumPage = page
+    }
+
     private func webChanged(title new: String? = nil, url: URL? = nil) {
         let before = label
         if let new { title = new }
@@ -1736,6 +1750,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         record.url = url.absoluteString
         if editingAddress { editingAddress = false }
         webView?.load(URLRequest(url: url))
+        chromiumPage?.load(url.absoluteString)
         onLabelChange()
     }
 
@@ -1754,6 +1769,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func reload() {
         // A file of another machine is read again.
         if let viewer = fileViewer, viewer.remote != nil { return viewer.load() }
+        if let chromiumPage { return chromiumPage.reload() }
         guard let web = webView else { return }
         if appExited { return restartApp() }
         if let url = record.url.flatMap(URL.init(string:)), web.url == nil || web.url?.scheme == "about" {
@@ -1971,6 +1987,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             window?.makeFirstResponder(frozenContainer)
             return
         }
+        if let chromiumPage { return chromiumPage.focusPage() }
         content.window?.makeFirstResponder(fileViewer?.focusTarget ?? content)
     }
 

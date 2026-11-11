@@ -70,13 +70,14 @@ their provenance and digests.
 
 ## What the build downloads
 
-`make build` fetches three prebuilt files, each checked against a pinned SHA-256 in the `Makefile`, and installs
+`make build` fetches four prebuilt files, each checked against a pinned SHA-256 in the `Makefile`, and installs
 the npm packages below from a committed lockfile. None of them is stored in this repository.
 
 | Component | Where from | Licence | Read from |
 |---|---|---|---|
 | `mlx.metallib`, MLX's compiled Metal shaders, from the `mlx-metal` 0.32.2 wheel (`MLX_METAL_WHEEL`) | The wheel on PyPI | MIT, Copyright 2023 Apple Inc. | The wheel's `METADATA` (`License: MIT`) and its `licenses/LICENSE`, after checking the wheel's SHA-256 against the Makefile's |
 | zmx 0.8.1, macOS arm64 (`ZMX_URL`) | `neurosnap/zmx` release `v0.8.1` | MIT, Copyright 2025 Eric Bower | `LICENSE` at the `v0.8.1` tag; the tarball's SHA-256 matches the Makefile's |
+| zebkit 0.4.0, macOS arm64 (`ZEBKIT_URL`): `Zebkit.framework`, Chromium 157 as a library, for Chromium panes | `ikey4u/zebkit` release `v0.4.0` | LGPL-2.1 for zebkit, with Chromium and the libraries inside it (PDFium, FFmpeg, ICU, V8 and others) under their own licences | `LICENSE` at the `v0.4.0` tag; the archive's SHA-256 matches the Makefile's. Not in `Varnick.app`: a checkout's build puts it beside the binary |
 | Bun 1.3.14, macOS arm64 (`BUN_URL`) | `oven-sh/bun` release `bun-v1.3.14` | MIT for Bun itself, with statically linked libraries under their own licences, JavaScriptCore among them under the LGPL | `LICENSE.md` at the `bun-v1.3.14` tag, where the libraries and their terms are listed; the archive's SHA-256 matches the Makefile's and the release's `SHASUMS256.txt` |
 
 The downloadable `Varnick.app` carries all three in binary form: `mlx.metallib` in `Contents/Resources`, zmx in
