@@ -30,6 +30,9 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// the tab comes back without the pane (`SavedTab.withoutTasks`).
     var task: Bool?
 
+    /// Chromium pane (prototype, `ChromiumPage`): a web pane drawn by zebkit's Chromium instead of WebKit, which a session can drive over CDP.
+    var chromium: Bool?
+
     /// Custom app pane: the app's folder name. It is a web pane too (`url` is the app's server).
     var app: String?
 
@@ -169,6 +172,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var isFile: Bool { file != nil }
     var isApp: Bool { app != nil }
     var isTask: Bool { task == true }
+    var isChromium: Bool { chromium == true }
     var isLiveTranscript: Bool { liveTranscript == true }
 
     /// A pane of another machine's tab that is not shown here: the Transcript, which stays on its Mac, and an app or a page at a local address

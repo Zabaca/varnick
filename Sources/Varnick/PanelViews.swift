@@ -202,7 +202,7 @@ struct PanePanelView: PanelAccessView {
         summary: "Reads a pane: its kind and title, and for a terminal (a Claude session or a shell, this session's own included) the text "
             + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
             + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
-            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only. "
+            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only; a Chromium page also gives its CDP endpoint and target, to read and drive it with. "
             + "The id is a pane's from panel or board_read (a card's own id is its tab's, which has no screen). The screen holds whatever is on it, a session's latest "
             + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
         properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
@@ -223,6 +223,7 @@ struct PanePanelView: PanelAccessView {
             return try card(target, id: id)
         }
         let header = "\(id) \(PanelAccess.kindText(session)) \"\(PanelAccess.oneLine(session.label))\"" + (target == caller ? " (this session)" : "")
+        if let page = session.chromiumPage { return header + "\n" + Self.chromiumLines(page, url: session.record.url) }
         // Only a terminal has a screen to read.
         guard session.isClaude || session.isShell else { return header + "\nContents are not read: its kind and title only." }
         if let note = session.awayNote {
@@ -231,6 +232,21 @@ struct PanePanelView: PanelAccessView {
         guard session.started else { return header + "\nnot started" }
         let rows = Self.rows(of: session.view.getTerminal())
         return header + "\nScreen now:\n" + (rows.isEmpty ? "(empty)" : rows)
+    }
+
+    /// A Chromium pane (prototype): where to drive it over CDP. Its contents are read through CDP, not here.
+    @MainActor private static func chromiumLines(_ page: ChromiumPage, url: String?) -> String {
+        var lines = ["A Chromium page" + ((url ?? "").isEmpty ? ", no address yet" : " at \(url!)") + "."]
+        guard let port = ChromiumEngine.cdpPort, let target = page.targetID else {
+            lines.append("Not shown yet, so there is no page to drive: it is made the first time the pane is on screen.")
+            return lines.joined(separator: "\n")
+        }
+        lines.append("CDP endpoint: http://127.0.0.1:\(port) (every Chromium pane of this Varnick is a target of it; /json lists them)")
+        lines.append("This pane's target: \(target)")
+        lines.append("Page WebSocket: ws://127.0.0.1:\(port)/devtools/page/\(target)")
+        lines.append("It is the page the user sees, logged in as they are: drive only what the user asked for. Connect to this target, not a new one: "
+            + "a page a client opens itself (Target.createTarget) has no pane and is not on screen.")
+        return lines.joined(separator: "\n")
     }
 
     /// An id that is no pane in a tab: a card of the board with no pane here, which has no screen on this Mac.

@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self, event.window === self.panel,
                   var view = self.panel.contentView?.hitTest(event.locationInWindow) else { return event }
             // A file pane's rendered Markdown is a WKWebView inside its FileViewer.
-            while !(view is LocalProcessTerminalView || view is FileViewer
+            while !(view is LocalProcessTerminalView || view is FileViewer || view is ChromiumPage
                     || (view is WKWebView && !(view.superview is FileViewer))),
                   let up = view.superview { view = up }
             self.model.focusPane(showing: view)
@@ -446,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.stopAppServers()
         // Saved audio's open files, or the run in progress is unreadable.
         SavedAudio.closeAll()
+        ChromiumEngine.shutdown()
     }
 
     @objc func showFromMenu() { show() }
