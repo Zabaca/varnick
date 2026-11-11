@@ -76,6 +76,7 @@ enum ChromiumEngine {
         do {
             let kit = try Zebkit(framework: frameworkURL)
             try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            _ = ChromiumPump.shared
             _ = kit.setWakeup(wake, nil)
             // Chromium's own switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path alone.
             let settings = try String(data: JSONSerialization.data(withJSONObject: [
@@ -125,12 +126,62 @@ struct ChromiumFailure: Error {
     init(_ reason: String) { self.reason = reason }
 }
 
-/// The engine's wakeup, from any of its threads: it only queues a pump on the main queue, as zebkit asks.
+/// The engine's wakeup, from any of its threads, including during init: it only moves the pump timer earlier.
 private func wake(_ delay: Int64, _ data: UnsafeMutableRawPointer?) {
-    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(max(0, delay)))) {
-        MainActor.assumeIsolated {
-            if case .running(let kit, _) = ChromiumEngine.state { _ = kit.pump() }
+    ChromiumPump.shared.wake(afterMilliseconds: delay)
+}
+
+/// The one timer that pumps the engine, at the earliest deadline it asked for (zebkit.h, `zebkit_set_wakeup`). Every pump ends by asking for
+/// the next, so a pump queued per wakeup never dies out and each wakeup from an engine thread adds one more: within minutes the main thread did
+/// little else. And a pump waits in an event loop of its own, which inside a main-queue block holds the main queue, where the panes' work
+/// arrives; inside a timer's call it doesn't (found 2026-11-11, ADR 0048).
+private final class ChromiumPump: @unchecked Sendable {
+    static let shared = ChromiumPump()
+    private let lock = NSLock()
+    /// When the engine next wants a pump, `.infinity` when it has asked for none. Under `lock`.
+    private var deadline = Double.infinity
+    /// Main thread only.
+    private var pumping = false
+    private var timer: CFRunLoopTimer!
+
+    private init() {
+        // Repeating, with an interval that never comes, so a fire leaves it valid for the next deadline.
+        timer = CFRunLoopTimerCreateWithHandler(nil, .greatestFiniteMagnitude, 1e10, 0, 0) { [unowned self] _ in
+            MainActor.assumeIsolated { self.fire() }
         }
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+    }
+
+    func wake(afterMilliseconds delay: Int64) {
+        arm(CFAbsoluteTimeGetCurrent() + Double(max(0, delay)) / 1000)
+    }
+
+    /// A later deadline never postpones an earlier one.
+    private func arm(_ time: CFAbsoluteTime) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard time < deadline else { return }
+        deadline = time
+        CFRunLoopTimerSetNextFireDate(timer, time)
+    }
+
+    @MainActor private func fire() {
+        // Inside the pump's own event loop the engine refuses a second pump: the deadline stays, and is armed again below.
+        guard !pumping, case .running(let kit, _) = ChromiumEngine.state else { return }
+        lock.lock()
+        deadline = .infinity
+        lock.unlock()
+        pumping = true
+        let began = CFAbsoluteTimeGetCurrent()
+        let pumped = kit.pump()
+        let took = CFAbsoluteTimeGetCurrent() - began
+        pumping = false
+        // Long is ordinary when an event the pump delivered ran a loop of its own (a menu, a drag); otherwise it is the engine waiting.
+        if took > 0.25 { NSLog("Varnick: Chromium pump took \(Int(took * 1000)) ms") }
+        if !pumped { arm(CFAbsoluteTimeGetCurrent() + 0.01) }
+        lock.lock()
+        if deadline < .infinity { CFRunLoopTimerSetNextFireDate(timer, deadline) }
+        lock.unlock()
     }
 }
 
