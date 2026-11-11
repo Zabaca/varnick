@@ -399,7 +399,7 @@ final class ClaudeTab: ObservableObject {
     var onMove: (_ moved: ClaudeSession, _ change: () -> Bool) -> Void = { _, change in _ = change() }
     /// A pane of the tab being dragged to another place in it.
     let paneDrag = PaneDrag()
-    /// The tab's dividers, grabbed from a band around each (`DividerGrab`).
+    /// The tab's dividers, grabbed from a zone around each (`DividerGrab`).
     let dividers = DividerGrab()
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, history: [HeldConversation] = []) {
@@ -615,7 +615,7 @@ struct PaneView: View {
                 layout {
                     PaneView(node: node.children[0], tab: tab)
                         .frame(width: sideBySide ? first : nil, height: sideBySide ? nil : first)
-                    // Moved from the event monitor (`DividerGrab`), which has the pointer over a band around it.
+                    // Moved from the event monitor (`DividerGrab`), which has the pointer over a zone around it.
                     SplitDivider(node: node, grab: tab.dividers, sideBySide: sideBySide, space: node.id, span: sideBySide ? geo.size.width : geo.size.height)
                         .id(node.id)
                     PaneView(node: node.children[1], tab: tab)
@@ -952,7 +952,7 @@ struct RestartButton: View {
     }
 }
 
-/// Real space between panes, 7 pt, drawn with an accent line while the pointer is over its band or drags it. It takes no events itself: the
+/// Real space between panes, 7 pt, drawn with an accent line while the pointer is over its grab zone or drags it. It takes no events itself: the
 /// event monitor does (`DividerGrab`), since the panes beside it would answer a pointer a few points off it, and report where it is.
 struct SplitDivider: View {
     let node: PaneNode

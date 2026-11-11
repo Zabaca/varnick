@@ -2281,10 +2281,10 @@ final class LauncherModel: ObservableObject {
         return true
     }
 
-    /// The mouse in the panel, for the active tab's dividers (`DividerGrab`): nil when a divider's band took the event. Nothing is taken while the tabs
-    /// are covered or the split picker shows.
+    /// The mouse in the panel, for the active tab's dividers (`DividerGrab`): nil when a divider's zone took the event. Nothing is taken while the tabs
+    /// are covered, the split picker, the Restart card or a list under the strip shows: they sit over the panes.
     func grabDivider(_ event: NSEvent) -> NSEvent? {
-        guard showsTerminal, pendingSplit == nil, let tab = activeTab else {
+        guard showsTerminal, pendingSplit == nil, !askingRestart, strip.openList == nil, let tab = activeTab else {
             activeTab?.dividers.release()
             return event
         }

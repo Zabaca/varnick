@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return event
         }
 
-        // A split's divider takes the pointer within a band around it, before the pane under it does (`DividerGrab`).
+        // A split's divider takes the pointer within a zone around it, before the pane under it does (`DividerGrab`).
         NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self, event.window === self.panel else { return event }
             return self.model.grabDivider(event)
@@ -722,6 +722,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func windowDidBecomeKey(_ notification: Notification) {
         if panel.pinned { NSApp.activate(ignoringOtherApps: true) }
     }
+
+    /// A pinned panel stays up without the focus: a divider's highlight and cursor go with it (`DividerGrab`).
+    func windowDidResignKey(_ notification: Notification) { model.activeTab?.dividers.release() }
 
     func windowDidMove(_ notification: Notification) { rememberFrame() }
     func windowDidResize(_ notification: Notification) { rememberFrame() }
