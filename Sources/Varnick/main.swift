@@ -19,6 +19,8 @@ final class LauncherPanel: NSPanel {
         backgroundColor = .clear
         isOpaque = false
         hasShadow = true
+        // A split's divider reads the pointer in the event monitor (`DividerGrab`), which needs the moves.
+        acceptsMouseMovedEvents = true
         // Off: it let the terminal view move the panel, eating mouse selection.
         // WindowDragArea drags from the chrome instead.
         isMovableByWindowBackground = false
@@ -187,6 +189,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                   let up = view.superview { view = up }
             self.model.focusPane(showing: view)
             return event
+        }
+
+        // A split's divider takes the pointer within a band around it, before the pane under it does (`DividerGrab`).
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self, event.window === self.panel else { return event }
+            return self.model.grabDivider(event)
         }
 
         // Shortcuts (Settings › Shortcuts), caught before the terminal view swallows them.

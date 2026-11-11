@@ -288,12 +288,20 @@ struct PaneArea: View {
             .coordinateSpace(name: PaneDrag.space)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { tab.paneDrag.area = CGRect(origin: .zero, size: $0) }
             .onPreferenceChange(PaneFrames.self) { tab.paneDrag.frames = $0 }
+            .onPreferenceChange(DividerFrames.self) { tab.dividers.frames = $0 }
+            .background(DividerAnchor(grab: tab.dividers))
+            .onDisappear { tab.dividers.release() }
             .overlay { PaneDropOverlay(drop: tab.paneDrag.drop) }
     }
 }
 
 /// The grip at a pane's top centre: shown while the pointer is over the pane, and for the whole of its own drag.
 struct PaneGrip: View {
+    /// Where the grip can be, in a pane's `frame`: a divider's band (`DividerBand`) leaves it alone.
+    static func zone(in frame: CGRect) -> CGRect {
+        CGRect(x: frame.midX - 28, y: frame.minY, width: 56, height: 28)
+    }
+
     let session: ClaudeSession
     @ObservedObject var drag: PaneDrag
     /// The pointer is over the pane.
