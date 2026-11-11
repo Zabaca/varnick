@@ -524,7 +524,8 @@ prompt, can then act with your account's rights.
   - **How:** Varnick sets Claude Code's `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` in the session's environment (Claude
     Code 2.1.311 or later; an older one ignores it), and starts the session without Varnick's `PermissionRequest` hooks, which
     would keep the prompt on. It still marks a question and a plan from `PreToolUse` and a permission dialog from its notification,
-    so Needs you works, but less exactly when subagents ask.
+    so Needs you still shows, about 6 seconds after a dialog opens (one answered sooner isn't marked). A teammate's permission
+    request isn't marked at all in these sessions, and a subagent's tool batch can clear the lead's mark early.
   - **Where:** local to the Mac whose Varnick runs the session. A session this Mac starts on a headless host or another Mac doesn't
     carry it, and one another Mac starts here follows this Mac's switch.
   - **What still keeps the prompt on** (Claude Code's documentation, "Why the critical-path removal prompt stays on"): your own
