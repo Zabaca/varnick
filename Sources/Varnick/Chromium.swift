@@ -2,10 +2,10 @@ import AppKit
 import Darwin
 import VarnickPeer
 
-// Chromium panes (prototype, branch chromium-pane): zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
-// 127.0.0.1 so a session can drive the page the user sees (`pane_read` gives the address). The framework is loaded with dlopen the first time a
-// Chromium pane shows, never at launch: Varnick runs without it (the tile is then not listed), `--mcp` never maps it, and its 133 MB stays out of a
-// process that opens no Chromium pane.
+// Chromium panes (prototype): zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
+// 127.0.0.1 so a session can drive the page the user sees (`pane_read` gives the address). The framework is loaded with dlopen at the
+// launch of a Varnick on a Mac that has opened a Chromium pane (`ChromiumEngine.startAtLaunch`): Varnick runs without it (the tile is then not
+// listed), `--mcp` never maps it, and its 133 MB stays out of a Mac that never opens a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
 /// and its CDP endpoint (each pane is a target of its own).
@@ -34,8 +34,40 @@ enum ChromiumEngine {
     }
     private(set) static var state = State.notStarted
 
-    /// The engine, started on first use. Main thread only, as zebkit requires on macOS.
-    static func start() -> Result<Zebkit, ChromiumFailure> {
+    /// A Chromium pane has shown in this account, so the engine starts with Varnick (`startAtLaunch`).
+    private static let wantedKey = "chromiumStartsAtLaunch"
+    private(set) static var isWanted: Bool {
+        get { UserDefaults.standard.bool(forKey: wantedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: wantedKey) }
+    }
+    /// Set at the first read of `engine`: from then on a start would be inside a run.
+    private static var launchPassed = false
+
+    /// Only from `applicationDidFinishLaunching`, outside any run-loop run: started inside one, the engine traps (ADR 0048).
+    static func startAtLaunch() {
+        precondition(!launchPassed, "ChromiumEngine.startAtLaunch after launch: the engine would trap inside a run (ADR 0048)")
+        launchPassed = true
+        guard isWanted, isInstalled else { return }
+        _ = start()
+    }
+
+    /// The running engine, or why there is none, in words for the pane. Never starts it: a pane that finds it not started marks it wanted.
+    static var engine: Result<Zebkit, ChromiumFailure> {
+        launchPassed = true
+        switch state {
+        case .running(let kit, _): return .success(kit)
+        case .failed(let reason): return .failure(ChromiumFailure("Chromium isn't available: " + reason))
+        case .notStarted:
+            guard isInstalled else { return .failure(ChromiumFailure("Chromium isn't available: Zebkit.framework isn't beside this Varnick.")) }
+            let first = !isWanted
+            isWanted = true
+            return .failure(ChromiumFailure(first
+                ? "Chromium starts with Varnick, and this is the first Chromium pane here. Restart Varnick to open this page: from now on it starts at launch."
+                : "Chromium didn't start with this Varnick. Restart Varnick to open this page."))
+        }
+    }
+
+    private static func start() -> Result<Zebkit, ChromiumFailure> {
         switch state {
         case .running(let kit, _): return .success(kit)
         case .failed(let reason): return .failure(ChromiumFailure(reason))
@@ -264,9 +296,9 @@ final class ChromiumPage: NSView {
 
     private func makePageNow() {
         guard view == nil, !closed, window != nil, bounds.width >= 1, bounds.height >= 1, let url = wanted, !url.isEmpty else { return }
-        switch ChromiumEngine.start() {
+        switch ChromiumEngine.engine {
         case .failure(let failure):
-            show("Chromium isn't available: \(failure.reason)")
+            show(failure.reason)
         case .success(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
