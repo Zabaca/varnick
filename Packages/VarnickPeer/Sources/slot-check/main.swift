@@ -196,6 +196,26 @@ expect("Allowed tools only is --permission-mode dontAsk, before the agent and th
 expect("the allowed tools join notify's allowance", allowed(strict) == [NotifyTool.qualifiedName, "Bash(git status)", "Edit"], "\(allowed(strict))")
 expect("skip never goes with dontAsk", !arguments(skip: true, dontAsk: true).contains("--permission-mode"))
 expect("skip is the existing flag", arguments(skip: true).contains("--dangerously-skip-permissions"))
+// The hooks of a session that gets the rm-prompt variable have no PermissionRequest entry (Claude Code keeps the prompt on with one).
+func hooks(_ arguments: [String]) -> [String: [[String: Any]]] {
+    guard let at = arguments.firstIndex(of: "--settings"), let data = arguments[at + 1].data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+    return json["hooks"] as? [String: [[String: Any]]] ?? [:]
+}
+func matchers(_ entries: [[String: Any]]?) -> [String] { (entries ?? []).compactMap { $0["matcher"] as? String } }
+func without(_ permissionHooks: Bool, problems: Bool = false) -> [String: [[String: Any]]] {
+    hooks(ClaudeCommand.arguments(skipPermissions: true, agent: nil, resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
+                                  prompt: "", problems: problems, permissionHooks: permissionHooks))
+}
+let usual = without(true), bare = without(false), bareWithWork = without(false, problems: true)
+expect("by default the PermissionRequest entries are there, for a question, a plan and the rest", usual["PermissionRequest"]?.count == 3 && usual["PreToolUse"] == nil, "\(usual.keys.sorted())")
+expect("with no permission hooks there is no PermissionRequest at all", bare["PermissionRequest"] == nil && bareWithWork["PermissionRequest"] == nil, "\(bare.keys.sorted())")
+expect("a question and a plan are marked from PreToolUse instead", matchers(bare["PreToolUse"]) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bare["PreToolUse"]))")
+expect("the same marks are written: each PreToolUse entry runs the command its PermissionRequest one ran",
+       Set(bare["PreToolUse"]?.map { String(describing: $0["hooks"] ?? "") } ?? []) == Set((usual["PermissionRequest"] ?? []).dropFirst().map { String(describing: $0["hooks"] ?? "") }))
+expect("they still clear on PostToolUse", matchers(bare["PostToolUse"]).contains("AskUserQuestion|ExitPlanMode") && matchers(usual["PostToolUse"]) == matchers(bare["PostToolUse"]))
+expect("the work-link PreToolUse entry comes after them", matchers(bareWithWork["PreToolUse"]).count == 3 && matchers(bareWithWork["PreToolUse"]).prefix(2) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bareWithWork["PreToolUse"]))")
+expect("every other event is the same", Set(usual.keys).subtracting(["PermissionRequest"]) == Set(bare.keys).subtracting(["PreToolUse"]))
 expect("the prompt stays the last operand after --", strict.suffix(2) == ["--", "Say hello"], "\(strict.suffix(2))")
 
 // `outline_append`: an automation's allowed tools name it by its exact rule, and its arguments' limits (the edit is `--outline-check`'s).

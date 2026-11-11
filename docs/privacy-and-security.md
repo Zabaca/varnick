@@ -525,6 +525,9 @@ prompt, can then act with your account's rights.
   doesn't carry it, and a session another Mac starts here follows this Mac's switch. The voice session never gets it. Claude Code
   keeps the prompt on whatever the variable says in some setups (a `PermissionRequest` hook, a deny or ask rule on Bash, Edit or
   Read, `permissions.blockReadsOutsideWorkingDirectories`); see its documentation, "Why the critical-path removal prompt stays on".
+  Claude Code also keeps the prompt while any `PermissionRequest` hook exists, so a session that gets the variable is started without Varnick's
+  own: it still marks a question or a plan from `PreToolUse`, but no longer marks a permission dialog as Needs you. Your own `PermissionRequest`
+  hooks, if you have any, still keep the prompt on.
 
 ### Peers over SSH
 

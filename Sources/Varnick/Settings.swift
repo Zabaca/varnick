@@ -761,7 +761,7 @@ struct SettingsView: View {
                                 Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Skip the delete prompt too",
-                                       detail: "Sessions started with Skip permissions also stop asking before rm on a path Claude Code can't resolve, or one that could be the home folder or the project's root, so a stray rm -rf can run unasked. It only matters while Skip permissions is on, and applies to sessions started after you turn it on. See Skip permissions in docs/privacy-and-security.md.") {
+                                       detail: "Sessions started with Skip permissions also stop asking before rm on a path Claude Code can't resolve, or one that could be the home folder or the project's root, so a stray rm -rf can run unasked. It only matters while Skip permissions is on, applies to sessions started after you turn it on, and those no longer flag a permission dialog as Needs you. See Skip permissions in docs/privacy-and-security.md.") {
                                 Toggle("", isOn: $settings.skipRemovalPromptOff).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Screen access",

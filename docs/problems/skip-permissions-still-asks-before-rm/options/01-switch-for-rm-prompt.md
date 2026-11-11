@@ -17,6 +17,7 @@ When a session starts with Skip permissions and the switch is on, Varnick launch
 
 - **It removes the only prompt left before a destructive delete.** That is why it is a separate switch, off by default, rather than part of Skip permissions.
 - **It applies to new sessions only.** A running session keeps the environment it started with.
+- **Sessions with the switch lose the Needs you mark for a permission dialog.** Any dialog bypass mode still raises shows as working.
 - **Some settings keep the prompt on even with the switch** (a permission-request hook, a permission prompt tool, deny or ask rules on Bash, Edit or Read, a block on reads outside the working directory, claude run inside another claude). The switch can't override them.
 - **Sessions on another Mac or a headless host** follow the setting only if it is carried across; see Implementation Decisions.
 
@@ -31,6 +32,7 @@ When a session starts with Skip permissions and the switch is on, Varnick launch
 - The switch is stored like Skip permissions and is off for everyone until chosen.
 - The variable goes in the launch environment only, never the settings Varnick passes to claude, because Claude Code ignores it there.
 - Only a process that actually starts with Skip permissions gets it.
+- Claude Code keeps the prompt on while any permission-request hook exists, so a session that gets the variable starts without Varnick's. A question and a plan are still marked, from the tool-call hook instead; the "needs you" mark for a permission dialog is dropped in those sessions, since bypass mode raises almost none once this prompt is off.
 - Other Macs and headless hosts: kept local to the Mac that starts the session unless carrying it is a small change; the docs say which.
 
 ## Testing Decisions
