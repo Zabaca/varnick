@@ -361,7 +361,10 @@ they were asked in the last few seconds, and waits up to 5 seconds; a machine th
 (`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
 you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
 echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
-controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only. All
+controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only, except a
+**Chromium pane**: its read gives the page's address and the address of its DevTools endpoint (CDP, on 127.0.0.1 with no
+password), through which the session can read and act in that page, logged in as you are there (ADR 0048). Any program on
+this Mac can reach that endpoint while a Chromium pane is open. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's

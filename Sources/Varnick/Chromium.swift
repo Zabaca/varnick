@@ -46,7 +46,11 @@ enum ChromiumEngine {
             try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             _ = kit.setWakeup(wake, nil)
             // Chromium's own switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path alone.
-            let settings = try String(data: JSONSerialization.data(withJSONObject: ["profileDirectory": profileURL.path, "headless": false]), encoding: .utf8)!
+            let settings = try String(data: JSONSerialization.data(withJSONObject: [
+                "profileDirectory": profileURL.path, "headless": false,
+                // Chromium's log would go to stderr, which is Varnick's log, and it carries addresses.
+                "logging": ["destination": "none"],
+            ] as [String: Any]), encoding: .utf8)!
             var argv: [UnsafeMutablePointer<CChar>?] = [strdup(CommandLine.arguments.first ?? "Varnick"), nil]
             var error: UnsafeMutablePointer<CChar>?
             let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(1, $0.baseAddress, settings, &error) }
@@ -63,6 +67,12 @@ enum ChromiumEngine {
             state = .failed(reason)
             return .failure(ChromiumFailure(reason))
         }
+    }
+
+    /// Why the engine isn't running, once it failed to start (it is never tried again in this process).
+    static var failure: String? {
+        if case .failed(let reason) = state { return reason }
+        return nil
     }
 
     static var cdpPort: UInt32? {
@@ -168,6 +178,9 @@ final class ChromiumPage: NSView {
     /// The page to load once the view is made, or the last one asked for.
     private var wanted: String?
     private var closed = false
+    private var pageQueued = false
+    /// What the pane shows in place of the page, when it has none it can make: for `pane_read` too.
+    var problem: String? { note.isHidden ? nil : note.stringValue }
     /// The committed address and the title, as the page changes them.
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
@@ -225,6 +238,23 @@ final class ChromiumPage: NSView {
         makePage()
     }
 
+    /// Made on the next turn of the main queue, never inside the layout pass or the view move that asked: starting the engine is slow and its
+    /// first pump may call back into the session's published state.
+    private func makePage() {
+        guard view == nil, !pageQueued else { return }
+        pageQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pageQueued = false
+            self.makePageNow()
+        }
+    }
+
+    private func show(_ problem: String) {
+        note.stringValue = problem
+        note.isHidden = false
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         note.frame = bounds.insetBy(dx: 20, dy: max(0, bounds.height / 2 - 30))
@@ -232,23 +262,20 @@ final class ChromiumPage: NSView {
         kit.setBounds(view, 0, 0, Int32(newSize.width), Int32(newSize.height))
     }
 
-    private func makePage() {
+    private func makePageNow() {
         guard view == nil, !closed, window != nil, bounds.width >= 1, bounds.height >= 1, let url = wanted, !url.isEmpty else { return }
         switch ChromiumEngine.start() {
         case .failure(let failure):
-            note.stringValue = "Chromium isn't available: \(failure.reason)"
-            note.isHidden = false
+            show("Chromium isn't available: \(failure.reason)")
         case .success(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
-                note.stringValue = "Chromium couldn't open a page."
-                note.isHidden = false
+                show("Chromium couldn't open a page.")
                 return
             }
             var error: UnsafeMutablePointer<CChar>?
             guard kit.attachNative(view, UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()), 0, 0, width, height, &error) else {
-                note.stringValue = "Chromium couldn't be put in the pane: " + kit.take(error, or: "no reason given")
-                note.isHidden = false
+                show("Chromium couldn't be put in the pane: " + kit.take(error, or: "no reason given"))
                 kit.close(view)
                 return
             }
@@ -260,24 +287,39 @@ final class ChromiumPage: NSView {
             kit.onLoad(view, { _, event, url, data in
                 guard event == Zebkit.loadCommitted, let url, let data else { return }
                 let text = String(cString: url)
-                MainActor.assumeIsolated { Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue().onURL(text) }
+                ChromiumPage.later(data) { page in
+                    // A reload after the page closed itself opens where it was, not where it started.
+                    page.wanted = text
+                    page.onURL(text)
+                }
             }, me)
             kit.onTitle(view, { _, title, data in
                 guard let title, let data else { return }
                 let text = String(cString: title)
-                MainActor.assumeIsolated { Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue().onTitle(text) }
+                ChromiumPage.later(data) { $0.onTitle(text) }
             }, me)
             // The page closed itself (window.close()): nothing is left to call.
             kit.onClose(view, { _, data in
                 guard let data else { return }
-                MainActor.assumeIsolated {
-                    let page = Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue()
+                ChromiumPage.later(data) { page in
                     page.view = nil
-                    page.note.stringValue = "The page closed itself. Reload to open it again."
-                    page.note.isHidden = false
+                    page.show("The page closed itself. Reload to open it again.")
                 }
             }, me)
             _ = kit.pump()
+        }
+    }
+
+    /// An engine callback's work, on the next turn of the main queue rather than inside the engine's pump. `data` is the page; one closed
+    /// meanwhile has no callbacks left, and its own work is skipped.
+    nonisolated private static func later(_ data: UnsafeMutableRawPointer, _ work: @escaping @MainActor (ChromiumPage) -> Void) {
+        // Held strongly by the block until it runs, so a pane closed meanwhile is still there to say it is closed.
+        let page = Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue()
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                guard !page.closed else { return }
+                work(page)
+            }
         }
     }
 }

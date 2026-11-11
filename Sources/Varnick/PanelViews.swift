@@ -202,7 +202,7 @@ struct PanePanelView: PanelAccessView {
         summary: "Reads a pane: its kind and title, and for a terminal (a Claude session or a shell, this session's own included) the text "
             + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
             + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
-            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only; a Chromium page also gives its CDP endpoint and target, to read and drive it with. "
+            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only; a Chromium page also gives its address and its CDP endpoint and target, to read and drive it with (the page is logged in as the user is). "
             + "The id is a pane's from panel or board_read (a card's own id is its tab's, which has no screen). The screen holds whatever is on it, a session's latest "
             + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
         properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
@@ -237,8 +237,13 @@ struct PanePanelView: PanelAccessView {
     /// A Chromium pane (prototype): where to drive it over CDP. Its contents are read through CDP, not here.
     @MainActor private static func chromiumLines(_ page: ChromiumPage, url: String?) -> String {
         var lines = ["A Chromium page" + ((url ?? "").isEmpty ? ", no address yet" : " at \(url!)") + "."]
+        if let failure = ChromiumEngine.failure {
+            lines.append("Chromium isn't running in this Varnick (\(failure)); it won't start again until Varnick restarts, so there is no page to drive.")
+            return lines.joined(separator: "\n")
+        }
         guard let port = ChromiumEngine.cdpPort, let target = page.targetID else {
-            lines.append("Not shown yet, so there is no page to drive: it is made the first time the pane is on screen.")
+            lines.append(page.problem.map { "There is no page to drive: \($0)" }
+                ?? "Not shown yet, so there is no page to drive: it is made the first time the pane is on screen.")
             return lines.joined(separator: "\n")
         }
         lines.append("CDP endpoint: http://127.0.0.1:\(port) (every Chromium pane of this Varnick is a target of it; /json lists them)")
