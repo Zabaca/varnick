@@ -598,11 +598,43 @@ let movedFolder = problems(["folder": otherFolder], creating: false, AutomationT
 expect("a new folder without the automation's agent is refused", movedFolder.count == 1 && movedFolder[0].contains("slot-check-reviewer"), "\(movedFolder)")
 expect("a new folder with the agent given as none is fine", edited(["folder": otherFolder, "agent": ""], withAgent)?.automation.folder == otherFolder)
 
+// The fields not covered above: a name (one line, cut), a working limit, a folder alone, and an edit that gives several at once.
+let renamedName = edited(["name": "  Evening\n recap  "], current)
+expect("an edit of the name keeps one line and names it alone", renamedName?.automation.name == "Evening recap" && renamedName?.changed == ["name"])
+let limited = edited(["working_limit_minutes": "45"], current)
+expect("an edit of the working limit changes it alone, keeping the slots", limited?.automation.workingLimitMinutes == 45 && limited?.changed == ["working limit"]
+       && limited?.automation.lastSlot == current.lastSlot)
+expect("a working limit out of range is refused", problems(["working_limit_minutes": "4"], creating: false).count == 1 && problems(["working_limit_minutes": "1441"], creating: false).count == 1)
+let refolded = edited(["folder": otherFolder], current)
+expect("an edit of the folder alone changes it, for an automation with no agent", refolded?.automation.folder == otherFolder && refolded?.changed == ["folder"])
+let several = edited(["name": "Evening", "prompt": "Say goodbye", "tell_when_done": "true", "enabled": "false"], current)
+expect("an edit of several fields names each, in the order the mark lists them", several?.changed == ["name", "prompt", "on/off", "tell when done"]
+       && several.map { AutomationTools.markText(edited: $0.changed, to: $0.automation) } == "Edited: name, prompt, on/off, tell when done", "\(String(describing: several?.changed))")
+
+let agentSet = edited(["agent": "slot-check-reviewer"], current)
+expect("an edit sets an agent of the automation's folder, by name alone", agentSet?.automation.agent == "slot-check-reviewer" && agentSet?.changed == ["agent"])
+expect("an edit's agent is judged against the automation's folder", problems(["agent": "slot-check-reviewer"], creating: false,
+       AutomationTools.Context(sessionFolder: toolsFolder, homeFolder: otherFolder, current: refolded?.automation)).count == 1)
+let toAllowedOnly = edited(["permissions": "allowed_tools_only"], current)
+expect("an edit sets Allowed tools only", toAllowedOnly?.automation.permissions == .allowedOnly && toAllowedOnly?.changed == ["permissions"])
+let backToAsk = toAllowedOnly.flatMap { edited(["permissions": "ask"], $0.automation) }
+expect("an edit sets Ask, and the same value changes nothing", backToAsk?.automation.permissions == .ask && edited(["permissions": "ask"], current) == nil)
+expect("an edit never sets Skip", problems(["permissions": "skip"], creating: false).count == 1)
+
+// Delete: the line the menu holds once a session has deleted an automation, which has no row left to carry a mark.
+expect("a deletion's line names the automation and the session", AutomationTools.deletedLine(current, by: "Planning").contains("\u{201C}Planning\u{201D}")
+       && AutomationTools.deletedLine(current, by: "Planning").contains("\u{201C}\(current.name)\u{201D}"), AutomationTools.deletedLine(current, by: "Planning"))
+var untitled = current
+untitled.name = ""
+expect("an automation with no name is Untitled in it", AutomationTools.deletedLine(untitled, by: "Planning").contains("Untitled"))
+
 // Skip: not editable, switchable.
 var skipping = current
 skipping.permissions = .skip
 expect("a Skip automation may not be edited by a session", AutomationTools.editRefusal(for: skipping) != nil && AutomationTools.editRefusal(for: current) == nil)
 expect("but it may be switched", AutomationTools.switching(skipping, on: false, now: now)?.enabled == false)
+expect("and a session may not delete it either, as `editable_by_sessions` false says", AutomationTools.deleteRefusal(for: skipping)?.contains("may not delete") == true
+       && AutomationTools.deleteRefusal(for: current) == nil && AutomationTools.deleteRefusal(for: off) == nil)
 
 // Switch.
 expect("switching to the state it has changes nothing", AutomationTools.switching(current, on: true, now: now) == nil && AutomationTools.switching(off, on: false, now: now) == nil)

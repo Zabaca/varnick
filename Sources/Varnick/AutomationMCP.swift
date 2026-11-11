@@ -27,12 +27,13 @@ enum AutomationMCP {
     static let create = "automation_create"
     static let edit = "automation_edit"
     static let `switch` = "automation_switch"
+    static let delete = "automation_delete"
 
-    /// The four tools, as `tools/list` gives them.
-    static let tools: [[String: Any]] = [listTool, createTool, editTool, switchTool]
+    /// The five tools, as `tools/list` gives them.
+    static let tools: [[String: Any]] = [listTool, createTool, editTool, switchTool, deleteTool]
 
     /// The names `tools` lists: the only ones a call may use.
-    static let names: Set<String> = [list, create, edit, `switch`]
+    static let names: Set<String> = [list, create, edit, `switch`, delete]
 
     static func requestLine(pane: String, tool: String, arguments: PanelArguments) -> String {
         let encoder = JSONEncoder()
@@ -90,7 +91,7 @@ enum AutomationMCP {
 
     private static let createTool = tool(create,
         summary: "Makes an automation of the Claude prompt Task on this Mac (its prompt, folder and agent are that Task's input) and answers its id and when it first runs. \(unattended) It is on unless `enabled` is false, and its "
-            + "slots start from now. Every field is checked before anything is saved; a refusal names each wrong field. Deleting and Run now stay in "
+            + "slots start from now. Every field is checked before anything is saved; a refusal names each wrong field. Run now stays in "
             + "Varnick's Settings › Automations, the user's.",
         properties: fields, required: ["name", "prompt", "cadence"])
 
@@ -104,9 +105,17 @@ enum AutomationMCP {
 
     private static let switchTool = tool(`switch`,
         summary: "Turns one automation on or off. Turning it on starts its slots from now; turning it off releases nothing, and a run that is going goes on. "
-            + "It works on an automation set to Skip permissions too. To stop one for good the user deletes it in Settings › Automations. Tell the user.",
+            + "It works on an automation set to Skip permissions too. To remove one for good, use automation_delete (not for one set to Skip permissions). Tell the user.",
         properties: [
             "id": ["type": "string", "description": "The automation's id from automations_list."],
             "on": ["type": "boolean", "description": "true to turn it on, false to turn it off."],
         ], required: ["id", "on"])
+
+    private static let deleteTool = tool(delete,
+        summary: "Deletes one automation (by the id automations_list gives) with its run list, which can't be undone: its prompt, cadence and runs are gone. "
+            + "A run that is going is not ended: it stays as an ordinary tab. It is refused for an automation the user set to "
+            + "Skip permissions (switch still works on it), and a deletion made while the user has its editor open leaves them Save as new. To only stop one, use "
+            + "automation_switch. Varnick leaves a line in its menu, until the user chooses it or Varnick restarts, saying which session deleted what. Tell the user what you deleted.",
+        properties: ["id": ["type": "string", "description": "The automation's id from automations_list."]],
+        required: ["id"])
 }

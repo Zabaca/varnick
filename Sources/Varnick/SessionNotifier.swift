@@ -230,6 +230,24 @@ final class SessionNotifier: ObservableObject {
         for uuid in gone { clear(uuid) }
     }
 
+    // MARK: A session's deletion of an automation
+
+    /// The notices of automations a session deleted (`AutomationAccess`), by a fresh id each: a deleted automation has no row to carry a mark, so the menu holds
+    /// this line until it is chosen. Quiet (no sound), and not behind the Notifications switches: the deletion can't be undone, and no row will show it. On
+    /// this Mac only, and not kept across a restart, as every notice is.
+    private(set) var deletions: Set<UUID> = []
+
+    func raiseAutomationDeleted(_ line: String) {
+        let id = UUID()
+        deletions.insert(id)
+        notices.insert(Notice(id: id, kind: .message(line), runLine: line), at: 0)
+    }
+
+    func clearDeletion(_ id: UUID) {
+        deletions.remove(id)
+        clear(id)
+    }
+
     // MARK: A Task Run's own notice
 
     /// The notice of a Task Run, by the Run's id, beside the panes' with the same kinds and switches (option 01 of `work-cant-be-saved-or-chained`,
@@ -304,6 +322,7 @@ final class SessionNotifier: ObservableObject {
         guard !notices.isEmpty else { return }
         let switches = Settings.shared.noticeSwitches
         let kept = notices.filter { notice in
+            if deletions.contains(notice.id) { return true }
             // A Task Run's notice stands until it is chosen or the Run's view is shown.
             if notice.runLine != nil { return switches.allows(notice.kind) }
             // The notice of a run nobody opened outlives its ended process: choosing it resumes the conversation.

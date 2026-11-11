@@ -492,9 +492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // ask stays in Settings, with Dismiss, until this Mac is ready.
         if model.notifier.macAsks.contains(id) {
             model.notifier.clearMacAsks(from: id.uuidString.lowercased())
-            UserDefaults.standard.set(SettingsSection.claude.rawValue, forKey: "settingsSection")
-            if !model.showingSettings { model.toggleSettings() }
-            show()
+            showSettings(.claude)
+            return
+        }
+        // A session's deletion of an automation opens Settings › Automations, where the list shows what is left.
+        if model.notifier.deletions.contains(id) {
+            model.notifier.clearDeletion(id)
+            showSettings(.automations)
             return
         }
         // A Task Run's notice shows the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
@@ -509,6 +513,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if model.claudePane(id) != nil { model.showPane(id) } else if let why = model.openRun(id) { model.claudeError = why }
         show()
         model.notifier.clear(id)
+    }
+
+    /// Shows Settings on a section, from a notice.
+    private func showSettings(_ section: SettingsSection) {
+        UserDefaults.standard.set(section.rawValue, forKey: "settingsSection")
+        if !model.showingSettings { model.toggleSettings() }
+        show()
     }
 
     /// Nothing restarts until the card is confirmed.

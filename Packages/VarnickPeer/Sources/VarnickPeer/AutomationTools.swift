@@ -283,10 +283,18 @@ public enum AutomationTools {
     }
 
     /// Why a session may not edit this automation, nil when it may: one set to Skip is the user's choice for that prompt, and editing it would
-    /// make it Skip for anything a session writes. Switching it is allowed.
+    /// make it Skip for anything a session writes. Switching it is allowed, and `deleteRefusal` refuses its delete.
     public static func editRefusal(for automation: Automation) -> String? {
         automation.permissions == .skip
             ? "This automation is set to Skip permissions by the user, so a session may not edit it. It can still be switched on or off; the user edits it in Settings › Automations."
+            : nil
+    }
+
+    /// Why a session may not delete this automation, nil when it may: Skip is the one setting only the user sets by hand, and a delete can't be undone, so
+    /// it is the user's too (ADR 0040's amendment of 2026-11-11). `editRefusal`'s own test, so `editable_by_sessions` false means neither.
+    public static func deleteRefusal(for automation: Automation) -> String? {
+        automation.permissions == .skip
+            ? "This automation is set to Skip permissions by the user, so a session may not delete it. It can still be switched off; the user deletes it in Settings › Automations."
             : nil
     }
 
@@ -327,6 +335,11 @@ public enum AutomationTools {
     public static func markText(edited changed: [String], to automation: Automation) -> String {
         "Edited: " + changed.map { $0 == "allowed tools" ? "allowed tools " + (automation.allowedTools.isEmpty ? "cleared" : "set to " + rulesText(automation.allowedTools)) : $0 }
             .joined(separator: ", ")
+    }
+
+    /// What the menu says once a session has deleted an automation, which has no row left to carry a mark: the session's title and the automation's name.
+    public static func deletedLine(_ automation: Automation, by session: String) -> String {
+        "A session deleted an automation: \u{201C}\(automation.name.isEmpty ? "Untitled" : automation.name)\u{201D}, by \u{201C}\(session)\u{201D}"
     }
 
     private static func rulesText(_ rules: [String]) -> String {
