@@ -140,6 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // First, before anything can run the run loop: zebkit traps if it starts inside a run (`ChromiumEngine.startAtLaunch`).
+        ChromiumEngine.startAtLaunch()
         Self.onTerminate()
         Settings.storeSkipPermissionsIfAbsent()
         Settings.storeTextGenerationIfAbsent()

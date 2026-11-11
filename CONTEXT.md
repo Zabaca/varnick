@@ -89,7 +89,7 @@ A **Pane** that is a browser of Varnick's own, picked with `!task` or the split 
 _Avoid_: Task pane, Agent pane, automation pane
 
 **Chromium pane**:
-A **Pane** showing a page in Chromium (zebkit's engine, beside Varnick's binary) instead of WebKit, picked with the split picker's Chromium tile: the Browser pane's address bar over the page. Every Chromium pane shares one engine and one profile of Varnick's own, and one CDP endpoint on 127.0.0.1, each pane a target of it; `pane_read` gives a session the endpoint and the pane's target, so it can drive the page the user sees. Listed only when the engine is there; see [ADR 0048](docs/adr/0048-a-chromium-pane-embeds-zebkit-and-serves-cdp-so-a-session-can-drive-the-page-the-user-sees.md).
+A **Pane** showing a page in Chromium (zebkit's engine, beside Varnick's binary) instead of WebKit, picked with the split picker's Chromium tile: the Browser pane's address bar over the page. Every Chromium pane shares one engine and one profile of Varnick's own, and one CDP endpoint on 127.0.0.1, each pane a target of it; `pane_read` gives a session the endpoint and the pane's target, so it can drive the page the user sees. Listed only when the engine is there. The engine starts with Varnick, once a Chromium pane has been opened on the Mac, so the first one asks for a restart; see [ADR 0048](docs/adr/0048-a-chromium-pane-embeds-zebkit-and-serves-cdp-so-a-session-can-drive-the-page-the-user-sees.md).
 _Avoid_: Chrome pane, CDP pane
 
 **Restart**:
