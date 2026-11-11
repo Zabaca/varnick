@@ -14,8 +14,10 @@ public enum ClaudeCommand {
     /// the session decides, from its Problems board switch (Settings › Experimental, or the relay's `--problems`). With it off
     /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
     /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
-    /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. The rules for the entries are in `docs/agents/where-it-breaks.md`.
-    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false) -> String {
+    /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. `permissionHooks: false` is for a session that gets
+    /// `skipDeletePromptEntry`: it has no `PermissionRequest` entry, which would keep Claude Code's delete prompt on (`docs/agents/where-it-breaks.md`).
+    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
+                                    permissionHooks: Bool = true) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
             .init(matcher: matcher, command: turnCommand(turn))
@@ -28,16 +30,23 @@ public enum ClaudeCommand {
             "Stop": [turn(.waiting), .init(command: stopInputCommand), .init(command: leadEndedCommand(.waiting))],
             "StopFailure": [turn(.waiting), .init(command: stopInputKeepCommand), .init(command: leadEndedCommand(.waiting))],
             "Notification": [turn(.waiting, matcher: "idle_prompt")],
-            "PermissionRequest": [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
-                                  turn(.question, matcher: question), turn(.plan, matcher: plan)],
             "PostToolUse": [turn(.working, matcher: "\(question)|\(plan)"), .init(matcher: messageMatcher, command: messageInputCommand)],
             "PostToolBatch": [.init(command: answeredCommand)],
             "SubagentStop": [.init(command: answeredCommand)],
             "Elicitation": [turn(.input)],
             "ElicitationResult": [turn(.working)],
         ]
+        if permissionHooks {
+            hooks["PermissionRequest"] = [.init(matcher: "^(?!(\(question)|\(plan))$)", command: askedCommand),
+                                          turn(.question, matcher: question), turn(.plan, matcher: plan)]
+        } else {
+            // A question and a plan from PreToolUse, first there; a permission dialog from its notification, given back at the batch's end.
+            hooks["PreToolUse"] = [turn(.question, matcher: question), turn(.plan, matcher: plan)]
+            hooks["Notification", default: []].append(.init(matcher: "permission_prompt", command: permissionPromptCommand))
+            hooks["PostToolBatch", default: []].append(.init(command: permissionClearCommand))
+        }
         if problems {
-            // Each entry goes last in its event's list, where it stood before the switch; PreToolUse has no other.
+            // Each entry goes last in its event's list, where it stood before the switch.
             hooks["SessionStart", default: []].append(.init(command: WorkHooks.sessionStart))
             hooks["PreToolUse", default: []].append(.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink))
             hooks["PostToolUse", default: []].append(.init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark))
@@ -96,6 +105,14 @@ public enum ClaudeCommand {
         + #"[ -d "$f.askers" ] || { [ "$(cat "$f" 2>/dev/null)" = permission ] || { cp -p "$f" "$f.before" || rm -f "$f.before"; }; }; "#
         + #"mkdir -p "$f.askers" && : > "$f.askers/$asker"; "#
         + #"[ "$(cat "$f" 2>/dev/null)" = permission ] || { printf permission > "$f.$$" && mv "$f.$$" "$f"; }; } >/dev/null 2>&1; exit 0"#
+
+    /// Notification `permission_prompt`, in a session with no `PermissionRequest` hook: marks the pane permission unless a question or a plan holds the word.
+    static let permissionPromptCommand = writeCommand(
+        choosing: #"case "$(cat "$f" 2>/dev/null)" in question|plan) exit 0;; esac; "#, word: Turn.permission.rawValue)
+
+    /// `PostToolBatch` in that session: the dialog is answered, so a permission word goes back to working.
+    static let permissionClearCommand = writeCommand(
+        choosing: #"[ "$(cat "$f" 2>/dev/null)" = permission ] || exit 0; "#, word: Turn.working.rawValue)
 
     /// `PostToolBatch` and `SubagentStop`: the asker's dialog is answered or its agent gone, and the last asker gives the saved
     /// word back.
@@ -160,6 +177,10 @@ public enum ClaudeCommand {
         "\(presenceVariable)=\(phoneFolder.appendingPathComponent(presenceMarkerName).path)"
     }
 
+    /// Turns off Claude Code's delete prompt (before `rm` on a path it can't resolve or that could be home or the project's root) in a session that skips
+    /// permissions. Launch environment only: Claude Code ignores it in `--settings`.
+    public static let skipDeletePromptEntry = "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1"
+
     /// `UserPromptSubmit` writes working even over working: a prompt starts a new working period, and Esc leaves
     /// the file at working.
     static let promptCommand = writeCommand(choosing: "", word: Turn.working.rawValue, always: true)
@@ -196,7 +217,7 @@ public enum ClaudeCommand {
     /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
     /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
     /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
-    /// start like `taskResult`. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
+    /// start like `taskResult`. `permissionHooks` is `hookSettings`'s: false only for a session that gets `skipDeletePromptEntry`, read at each start. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
     /// `channelPlugin` is the folder of Varnick's channel plugin (`ChannelPlugin`), which a pane that receives messages loads with `--plugin-dir` and listens to
     /// with `--channels` (option 01 of `sessions-cant-reach-each-other-reliably`), read at each start like `mcpConfig` and not stored. Both flags take several
@@ -207,10 +228,11 @@ public enum ClaudeCommand {
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
                                  dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
-                                 appendSystemPrompt: String? = nil, channelPlugin: String? = nil) -> [String] {
+                                 appendSystemPrompt: String? = nil, channelPlugin: String? = nil, permissionHooks: Bool = true) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
             + (channelPlugin.map { ["--plugin-dir", $0, "--channels", SessionMessage.channelArgument] } ?? [])
-            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice)]
+            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice,
+                                                       permissionHooks: permissionHooks)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])
