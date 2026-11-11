@@ -34,35 +34,38 @@ enum ChromiumEngine {
     }
     private(set) static var state = State.notStarted
 
-    /// Chromium panes have been opened on this Mac, so the engine starts with Varnick (`startAtLaunch`).
+    /// A Chromium pane has shown in this account, so the engine starts with Varnick (`startAtLaunch`).
     private static let wantedKey = "chromiumStartsAtLaunch"
-    static var isWanted: Bool {
+    private(set) static var isWanted: Bool {
         get { UserDefaults.standard.bool(forKey: wantedKey) }
         set { UserDefaults.standard.set(newValue, forKey: wantedKey) }
     }
+    /// Set at the first read of `engine`: from then on a start would be inside a run.
+    private static var launchPassed = false
 
-    /// Called first thing in `applicationDidFinishLaunching`, before `NSApp.run` enters the run loop, and nowhere else. zebkit's message pump
-    /// counts the main run loop's entries and exits with an observer it adds at init; an engine started while a run is under way (a main-queue
-    /// block, a layout pass) sees that run exit without its entry and traps (EXC_BREAKPOINT in a run-loop observer, found 2026-11-11 and reproduced
-    /// headless), which is why every zebkit host starts it at launch. An idle engine costs about 200 MB with its helpers, so it starts only on a
-    /// Mac that has opened a Chromium pane; the first pane says to restart.
+    /// Only from `applicationDidFinishLaunching`, outside any run-loop run: started inside one, the engine traps (ADR 0048).
     static func startAtLaunch() {
+        precondition(!launchPassed, "ChromiumEngine.startAtLaunch after launch: the engine would trap inside a run (ADR 0048)")
+        launchPassed = true
         guard isWanted, isInstalled else { return }
         _ = start()
     }
 
-    /// The running engine, or why there is none; never starts it.
+    /// The running engine, or why there is none, in words for the pane. Never starts it: a pane that finds it not started marks it wanted.
     static var engine: Result<Zebkit, ChromiumFailure> {
+        launchPassed = true
         switch state {
         case .running(let kit, _): return .success(kit)
-        case .failed(let reason): return .failure(ChromiumFailure(reason))
+        case .failed(let reason): return .failure(ChromiumFailure("Chromium isn't available: " + reason))
         case .notStarted:
+            guard isInstalled else { return .failure(ChromiumFailure("Chromium isn't available: Zebkit.framework isn't beside this Varnick.")) }
+            let first = !isWanted
             isWanted = true
-            return .failure(ChromiumFailure(notStartedNote))
+            return .failure(ChromiumFailure(first
+                ? "Chromium starts with Varnick, and this is the first Chromium pane here. Restart Varnick to open this page: from now on it starts at launch."
+                : "Chromium didn't start with this Varnick. Restart Varnick to open this page."))
         }
     }
-
-    static let notStartedNote = "Chromium starts with Varnick, and this Varnick started before any Chromium pane was opened. Restart Varnick to open this page: from now on it starts at launch."
 
     private static func start() -> Result<Zebkit, ChromiumFailure> {
         switch state {
@@ -295,7 +298,7 @@ final class ChromiumPage: NSView {
         guard view == nil, !closed, window != nil, bounds.width >= 1, bounds.height >= 1, let url = wanted, !url.isEmpty else { return }
         switch ChromiumEngine.engine {
         case .failure(let failure):
-            show(ChromiumEngine.cdpPort == nil && ChromiumEngine.failure == nil ? failure.reason : "Chromium isn't available: \(failure.reason)")
+            show(failure.reason)
         case .success(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
