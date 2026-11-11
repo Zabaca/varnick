@@ -692,6 +692,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             + ["VARNICK_SESSION_FILE=\(conversationFile.path)", paneIDVariable,
                "VARNICK_PROJECT=\(CustomApp.projectRoot(of: record.directory))",
                ClaudeCommand.presenceEntry(phoneFolder: PhonePage.folder(in: SupportFolder.url))]
+            // Only a session that starts skipping permissions, and not the voice session, whose skip is Varnick's and not the user's choice.
+            + (skipsPermissions && !isVoice && Settings.shared.skipRemovalPromptOff ? [ClaudeCommand.removalPromptOffEntry] : [])
         // A pane already in zmx stays there whatever the setting says now: a bare claude beside its
         // session would be a second one.
         startInTerminal(Self.claudeShell, ClaudeCommand.shellArguments(claudeArgs), environment: env, alwaysInZmx: inZmx,

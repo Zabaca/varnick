@@ -209,6 +209,7 @@ final class Settings: ObservableObject {
     /// Also read by the peer relay, which runs without Settings.
     nonisolated static let keepSessionsRunningKey = "keepSessionsRunning"
     static let skipPermissionsKey = "skipPermissions"
+    static let skipRemovalPromptOffKey = "skipRemovalPromptOff"
     static let screenAccessKey = "screenAccess"
     static let messagesKey = "messagesBetweenSessions"
     static let messagesMacsKey = "messagesBetweenMacs"
@@ -222,6 +223,9 @@ final class Settings: ObservableObject {
     static let fontRange: ClosedRange<Double> = 9...24
 
     @Published var skipPermissions: Bool { didSet { defaults.set(skipPermissions, forKey: Self.skipPermissionsKey) } }
+    /// Sessions that start skipping permissions also get Claude Code's variable that turns off its prompt before `rm` on a critical or unresolvable
+    /// path (`ClaudeSession.launchClaude`). Off for every install, with no migration; read at each start, so it changes new and restarted sessions only.
+    @Published var skipRemovalPromptOff: Bool { didSet { defaults.set(skipRemovalPromptOff, forKey: Self.skipRemovalPromptOffKey) } }
     /// Gives the Claude sessions started or restarted while it is on the look, point, click, type, drag and window tools (`ScreenAccess`); off until
     /// turned on. Read at every call, so turning it off stops running sessions too. Independent of Point at the screen.
     @Published var screenAccess: Bool { didSet { defaults.set(screenAccess, forKey: Self.screenAccessKey) } }
@@ -445,6 +449,7 @@ final class Settings: ObservableObject {
 
     private init() {
         skipPermissions = defaults.object(forKey: Self.skipPermissionsKey) as? Bool ?? false
+        skipRemovalPromptOff = defaults.bool(forKey: Self.skipRemovalPromptOffKey)
         screenAccess = defaults.bool(forKey: Self.screenAccessKey)
         messagesBetweenSessions = defaults.bool(forKey: Self.messagesKey)
         messagesBetweenMacs = defaults.bool(forKey: Self.messagesMacsKey)
@@ -754,6 +759,10 @@ struct SettingsView: View {
                             SettingRow(title: "Skip permissions",
                                        detail: "Start sessions with --dangerously-skip-permissions: Claude runs tools without asking.") {
                                 Toggle("", isOn: $settings.skipPermissions).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            }
+                            SettingRow(title: "Skip the delete prompt too",
+                                       detail: "Sessions started with Skip permissions also stop asking before rm on a path Claude Code can't resolve, or one that could be the home folder or the project's root, so a stray rm -rf can run unasked. It only matters while Skip permissions is on, and applies to sessions started after you turn it on. See Skip permissions in docs/privacy-and-security.md.") {
+                                Toggle("", isOn: $settings.skipRemovalPromptOff).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
                             SettingRow(title: "Screen access",
                                        detail: "Sessions started or restarted while this is on can look at, point at, click, type into, drag and move windows on this Mac's screen, without asking first. What they see goes to Anthropic with the session, including pictures of a window or of the whole screen with what you typed (password fields are blacked out only in a window's picture). See Anthropic, through Screen access in docs/privacy-and-security.md, and SECURITY.md for the permissions every pane already has.") {

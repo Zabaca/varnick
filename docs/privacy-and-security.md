@@ -515,6 +515,16 @@ prompt, can then act with your account's rights.
   says. A listed peer already reaches the host's account over SSH, so this grants nothing SSH doesn't. The
   Linux relay's default, for a request that doesn't say, is off.
 - The Phone page's sessions follow the host's setting.
+- **Skip the delete prompt too** (Settings › Claude, off for every install, never turned on by an upgrade) removes the one prompt
+  Claude Code still shows with permission checks skipped: before `rm` on a path it can't resolve, or one that could be your home
+  folder or the project's root, so a command such as `rm -rf ~` can run without asking. Varnick sets Claude Code's
+  `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` for a session only when that session starts with
+  `--dangerously-skip-permissions` and the switch is on, which includes an automation or task step set to Skip. It is read at each
+  start, so it changes new and restarted sessions, not running ones, and it needs Claude Code 2.1.311 or later (an older one
+  ignores it). It is local to the Mac whose Varnick runs the session: a session this Mac starts on a headless host or another Mac
+  doesn't carry it, and a session another Mac starts here follows this Mac's switch. The voice session never gets it. Claude Code
+  keeps the prompt on whatever the variable says in some setups (a `PermissionRequest` hook, a deny or ask rule on Bash, Edit or
+  Read, `permissions.blockReadsOutsideWorkingDirectories`); see its documentation, "Why the critical-path removal prompt stays on".
 
 ### Peers over SSH
 

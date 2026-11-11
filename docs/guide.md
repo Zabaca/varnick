@@ -52,6 +52,8 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Skip permissions is off.** Claude sessions start with Claude's permission checks on. The setting
   (Settings › Skip permissions) starts them with `--dangerously-skip-permissions` instead: Claude then
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
+  Claude Code still asks before an `rm` it can't resolve or that could hit your home folder or the project's root;
+  **Skip the delete prompt too**, off until you turn it on, removes that last prompt for sessions started with Skip permissions.
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
 - **A session with no `#project` starts in Home,** a folder of Varnick's own, `~/Library/Application Support/Varnick/Home`, made the

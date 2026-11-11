@@ -160,6 +160,11 @@ public enum ClaudeCommand {
         "\(presenceVariable)=\(phoneFolder.appendingPathComponent(presenceMarkerName).path)"
     }
 
+    /// The environment entry that turns off Claude Code's prompt before `rm` on a critical or unresolvable path, in bypassPermissions mode only
+    /// (2.1.311 and later). Claude Code reads it from the launch environment and ignores it in `--settings`, so it never goes in `hookSettings`.
+    /// Added only to a session that starts with `--dangerously-skip-permissions` (`ClaudeSession.launchClaude`).
+    public static let removalPromptOffEntry = "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1"
+
     /// `UserPromptSubmit` writes working even over working: a prompt starts a new working period, and Esc leaves
     /// the file at working.
     static let promptCommand = writeCommand(choosing: "", word: Turn.working.rawValue, always: true)
