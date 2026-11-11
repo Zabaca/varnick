@@ -23,9 +23,16 @@ struct AutomationsSettingsView: View {
 
     var body: some View {
         if let draft = editing {
-            AutomationEditor(draft: draft, isNew: editingIsNew, projects: model.projects, onSave: { saved, resetsAnchor in
+            AutomationEditor(draft: draft, isNew: editingIsNew, deleted: !editingIsNew && store.automation(draft.id) == nil, projects: model.projects, onSave: { saved, resetsAnchor in
                 if editingIsNew {
                     store.save(saved)
+                } else if store.automation(saved.id) == nil {
+                    // A session deleted it while the editor was open (the editor says so): what was typed is added again as a new automation, not lost.
+                    var again = saved
+                    again.id = UUID()
+                    again.createdAt = Date()
+                    again.mark = nil
+                    store.save(again)
                 } else {
                     // Only the fields the editor has go to the automation as it is now: the slot a check fired for since Edit was pressed is the
                     // store's, not the draft's.
@@ -56,7 +63,7 @@ struct AutomationsSettingsView: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Each automation is a prompt this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, out of sight until you open it from the board's Runs tab or a notice; a slot missed by under 12 hours runs at the next wake or launch. Each run draws on your Claude plan, and one run of an automation goes at a time. Sessions can list, make, edit, switch and delete these, and your listed phones can also run and delete them; a mark shows what they did until you open, switch or press Seen (a delete leaves a line in the menu instead), and only you here can set Skip.")
+            Text("Each automation is a prompt this Mac's Varnick starts as a Claude session on a cadence, in a folder of yours, out of sight until you open it from the board's Runs tab or a notice; a slot missed by under 12 hours runs at the next wake or launch. Each run draws on your Claude plan, and one run of an automation goes at a time. Sessions can list, make, edit, switch and delete these, and your listed phones can also run and delete them; a mark shows what they did until you open, switch or press Seen (a delete leaves a line in the menu instead), and only you here can set Skip, or edit or delete one set to Skip.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.bottom, 8)
             if let problem = store.problem {
@@ -177,6 +184,8 @@ struct AutomationsSettingsView: View {
 private struct AutomationEditor: View {
     @State var draft: Automation
     let isNew: Bool
+    /// The automation is gone from the list (a session deleted it while this editor was open): Save adds what is typed again as a new automation.
+    var deleted = false
     let projects: [Project]
     /// Set when the automation lives on a headless host: its folders and agents, its Skip permissions, and the host's refusal of the last Save.
     var remote: HostAutomationStore.Editing?
@@ -296,6 +305,10 @@ private struct AutomationEditor: View {
             field("Tell me when a run is done", detail: "Off, a run that finishes raises no notice here or on your phone until you open it; one that needs you, stops on an error or sends you a message still does. Run now always tells you.") {
                 Toggle("", isOn: $draft.tellsWhenDone).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
+            if deleted {
+                Text("A session deleted this automation while you were editing it. Save adds what you typed again as a new automation, its slots starting from now; Cancel drops it.")
+                    .font(.system(size: 11.5)).foregroundStyle(.red).padding(.horizontal, 14).padding(.top, 8)
+            }
             Text(warning)
                 .font(.system(size: 11.5)).foregroundStyle(.orange)
                 .padding(.horizontal, 14).padding(.vertical, 8)
@@ -305,7 +318,7 @@ private struct AutomationEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
-                Button(isNew ? "Add" : "Save") { save() }
+                Button(isNew ? "Add" : deleted ? "Save as new" : "Save") { save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSave || remote?.saving == true)
             }
@@ -394,10 +407,10 @@ private struct AutomationEditor: View {
         case .weekdays: .weekdays(hour: hour, minute: minute)
         case .weekly: .weekly(weekday: weekday, hour: hour, minute: minute)
         }
-        let resets = cadence != draft.cadence || draft.timeZone != TimeZone.current.identifier || isNew
+        let resets = cadence != draft.cadence || draft.timeZone != TimeZone.current.identifier || isNew || deleted
         next.cadence = cadence
         next.timeZone = TimeZone.current.identifier
-        if isNew { next.lastSlot = Date() }
+        if isNew || deleted { next.lastSlot = Date() }
         onSave(next, resets)
     }
 }

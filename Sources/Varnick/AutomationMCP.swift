@@ -105,7 +105,7 @@ enum AutomationMCP {
 
     private static let switchTool = tool(`switch`,
         summary: "Turns one automation on or off. Turning it on starts its slots from now; turning it off releases nothing, and a run that is going goes on. "
-            + "It works on an automation set to Skip permissions too. To remove one for good, use automation_delete. Tell the user.",
+            + "It works on an automation set to Skip permissions too. To remove one for good, use automation_delete (not for one set to Skip permissions). Tell the user.",
         properties: [
             "id": ["type": "string", "description": "The automation's id from automations_list."],
             "on": ["type": "boolean", "description": "true to turn it on, false to turn it off."],
@@ -113,9 +113,9 @@ enum AutomationMCP {
 
     private static let deleteTool = tool(delete,
         summary: "Deletes one automation (by the id automations_list gives) with its run list, which can't be undone: its prompt, cadence and runs are gone. "
-            + "A run that is going is not ended: it stays as an ordinary tab. It works on an automation set to Skip permissions too, and on one the user has "
-            + "open in the editor (their Save then changes nothing). To only stop it, use automation_switch. "
-            + "Varnick leaves a line in its menu, until the user chooses it, saying which session deleted what. Tell the user what you deleted.",
+            + "A run that is going is not ended: it stays as an ordinary tab. It is refused for an automation the user set to "
+            + "Skip permissions (switch still works on it), and a deletion made while the user has its editor open leaves them Save as new. To only stop one, use "
+            + "automation_switch. Varnick leaves a line in its menu, until the user chooses it or Varnick restarts, saying which session deleted what. Tell the user what you deleted.",
         properties: ["id": ["type": "string", "description": "The automation's id from automations_list."]],
         required: ["id"])
 }

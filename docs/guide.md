@@ -509,7 +509,7 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 - **Claude sessions can manage them.** Every Claude session you start (or restart) lists five Varnick
   tools: list, make, edit, delete and turn on or off an automation, so "run this every weekday morning in this repo" works, and "tell me when each run is done" sets the switch. There is no
   approval step of Varnick's: with Skip permissions off, Claude Code asks before each call. A session can't set Skip, edit
-  an automation you set to Skip (it can switch or delete it) or run one now, and a run's own session never has the tools.
+  or delete an automation you set to Skip (it can switch it), or run one now, and a run's own session never has the tools.
   What a session did shows under the automation in Settings and in the Runs tab, as a mark, until you open its editor, switch it
   or press **Seen**; a session's delete, which can't be undone, leaves a line in the menu bar menu until you choose it.
 - **It runs only while Varnick does on this Mac,** or, for an automation kept on a headless host, on that host's own timer, with every

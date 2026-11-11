@@ -611,6 +611,16 @@ let several = edited(["name": "Evening", "prompt": "Say goodbye", "tell_when_don
 expect("an edit of several fields names each, in the order the mark lists them", several?.changed == ["name", "prompt", "on/off", "tell when done"]
        && several.map { AutomationTools.markText(edited: $0.changed, to: $0.automation) } == "Edited: name, prompt, on/off, tell when done", "\(String(describing: several?.changed))")
 
+let agentSet = edited(["agent": "slot-check-reviewer"], current)
+expect("an edit sets an agent of the automation's folder, by name alone", agentSet?.automation.agent == "slot-check-reviewer" && agentSet?.changed == ["agent"])
+expect("an edit's agent is judged against the automation's folder", problems(["agent": "slot-check-reviewer"], creating: false,
+       AutomationTools.Context(sessionFolder: toolsFolder, homeFolder: otherFolder, current: refolded?.automation)).count == 1)
+let toAllowedOnly = edited(["permissions": "allowed_tools_only"], current)
+expect("an edit sets Allowed tools only", toAllowedOnly?.automation.permissions == .allowedOnly && toAllowedOnly?.changed == ["permissions"])
+let backToAsk = toAllowedOnly.flatMap { edited(["permissions": "ask"], $0.automation) }
+expect("an edit sets Ask, and the same value changes nothing", backToAsk?.automation.permissions == .ask && edited(["permissions": "ask"], current) == nil)
+expect("an edit never sets Skip", problems(["permissions": "skip"], creating: false).count == 1)
+
 // Delete: the line the menu holds once a session has deleted an automation, which has no row left to carry a mark.
 expect("a deletion's line names the automation and the session", AutomationTools.deletedLine(current, by: "Planning").contains("\u{201C}Planning\u{201D}")
        && AutomationTools.deletedLine(current, by: "Planning").contains("\u{201C}\(current.name)\u{201D}"), AutomationTools.deletedLine(current, by: "Planning"))
@@ -623,6 +633,8 @@ var skipping = current
 skipping.permissions = .skip
 expect("a Skip automation may not be edited by a session", AutomationTools.editRefusal(for: skipping) != nil && AutomationTools.editRefusal(for: current) == nil)
 expect("but it may be switched", AutomationTools.switching(skipping, on: false, now: now)?.enabled == false)
+expect("and a session may not delete it either, as `editable_by_sessions` false says", AutomationTools.deleteRefusal(for: skipping)?.contains("may not delete") == true
+       && AutomationTools.deleteRefusal(for: current) == nil && AutomationTools.deleteRefusal(for: off) == nil)
 
 // Switch.
 expect("switching to the state it has changes nothing", AutomationTools.switching(current, on: true, now: now) == nil && AutomationTools.switching(off, on: false, now: now) == nil)
