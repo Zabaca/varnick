@@ -167,12 +167,72 @@ final class ChromiumPump: @unchecked Sendable {
         // A wakeup from before the engine runs is dropped: `start` asks for a pump once it does.
         guard case .running(let kit, _) = ChromiumEngine.state else { return }
         let began = CFAbsoluteTimeGetCurrent()
-        let pumped = kit.pump()
+        let pumped = VarnickApplication.pumping { kit.pump() }
         let took = CFAbsoluteTimeGetCurrent() - began
-        // Long is ordinary when an event the pump delivered ran a loop of its own (a menu, a drag); otherwise it is the engine waiting.
+        // Long is the engine's own work, or something run inside its wait that ran a loop of its own; Varnick's input waits meanwhile.
         if took > 0.25 { NSLog("Varnick: Chromium pump took \(Int(took * 1000)) ms") }
         // Refused (inside another pump, or the engine not ready): asked again, since its work is still owed.
         if !pumped { wake(afterMilliseconds: 10) }
+    }
+}
+
+/// Varnick's application object, for one thing: it answers the wait the engine makes inside a pump, since AppKit answering it loses
+/// any click whose release comes after a pump (ADR 0048). All of its state is the main thread's.
+final class VarnickApplication: NSApplication {
+    private enum Wait { case none, pumping, waiting, givenUp }
+    nonisolated(unsafe) private static var wait = Wait.none
+    nonisolated(unsafe) private static var leaveAsked = false
+    /// Loops opened inside the wait that ask AppKit for events (a menu, a loop of the engine's own).
+    nonisolated(unsafe) private static var nested = 0
+
+    /// Runs one pump, with the engine's wait inside it answered here.
+    static func pumping(_ pump: () -> Bool) -> Bool {
+        wait = .pumping
+        leaveAsked = false
+        defer { wait = .none }
+        return pump()
+    }
+
+    /// How zebkit 0.4.0 waits inside a pump: any event, the default mode, no end.
+    private static func isEngineWait(_ mask: NSEvent.EventTypeMask, _ expiration: Date?, _ mode: RunLoop.Mode) -> Bool {
+        mask == .any && mode == .default && expiration == Date.distantFuture
+    }
+
+    /// How zebkit 0.4.0 leaves that wait: an application-defined event with nothing in it.
+    private static func isEngineLeave(_ event: NSEvent) -> Bool {
+        event.type == .applicationDefined && event.subtype.rawValue == 0 && event.data1 == 0 && event.data2 == 0
+    }
+
+    override func nextEvent(matching mask: NSEvent.EventTypeMask, until expiration: Date?, inMode mode: RunLoop.Mode, dequeue: Bool) -> NSEvent? {
+        guard Thread.isMainThread, Self.wait == .pumping, Self.isEngineWait(mask, expiration, mode) else {
+            // Anything run inside the wait asks AppKit as ever.
+            let inside = Thread.isMainThread && Self.wait == .waiting
+            if inside { Self.nested += 1 }
+            defer { if inside { Self.nested -= 1 } }
+            return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
+        }
+        Self.wait = .waiting
+        let began = CFAbsoluteTimeGetCurrent()
+        while !Self.leaveAsked, CFAbsoluteTimeGetCurrent() - began < 5 { CFRunLoopRunInMode(.defaultMode, 1, true) }
+        guard Self.leaveAsked else {
+            // An engine that leaves some other way would hold every click and key here for good: AppKit answers the rest of this pump.
+            NSLog("Varnick: Chromium's wait wasn't left in 5 s, so AppKit answers it")
+            Self.wait = .givenUp
+            return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
+        }
+        Self.wait = .pumping
+        Self.leaveAsked = false
+        return nil
+    }
+
+    override func postEvent(_ event: NSEvent, atStart: Bool) {
+        guard Thread.isMainThread, Self.wait == .pumping || Self.wait == .waiting, Self.isEngineLeave(event) else {
+            return super.postEvent(event, atStart: atStart)
+        }
+        Self.leaveAsked = true
+        // A loop inside the wait is in AppKit's queue, and may be the one this event is for: it gets the event, and the wait ends early at worst.
+        if Self.nested > 0 { return super.postEvent(event, atStart: atStart) }
+        CFRunLoopStop(CFRunLoopGetMain())
     }
 }
 
