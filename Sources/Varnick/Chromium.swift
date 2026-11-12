@@ -212,10 +212,8 @@ final class VarnickApplication: NSApplication {
             return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
         }
         Self.wait = .waiting
-        var idle = 0
-        while !Self.leaveAsked, idle < 5 {
-            if CFRunLoopRunInMode(.defaultMode, 1, true) == .timedOut { idle += 1 }
-        }
+        let began = CFAbsoluteTimeGetCurrent()
+        while !Self.leaveAsked, CFAbsoluteTimeGetCurrent() - began < 5 { CFRunLoopRunInMode(.defaultMode, 1, true) }
         guard Self.leaveAsked else {
             // An engine that leaves some other way would hold every click and key here for good: AppKit answers the rest of this pump.
             NSLog("Varnick: Chromium's wait wasn't left in 5 s, so AppKit answers it")
