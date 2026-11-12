@@ -533,6 +533,9 @@ def relay_in(home):
     install = os.path.join(home, "install")
     os.makedirs(install, exist_ok=True)
     copy = os.path.join(install, "varnick-peer")
+    # Removed first: macOS kills (SIGKILL) the next exec of a signed binary that was rewritten in place, so each call gets a fresh file.
+    if os.path.exists(copy):
+        os.remove(copy)
     shutil.copy(relay_binary, copy)
     os.chmod(copy, 0o755)
     return copy
