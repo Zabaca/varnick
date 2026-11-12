@@ -3,9 +3,9 @@ import Darwin
 import VarnickPeer
 
 // Chromium panes (prototype): zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
-// 127.0.0.1 so a session can drive the page the user sees (`pane_read` gives the address). The framework is loaded with dlopen at the
-// launch of a Varnick on a Mac that has opened a Chromium pane (`ChromiumEngine.startAtLaunch`): Varnick runs without it (the tile is then not
-// listed), `--mcp` never maps it, and its 133 MB stays out of a Mac that never opens a Chromium pane.
+// 127.0.0.1 so a session can drive the page the user sees (`pane_read` gives the address). The framework is loaded with dlopen the first time a
+// Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (the tile is then not listed),
+// `--mcp` never maps it, and its 133 MB stays out of a Mac that never shows a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
 /// and its CDP endpoint (each pane is a target of its own).
@@ -29,49 +29,48 @@ enum ChromiumEngine {
 
     enum State {
         case notStarted
+        case starting
         case running(Zebkit, cdpPort: UInt32)
         case failed(String)
     }
     private(set) static var state = State.notStarted
 
-    /// A Chromium pane has shown in this account, so the engine starts with Varnick (`startAtLaunch`).
-    private static let wantedKey = "chromiumStartsAtLaunch"
-    private(set) static var isWanted: Bool {
-        get { UserDefaults.standard.bool(forKey: wantedKey) }
-        set { UserDefaults.standard.set(newValue, forKey: wantedKey) }
+    /// What a page finds when it wants the engine.
+    enum Availability {
+        case running(Zebkit)
+        case starting
+        case unavailable(String)
     }
-    /// Set at the first read of `engine`: from then on a start would be inside a run.
-    private static var launchPassed = false
+    /// Panes waiting for the start to settle, told when it has, whether it worked or not.
+    private static var waiters: [@MainActor () -> Void] = []
+    private static var startAsked = false
 
-    /// Only from `applicationDidFinishLaunching`, outside any run-loop run: started inside one, the engine traps (ADR 0048).
-    static func startAtLaunch() {
-        precondition(!launchPassed, "ChromiumEngine.startAtLaunch after launch: the engine would trap inside a run (ADR 0048)")
-        launchPassed = true
-        guard isWanted, isInstalled else { return }
-        _ = start()
-    }
-
-    /// The running engine, or why there is none, in words for the pane. Never starts it: a pane that finds it not started marks it wanted.
-    static var engine: Result<Zebkit, ChromiumFailure> {
-        launchPassed = true
+    /// The engine for a page that wants it now. Not running yet, it is started at the next dispatch between runs of the main run loop,
+    /// the one place it can start (ADR 0048), and `whenSettled` is called once it has, or failed, so the page asks again.
+    static func engine(whenSettled: @escaping @MainActor () -> Void) -> Availability {
         switch state {
-        case .running(let kit, _): return .success(kit)
-        case .failed(let reason): return .failure(ChromiumFailure("Chromium isn't available: " + reason))
-        case .notStarted:
-            guard isInstalled else { return .failure(ChromiumFailure("Chromium isn't available: Zebkit.framework isn't beside this Varnick.")) }
-            let first = !isWanted
-            isWanted = true
-            return .failure(ChromiumFailure(first
-                ? "Chromium starts with Varnick, and this is the first Chromium pane here. Restart Varnick to open this page: from now on it starts at launch."
-                : "Chromium didn't start with this Varnick. Restart Varnick to open this page."))
+        case .running(let kit, _): return .running(kit)
+        case .failed(let reason):
+            return .unavailable("Chromium didn't start in this Varnick: \(reason). It can't start again until Varnick is restarted.")
+        case .notStarted, .starting:
+            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
+            waiters.append(whenSettled)
+            if !startAsked {
+                startAsked = true
+                RunLoopGate.run { start(between: $0) }
+            }
+            return .starting
         }
     }
 
-    private static func start() -> Result<Zebkit, ChromiumFailure> {
-        switch state {
-        case .running(let kit, _): return .success(kit)
-        case .failed(let reason): return .failure(ChromiumFailure(reason))
-        case .notStarted: break
+    /// The only start, and it takes proof that no run of the main run loop is under way, so a start inside one can't be written.
+    private static func start(between _: BetweenRuns) {
+        guard case .notStarted = state else { return }
+        state = .starting
+        defer {
+            let told = waiters
+            waiters = []
+            for waiter in told { waiter() }
         }
         do {
             let kit = try Zebkit(framework: frameworkURL)
@@ -94,12 +93,10 @@ enum ChromiumEngine {
             state = .running(kit, cdpPort: port)
             NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, CDP on 127.0.0.1:\(port)")
             ChromiumPump.shared.wake(afterMilliseconds: 0)
-            return .success(kit)
         } catch {
             let reason = (error as? ChromiumFailure)?.reason ?? error.localizedDescription
             NSLog("Varnick: Chromium: \(reason)")
             state = .failed(reason)
-            return .failure(ChromiumFailure(reason))
         }
     }
 
@@ -176,8 +173,8 @@ final class ChromiumPump: @unchecked Sendable {
     }
 }
 
-/// Varnick's application object, for one thing: it answers the wait the engine makes inside a pump, since AppKit answering it loses
-/// any click whose release comes after a pump (ADR 0048). All of its state is the main thread's.
+/// Varnick's application object: it answers the wait the engine makes inside a pump, since AppKit answering it loses any click whose release
+/// comes after a pump (ADR 0048), and it dispatches the gate's event that starts the engine. All of its state is the main thread's.
 final class VarnickApplication: NSApplication {
     private enum Wait { case none, pumping, waiting, givenUp }
     nonisolated(unsafe) private static var wait = Wait.none
@@ -223,6 +220,12 @@ final class VarnickApplication: NSApplication {
         Self.wait = .pumping
         Self.leaveAsked = false
         return nil
+    }
+
+    /// The gate's own event starts the engine between runs (`RunLoopGate`); every other event goes on to AppKit.
+    override func sendEvent(_ event: NSEvent) {
+        if RunLoopGate.handle(event) { return }
+        super.sendEvent(event)
     }
 
     override func postEvent(_ event: NSEvent, atStart: Bool) {
@@ -313,12 +316,13 @@ final class ChromiumPage: NSView {
     private var wanted: String?
     private var closed = false
     private var pageQueued = false
+    private var waitingForEngine = false
     /// What the pane shows in place of the page, when it has none it can make: for `pane_read` too.
     var problem: String? { note.isHidden ? nil : note.stringValue }
     /// The committed address and the title, as the page changes them.
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
-    /// Why there is no page (the engine missing or failing to start), shown in place of it.
+    /// Why there is no page (the engine starting, missing or failed), shown in place of it.
     private let note = NSTextField(labelWithString: "")
 
     override init(frame: NSRect) {
@@ -398,10 +402,18 @@ final class ChromiumPage: NSView {
 
     private func makePageNow() {
         guard view == nil, !closed, window != nil, bounds.width >= 1, bounds.height >= 1, let url = wanted, !url.isEmpty else { return }
-        switch ChromiumEngine.engine {
-        case .failure(let failure):
-            show(failure.reason)
-        case .success(let kit):
+        // The engine is asked for once while it starts: every layout pass lands here.
+        guard !waitingForEngine else { return }
+        switch ChromiumEngine.engine(whenSettled: { [weak self] in
+            self?.waitingForEngine = false
+            self?.makePage()
+        }) {
+        case .starting:
+            waitingForEngine = true
+            show("Starting Chromium. This page opens when it is up.")
+        case .unavailable(let reason):
+            show(reason)
+        case .running(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
                 show("Chromium couldn't open a page.")
