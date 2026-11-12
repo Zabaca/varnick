@@ -1095,7 +1095,7 @@ if let refusal = AccountLock.refusal(AccountLock.acquire(
 }
 
 MainActor.assumeIsolated {
-    let app = NSApplication.shared
+    let app = VarnickApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
     // The app's own copy of the custom-apps and tasks skills, linked for Claude Code as `make skill-link` does for a checkout.

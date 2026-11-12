@@ -136,6 +136,10 @@ private func wake(_ delay: Int64, _ data: UnsafeMutableRawPointer?) {
 /// main-queue block: the pump's own event loop holds the main queue there, where the panes' work arrives (ADR 0048).
 final class ChromiumPump: @unchecked Sendable {
     static let shared = ChromiumPump()
+    /// Main thread only, read by `VarnickApplication`: a pump is running, its wait is running, and the engine has asked to leave that wait.
+    nonisolated(unsafe) static var isPumping = false
+    nonisolated(unsafe) static var isWaiting = false
+    nonisolated(unsafe) static var leaveAsked = false
     private let lock = NSLock()
     /// When the engine next wants a pump, `.infinity` when it has asked for none. Under `lock`, and never set while the timer is parked.
     private var deadline = Double.infinity
@@ -167,12 +171,41 @@ final class ChromiumPump: @unchecked Sendable {
         // A wakeup from before the engine runs is dropped: `start` asks for a pump once it does.
         guard case .running(let kit, _) = ChromiumEngine.state else { return }
         let began = CFAbsoluteTimeGetCurrent()
+        Self.isPumping = true
+        Self.leaveAsked = false
         let pumped = kit.pump()
+        Self.isPumping = false
         let took = CFAbsoluteTimeGetCurrent() - began
         // Long is ordinary when an event the pump delivered ran a loop of its own (a menu, a drag); otherwise it is the engine waiting.
         if took > 0.25 { NSLog("Varnick: Chromium pump took \(Int(took * 1000)) ms") }
         // Refused (inside another pump, or the engine not ready): asked again, since its work is still owed.
         if !pumped { wake(afterMilliseconds: 10) }
+    }
+}
+
+/// Varnick's application object, for one thing: inside a pump the engine waits by asking the application for its next event (any event, the
+/// default mode, no end) and leaves by posting an application-defined one. Answered by AppKit, that wait reads Varnick's own events, and a
+/// press whose release it spans loses its click (ADR 0048). So the wait is a plain run of the run loop here, and AppKit's queue is never read.
+final class VarnickApplication: NSApplication {
+    override func nextEvent(matching mask: NSEvent.EventTypeMask, until expiration: Date?, inMode mode: RunLoop.Mode, dequeue: Bool) -> NSEvent? {
+        // Only the engine's own call: anything Varnick runs inside the wait (a menu, a modal sheet) asks AppKit as ever.
+        guard ChromiumPump.isPumping, !ChromiumPump.isWaiting, mask == .any, mode == .default, expiration == Date.distantFuture else {
+            return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
+        }
+        ChromiumPump.isWaiting = true
+        while !ChromiumPump.leaveAsked { CFRunLoopRunInMode(.defaultMode, 1, true) }
+        ChromiumPump.isWaiting = false
+        ChromiumPump.leaveAsked = false
+        return nil
+    }
+
+    override func postEvent(_ event: NSEvent, atStart: Bool) {
+        if ChromiumPump.isPumping, event.type == .applicationDefined, event.subtype.rawValue == 0, event.data1 == 0, event.data2 == 0 {
+            ChromiumPump.leaveAsked = true
+            CFRunLoopStop(CFRunLoopGetMain())
+            return
+        }
+        super.postEvent(event, atStart: atStart)
     }
 }
 
