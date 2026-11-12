@@ -1069,9 +1069,10 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(OutlineAppendRequestHead.self, from: line)?.outlineAppend != nil {
             return await OutlineAppendAccess.shared.answer(line)
         }
-        // A task request (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is told apart the same way, by its own key.
-        if head.op == nil, PeerJSON.decode(TaskToolRequestHead.self, from: line)?.tasks != nil {
-            return await TaskAccess.shared.answer(line)
+        // A task request from a session still on an MCP server of a build that had Tasks (removed 2026-11-12): answered plainly, since a line with no `op` would
+        // otherwise reach the version check below and tell the session to rebuild the Macs. Told apart by its `tasks` key, as the other requests are.
+        if head.op == nil, PeerJSON.decode(RemovedTaskRequestHead.self, from: line)?.tasks != nil {
+            return PeerJSON.line(ScreenReply(text: "Tasks were removed from Varnick, so there is no task tool now. Restart this session to drop the tools from its list.", isError: true))
         }
         // A voice session's search request (option 09 of `listening-never-answers`) is told apart the same way, by its own key.
         if head.op == nil, PeerJSON.decode(VoiceSearchRequestHead.self, from: line)?.search != nil {
@@ -1196,4 +1197,9 @@ final class PeerManager: ObservableObject {
         Task { await refresh(from.id, confirming: true) }
         return true
     }
+}
+
+/// Just the `tasks` key of a task request an older MCP server may still send (`PeerManager.handle`).
+private struct RemovedTaskRequestHead: Decodable {
+    var tasks: Int?
 }

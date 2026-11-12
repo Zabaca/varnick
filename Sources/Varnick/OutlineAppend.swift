@@ -61,7 +61,7 @@ enum OutlineAppendRefusal: Error {
     case versionDiffers
     case starting
     case noPane
-    /// The pane is not an automation's run: other sessions edit the Outline with `outline_act`, and a Task's run and the voice session never do.
+    /// The pane is not an automation's run: other sessions edit the Outline with `outline_act`, and the voice session never does.
     case notAnAutomationRun
     /// The automation's allowed tools don't name the tool; a server that listed it was started from a record that did.
     case notNamed
@@ -157,8 +157,8 @@ final class OutlineAppendAccess {
             + (plan.heading == nil ? "was made at the end of the top level." : "was already there.")
     }
 
-    /// An automation's run: not a Task's step, not the voice session, not an ordinary pane.
+    /// An automation's run: not the voice session, not an ordinary pane.
     private static func isAutomationRun(_ session: ClaudeSession) -> Bool {
-        session.record.automation != nil && session.record.taskRun == nil && !session.record.isVoice
+        session.record.automation != nil && !session.record.isVoice
     }
 }

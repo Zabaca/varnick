@@ -16,8 +16,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private(set) var webView: WKWebView?
     /// Chromium panes only (`ChromiumPage`), in place of `webView`.
     private(set) var chromiumPage: ChromiumPage?
-    /// A Task pane's task (option 01 of tasks-cant-be-handed-to-varnick): its steps, its gates and its harness. Nil for any other pane.
-    private(set) var task: TaskController?
     /// File panes only.
     private(set) var fileViewer: FileViewer?
     /// File panes showing Markdown: the source instead of the rendered page.
@@ -299,7 +297,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var isWeb: Bool { record.isWeb }
     var isFile: Bool { record.isFile }
     var isApp: Bool { record.isApp }
-    var isTask: Bool { record.isTask }
     var isClaude: Bool { record.isClaude }
     var isLiveTranscript: Bool { record.isLiveTranscript }
     /// The session runs on a peer, and this pane is an ssh client of its host's zmx.
@@ -389,13 +386,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.nativeBackgroundColor = NSColor(white: 0.1, alpha: 1)
         view.nativeForegroundColor = NSColor(white: 0.9, alpha: 1)
         view.caretColor = .systemBlue
-        if record.isTask { task = TaskController() }
         if record.isChromium {
             makeChromiumPage()
         } else if record.isWeb, !record.staysOnHost {
             makeWebView()
         }
-        task?.session = self
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
         }
@@ -656,12 +651,11 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         }
         // Which sets of MCP tools a pane gets (the one place; ADR 0031's amendment of 2026-10-17 is the docs' home), read at each start, not stored:
         // `notify` always; Panel access's set and the pane tools with no switch; the screen tools while Screen access is on (ADR 0023); the
-        // automation tools with no switch, the task tools while Tasks is on. A run of an automation lists `notify` alone (option 01 of
-        // `prompts-cant-run-on-a-schedule`), and `outline_append` too when its allowed tools name it (ADR 0040's amendment of 2026-10-29). A step of a Task's Run is a run too: `notify` and, while its folder holds the step's result schema,
-        // `task_result` (option 01 of `work-cant-be-saved-or-chained`, slice 2a). The voice session gets a pane's set but not the pane tools.
+        // automation tools with no switch. A run of an automation lists `notify` alone (option 01 of
+        // `prompts-cant-run-on-a-schedule`), and `outline_append` too when its allowed tools name it (ADR 0040's amendment of 2026-10-29). The voice
+        // session gets a pane's set but not the pane tools.
         // The Problems board's work-link hooks are read at each start as well.
         let isRun = record.isRun
-        let taskResult = record.taskRun != nil && TaskResultTool.isPrepared(in: PaneFolder.url(for: record.id))
         // The voice session (option 09 of `listening-never-answers`) has a pane's full set and the search tool, and two more hooks.
         let isVoice = record.isVoice
         // Messages between sessions (option 01 of `sessions-cant-reach-each-other-reliably`): a pane that gets the pane tools loads Varnick's channel plugin
@@ -679,13 +673,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
                                                                                     panel: !isRun,
                                                                                     automations: !isRun,
-                                                                                    tasks: !isRun && Settings.shared.tasksOn, taskResult: taskResult,
                                                                                     voiceSearch: isVoice,
                                                                                     panes: !isRun && !isVoice,
-                                                                                    outlineAppend: record.automation != nil && record.taskRun == nil && !isVoice
+                                                                                    outlineAppend: record.automation != nil && !isVoice
                                                                                         && OutlineAppendTool.isNamed(in: record.allowedTools ?? []),
                                                                                     messages: receivesMessages),
-                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [], taskResult: taskResult,
+                                                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [],
                                                  voice: isVoice, appendSystemPrompt: record.opener?.paragraph(messages: receivesMessages),
                                                  channelPlugin: receivesMessages ? ChannelPlugin.folder.path : nil,
                                                  permissionHooks: !skipsDeletePrompt)
@@ -1306,7 +1299,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // what a run has, as `openRun` and `applyRunFields` do.
         if record.isRun {
             left.automation = record.automation
-            left.taskRun = record.taskRun
             left.skipPermissions = record.skipPermissions
             left.dontAsk = record.dontAsk
             left.allowedTools = record.allowedTools
@@ -1656,10 +1648,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// Shells: whatever title the shell sets (often the folder), else "Terminal".
     var label: String {
         if let file = record.file { return (file as NSString).lastPathComponent }
-        if let task {
-            // The tab title carries the task's state: running, needs you, done, stopped, gave up.
-            return task.titleSuffix.isEmpty ? "Website" : "Website: \(task.titleSuffix)"
-        }
         if isWeb {
             if !title.isEmpty { return title }
             if let app = customApp { return app.name }
@@ -1712,11 +1700,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let config = WKWebViewConfiguration()
         // Right-click › Inspect Element, and Safari's Develop menu.
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        if let task {
-            // A Task pane's website data is its own: not persistent, shared with no other pane, empty when the pane opens and gone when it closes.
-            config.websiteDataStore = .nonPersistent()
-            TaskWebPage.install(in: config, touch: task.touch)
-        }
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 760, height: 520), configuration: config)
         web.isInspectable = true
         web.navigationDelegate = self
@@ -1890,7 +1873,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     private func endNow() {
         endedByUser = true
-        task?.shutdown()
         endSessionOnHost()
         // No client to close. A card on a peer is this Mac's view only; with the check of an exited
         // client pending, the session is this pane's to end, as for any pane in control.

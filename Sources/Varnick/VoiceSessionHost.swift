@@ -4,7 +4,7 @@ import SwiftUI
 import VarnickPeer
 
 // The voice session on this Mac (option 09 of `listening-never-answers`): the running Varnick, on the main actor, keeps the one hidden Claude session
-// in Home that answers spoken requests, as `TaskHost` keeps a Task's Claude steps. What it decides, types, reads and says of a request is in the shared
+// in Home that answers spoken requests. What it decides, types, reads and says of a request is in the shared
 // package (`VoiceSession`, `VoicePaste`, `VoiceReply`, `VoiceWatch`), so a host's relay can reuse it; this file is the Mac's adapter: it starts the pane,
 // types into its zmx session, observes its files and turns, and ends it. Hey Varnick is the first surface (`SpokenRequests`). The rules that break
 // are in docs/agents/where-it-breaks.md (Listening and spoken requests; Sessions and tabs).
@@ -350,7 +350,7 @@ struct VoiceSessionShowButton: View {
 }
 
 extension LauncherModel {
-    /// Hands the model to the voice session's host once the saved tabs are restored (`applicationDidFinishLaunching`, beside `startTasks`).
+    /// Hands the model to the voice session's host once the saved tabs are restored (`applicationDidFinishLaunching`, beside `startAutomations`).
     func startVoiceSession() {
         voiceSession.start(model: self)
     }

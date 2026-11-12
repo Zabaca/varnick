@@ -1,5 +1,7 @@
 # Varnick carries out a task in a browser of its own, with Jev choosing each step and Claude steering
 
+Withdrawn 2026-11-12, at the user's request: Tasks, the Website pane and the harness were experimental, and were removed (the code, the `!task` command, Settings › Tasks and the Tasks switch, the task tools and the `tasks` skill). They may return, so this record stays as written. [ADR 0041](0041-a-task-is-a-checked-state-graph-run-by-varnick-and-an-automation-is-its-trigger.md) says what the removal left in the files.
+
 The user wants to hand Varnick a task that takes many steps on a website ("find how much delivery to Canada costs", "create an account for Robin Vale") and get on with something else. Hey Varnick never acts (ADR 0015), and a Claude session with Screen access (ADR 0023) can act only on the user's own screen, a Claude turn for every click. agent-lab's pilots of 2026-10-14 (hybrid-browser 1 to 15) solved all five tasks on a made-up shop in both runs, against 7 of 10 for Claude alone, with 2 to 6 times fewer Claude calls, by splitting the work: the harness owns the loop, a fast model (System 1) chooses each step, and Claude (System 2) writes values and steers. The problem and its options are in `docs/problems/tasks-cant-be-handed-to-varnick/`; this records option 01, accepted 2026-10-14 with the problem's recommended decisions.
 
 ## Decision

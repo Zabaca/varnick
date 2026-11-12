@@ -1,7 +1,7 @@
 import Foundation
 
 /// A trigger: a cadence, a Task and its input values (CONTEXT.md, Automation), kept on the host that fires it. Its Task is always the Claude prompt
-/// for now. Its Runs are in the runs file (`TaskRunFile`), not here.
+/// (Tasks of their own were removed 2026-11-12). Its Runs are in the runs file (`TaskRunFile`), not here.
 public struct Automation: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String

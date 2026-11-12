@@ -426,7 +426,7 @@ expect("an id of a pane that has gone is refused", decide(target: nil) == .gone)
 expect("the sender itself is refused", decide(toSelf: true) == .toSelf)
 expect("a terminal, page, app or file is refused", decide(target: .init(kind: .other)) == .notClaude)
 expect("a pane of another Mac is refused", decide(target: .init(kind: .claude, onOtherMac: true)) == .otherMac)
-expect("the voice session, a run and a Task step are refused for good", decide(target: .init(kind: .claude, neverReceives: true)) == .cannotReceiveEver)
+expect("the voice session and a run are refused for good", decide(target: .init(kind: .claude, neverReceives: true)) == .cannotReceiveEver)
 expect("a session that isn't running is refused", decide(target: .init(kind: .claude, running: false, receives: false)) == .notRunning)
 expect("a session without the channel is refused with the Restart advice", decide(target: .init(kind: .claude, receives: false)) == .cannotReceive
        && SendRules.Refusal.cannotReceive.message.contains("Restart"))

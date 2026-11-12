@@ -7,6 +7,8 @@ evidence: The user's concept and constraints of 2026-10-14, relayed by the coord
 status: open
 ---
 
+Note, 2026-11-12: the Website pane that option 01 built, and the Tasks switch, were removed at the user's request (experimental; they may return): see the amendment of [ADR 0041](../../adr/0041-a-task-is-a-checked-state-graph-run-by-varnick-and-an-automation-is-its-trigger.md). The problem is still open, and what is written below about what shipped describes code that is gone.
+
 ## What the user wants (2026-10-14)
 
 **The concept, in the user's words:**

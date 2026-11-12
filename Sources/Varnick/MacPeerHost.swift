@@ -243,8 +243,6 @@ enum PeerOpenTabs {
         // A pane runs in zmx, where another machine can attach to it, only while Keep sessions running is on.
         let keepOff = !PeerIdentity.defaults.bool(forKey: Settings.keepSessionsRunningKey)
         let why = "Panes are reachable from another machine only while Keep sessions running is on in \(PeerIdentity.name ?? "that Mac")'s Settings."
-        // A hidden Task Run's tab (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is not listed at all: the phone's Runs list and the other Macs'
-        // lists are automation runs only until slice 3 lists a Task's Runs there.
         // The voice session's hidden tab (option 09 of `listening-never-answers`) is listed once it has taken its first request (option 02 of
         // `voice-mode-forgets-the-exchange`), marked `voice` and not as a run. The relay tells it to a listed device alone (`PeerTab.visible`); the phone's Voice
         // mode still reaches it by the needs-you event of `voiceStatus`, which names its session.
@@ -268,8 +266,8 @@ enum PeerOpenTabs {
         let listed = voice && VoiceSession.isListed(turn: PaneFolder.recordedTurn(for: record.id),
                                                     takenAt: PaneFolder.modificationDate(PaneFolder.voiceTakenFile(for: record.id).path),
                                                     stopped: PaneFolder.hasStopped(for: record.id))
-        // The Messages checklist's throwaway sessions are listed nowhere: they are marked as a Task's step, which is not listed at all.
-        return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, taskRun: record.taskRun != nil || record.messageCheck == true,
+        // The Messages checklist's throwaway sessions are listed nowhere: they are marked `messageCheck`, which leaves their tab out.
+        return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, messageCheck: record.messageCheck == true,
                              automation: record.automation.map { $0.uuidString.lowercased() }, voiceListed: listed, quietDone: record.quietDone == true)
     }
 

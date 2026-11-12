@@ -47,10 +47,10 @@ extension NoticeKind {
 @MainActor
 final class SessionNotifier: ObservableObject {
     struct Notice: Identifiable, Equatable {
-        /// The pane's id, or a Task Run's own (`runLine` says it is one).
+        /// The pane's id, or the id of a notice that has no pane (`runLine` says it has none).
         let id: UUID
         var kind: NoticeKind
-        /// The menu line of a Task Run's notice, written from the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a): nil for a pane's.
+        /// The menu line of a notice that has no pane (a paired Mac's ask, an automation a session deleted): nil for a pane's.
         var runLine: String?
     }
 
@@ -92,7 +92,6 @@ final class SessionNotifier: ObservableObject {
     /// A pane's turn changed word (`ClaudeSession.onTurnWordChange`).
     func turnChanged(in pane: ClaudeSession, from old: PaneTurn?, to new: PaneTurn) {
         guard let model, model.tabs.contains(where: { $0.contains(pane) }) else { return }
-        if pane.record.taskRun != nil { model.taskHost.paneTurnChanged(pane) }
         if pane.record.isVoice { model.voiceSession.paneTurnChanged(pane, to: new.turn) }
         // A peer's date moves with each reply, so the same turn is told within a couple of seconds.
         let sameTurn = old.map { abs($0.since.timeIntervalSince(new.since)) <= 2 } ?? false
@@ -101,9 +100,6 @@ final class SessionNotifier: ObservableObject {
             NoticeRule.decide(from: old?.turn, to: new.turn, failure: new.failure, interrupted: new.interrupted, sameTurn: sameTurn,
                               inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: switches(for: pane)),
             standing: notices.first { $0.id == pane.id }?.kind)
-        // A Task step's pane raises Needs you and Messages only: its Done and its errors are the step's outcome, and the Run's own notice says how
-        // the Run ended.
-        if pane.record.taskRun != nil, case .raise(let kind) = decision, kind.settles { decision = .none }
         // The voice session's turn that a surface waits on, or took the answer of, raises no Done: the answer was spoken (option 09 of
         // `listening-never-answers`). A turn that went past the deadline raises it when it finishes.
         if case .raise(let kind) = decision, kind.settles, model.voiceSession.suppressesDone(pane) { decision = .none }
@@ -175,7 +171,7 @@ final class SessionNotifier: ObservableObject {
                 NoticeRule.decide(from: wait.from, to: turn.turn, failure: turn.failure, interrupted: turn.interrupted,
                                   inControl: pane.away == nil, onScreen: model.isOnScreen(pane), switches: switches(for: pane)),
                 standing: notices.first { $0.id == id }?.kind)
-            if case .raise(let kind) = decision, pane.record.taskRun == nil, !model.voiceSession.suppressesDone(pane) { raise(kind, for: pane) }
+            if case .raise(let kind) = decision, !model.voiceSession.suppressesDone(pane) { raise(kind, for: pane) }
         }
     }
 
@@ -209,7 +205,7 @@ final class SessionNotifier: ObservableObject {
     // MARK: A paired Mac's ask
 
     /// The notice of a paired Mac that asked this one to join messages between Macs (option 02 of `sessions-cant-reach-each-other-reliably`), by the asking Mac's id.
-    /// It stands in the menu like a Task Run's, with its own line; choosing it opens Settings › Claude, where the checklist and the Also between my Macs and hosts switch are.
+    /// It stands in the menu with its own line; choosing it opens Settings › Claude, where the checklist and the Also between my Macs and hosts switch are.
     /// It goes when this Mac is ready, when it is chosen, or with the "Messages" switch of Settings › Notifications off.
     private(set) var macAsks: Set<UUID> = []
 
@@ -248,49 +244,6 @@ final class SessionNotifier: ObservableObject {
         clear(id)
     }
 
-    // MARK: A Task Run's own notice
-
-    /// The notice of a Task Run, by the Run's id, beside the panes' with the same kinds and switches (option 01 of `work-cant-be-saved-or-chained`,
-    /// slice 2a). It stays on this Mac: the phone's push names a tab and a pane to open, and a Run has neither there until Runs are listed on the phone.
-    /// Not raised for a Run whose view the user is looking at.
-    private func postRun(_ run: TaskRun, kind: NoticeKind, line: String) {
-        guard let model, Settings.shared.noticeSwitches.allows(kind) else { return }
-        if model.showingBoard, !model.showingSettings, model.board.tab == .runs, model.board.runs.detail == run.id, SessionBoard.panelIsKey { return }
-        notices.removeAll { $0.id == run.id }
-        notices.insert(Notice(id: run.id, kind: kind, runLine: line), at: 0)
-        play(kind)
-    }
-
-    /// A Notify step's message.
-    func raiseRunMessage(_ run: TaskRun, title: String) {
-        postRun(run, kind: .message(title), line: "\(run.task) · \(title)")
-    }
-
-    /// An opened Claude step's turn ended with no result and it keeps waiting for one: the stall is a notice of the Run's own.
-    func raiseRunWaiting(_ run: TaskRun, step: String) {
-        postRun(run, kind: .needsYou(.question), line: "\(run.task) · \(step) ended its turn without a result and waits for one")
-    }
-
-    /// How a Run ended: Done with its result, or Stopped on an error with the step and the outcome that led there ("Failed at check: no").
-    func raiseRunEnd(_ run: TaskRun) {
-        switch run.state {
-        case .done:
-            postRun(run, kind: .done, line: "\(run.task) · Done" + (run.result.map { Self.summary(of: $0) }.flatMap { $0.isEmpty ? nil : ": " + $0 } ?? ""))
-        case .failed, .stoppedAtLimit, .endedAfterWaiting:
-            postRun(run, kind: .failed(nil), line: "\(run.task) · Stopped on an error (\(run.detail ?? "failed"))")
-        default:
-            break
-        }
-    }
-
-    /// A result's fields on one line, cut to fit a menu.
-    static func summary(of result: TaskValue) -> String {
-        guard let object = result.object else { return "" }
-        let text = object.keys.sorted().map { "\($0): \(object[$0]!.inText)" }.joined(separator: ", ")
-        let line = text.replacingOccurrences(of: "\n", with: " ")
-        return line.count > 60 ? String(line.prefix(59)) + "…" : line
-    }
-
     /// One sound per notice; several in the same moment don't stack, but a louder one replaces a softer.
     private func play(_ kind: NoticeKind) {
         if Date().timeIntervalSince(lastSound) <= 0.5 {
@@ -323,7 +276,7 @@ final class SessionNotifier: ObservableObject {
         let switches = Settings.shared.noticeSwitches
         let kept = notices.filter { notice in
             if deletions.contains(notice.id) { return true }
-            // A Task Run's notice stands until it is chosen or the Run's view is shown.
+            // A notice with no pane stands until it is chosen.
             if notice.runLine != nil { return switches.allows(notice.kind) }
             // The notice of a run nobody opened outlives its ended process: choosing it resumes the conversation.
             guard let pane = model.claudePane(notice.id) else { return model.endedRun(notice.id) != nil && switches.allows(notice.kind) }

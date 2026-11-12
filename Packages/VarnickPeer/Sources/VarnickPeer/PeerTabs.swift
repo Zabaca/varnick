@@ -321,8 +321,8 @@ public struct PeerTabRecord: Equatable, Sendable {
     public var unopenedVoice: Bool
     /// An unopened run that isn't the voice session.
     public var unopenedRun: Bool
-    /// The record is a step of a Task's Run.
-    public var taskRun: Bool
+    /// The record is a throwaway session of the Messages checklist's test (the Mac's `SessionRecord.messageCheck`), which no list shows.
+    public var messageCheck: Bool
     /// The automation that made it, a lowercase uuid.
     public var automation: String?
     /// For an unopened voice session: whether it has taken a request (`VoiceSession.isListed`).
@@ -330,11 +330,11 @@ public struct PeerTabRecord: Equatable, Sendable {
     /// The run's Done is quiet (the Mac's `SessionRecord.quietDone`), which the mark carries only while the run is unopened.
     public var quietDone: Bool
 
-    public init(unopenedVoice: Bool = false, unopenedRun: Bool = false, taskRun: Bool = false, automation: String? = nil, voiceListed: Bool = false,
+    public init(unopenedVoice: Bool = false, unopenedRun: Bool = false, messageCheck: Bool = false, automation: String? = nil, voiceListed: Bool = false,
                 quietDone: Bool = false) {
         self.unopenedVoice = unopenedVoice
         self.unopenedRun = unopenedRun
-        self.taskRun = taskRun
+        self.messageCheck = messageCheck
         self.automation = automation
         self.voiceListed = voiceListed
         self.quietDone = quietDone
@@ -353,10 +353,10 @@ public enum PeerTabMarks {
         }
     }
 
-    /// Nil: the tab is left out. A Task's unopened Run is (until its Runs are listed), and so is a Voice session that has taken no request. Otherwise an
+    /// Nil: the tab is left out. A Messages checklist test session's unopened run is, and so is a Voice session that has taken no request. Otherwise an
     /// unopened run is marked as a run (protocol 29), and an unopened Voice session as the Voice session and never as a run.
     public static func choose(_ records: [PeerTabRecord]) -> Choice? {
-        if records.contains(where: { ($0.unopenedRun && $0.taskRun) || ($0.unopenedVoice && !$0.voiceListed) }) { return nil }
+        if records.contains(where: { ($0.unopenedRun && $0.messageCheck) || ($0.unopenedVoice && !$0.voiceListed) }) { return nil }
         let runs = records.filter(\.unopenedRun)
         return Choice(run: runs.isEmpty ? nil : PeerRunMark(automation: runs.compactMap(\.automation).first, quietDone: runs.allSatisfy(\.quietDone) ? true : nil),
                       voice: records.contains(where: \.unopenedVoice) ? true : nil)

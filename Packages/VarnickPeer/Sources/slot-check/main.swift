@@ -448,22 +448,17 @@ let movedOne = AutomationFile.read(at: file).automations
 expect("and writes version 2 with the folder in the input", movedOne.first?.folder == "/old/default"
        && ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any])?["version"] as? Int == 2)
 
-// The input of the two built-in Tasks is checked in code.
+// The input of the built-in Claude prompt Task is checked in code.
 let claudeInput: [String: TaskValue] = ["prompt": .text("Say hello")]
 expect("Claude prompt takes a prompt alone", BuiltInTask.claudePrompt.problems(in: claudeInput).isEmpty)
 expect("it takes a folder and an agent", BuiltInTask.claudePrompt.problems(in: claudeInput.merging(["folder": .text("/x"), "agent": .text("a")]) { $1 }).isEmpty)
 expect("it needs a prompt", BuiltInTask.claudePrompt.problems(in: [:]) == ["prompt is missing"] && BuiltInTask.claudePrompt.problems(in: ["prompt": .text("  \n")]) == ["prompt is empty"])
 expect("a field must be text", BuiltInTask.claudePrompt.problems(in: ["prompt": .number(3)]) == ["prompt must be text"])
 expect("a field it doesn't have is a problem", BuiltInTask.claudePrompt.problems(in: claudeInput.merging(["site": .text("https://a.example")]) { $1 }) == ["site isn't a field of Claude prompt"])
-expect("On this site needs a site and a goal", BuiltInTask.onThisSite.problems(in: [:]) == ["site is missing", "goal is missing"])
-expect("a site is an http or https address", BuiltInTask.onThisSite.problems(in: ["site": .text("https://shop.example/x"), "goal": .text("Find the price")]).isEmpty
-       && BuiltInTask.onThisSite.problems(in: ["site": .text("ftp://shop.example"), "goal": .text("x")]) == ["site must be an http or https address"]
-       && BuiltInTask.onThisSite.problems(in: ["site": .text("not a site"), "goal": .text("x")]) == ["site must be an http or https address"])
-expect("both are listed, Claude prompt first", BuiltInTask.all.map(\.name) == ["Claude prompt", "On this site"])
 var emptyPrompt = sample
 emptyPrompt.prompt = "  "
 expect("an automation with a blank prompt, or a Task that isn't the Claude prompt, is not runnable", !emptyPrompt.isRunnable
-       && { var site = sample; site.task = "On this site"; return !site.isRunnable }())
+       && { var other = sample; other.task = "Other"; return !other.isRunnable }())
 
 // A value round-trips as the JSON it is.
 let valueCase: TaskValue = .object(["a": .list([.number(1.5), .bool(true), .null, .text("x")]), "b": .bool(false)])
@@ -924,8 +919,6 @@ func problems(_ change: (inout Automation) -> Void) -> [String] {
     change(&automation)
     return refused(HostAutomationSave.save(automation, into: [host], sender: hostMac, now: hostNow, in: hostEnvironment))
 }
-expect("On this site is refused by name", problems { $0.task = BuiltInTask.onThisSite.name; $0.input = ["site": .text("https://example.com"), "goal": .text("find")] }
-    .contains(HostAutomationSave.siteRefusal))
 expect("a Task the host doesn't have is refused by name", problems { $0.task = "Other" }.contains { $0.contains("\"Other\"") })
 expect("no name is a problem", problems { $0.name = "  " }.contains("It has no name"))
 expect("no prompt is a problem", problems { $0.prompt = " " }.contains { $0.contains("prompt") })
@@ -1024,13 +1017,13 @@ func replyVersion(_ runs: [TaskRun]) -> Int {
 expect("its reply says version 1 while it holds only Runs version 1 wrote, so a Mac from before slice 2a still reads it",
        replyVersion([]) == 1 && replyVersion([hostOwnRun]) == 1 && replyVersion([hostOwnRun, TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow, late: true), state: .running,
                                                                                                       steps: [TaskRunStep(name: "claude", capability: "claude", pane: UUID())])]) == 1)
-expect("and version 2 once it holds a Run slice 2a shaped", replyVersion([TaskRun(trigger: .byHand(at: hostNow), state: .running)]) == 2
+expect("and version 2 once it holds a Run slice 2a shaped", replyVersion([TaskRun(trigger: TaskRunTrigger(automation: nil, slot: hostNow, origin: .hand), state: .running)]) == 2
        && replyVersion([TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .failed)]) == 2
        && replyVersion([TaskRun(trigger: TaskRunTrigger(automation: host.id, slot: hostNow), state: .running, steps: [TaskRunStep(name: "a", capability: "claude", state: .started)])]) == 2)
 try? TaskRunFile.write([hostOwnRun], to: hostRunsURL)
 let hostRunsVersion = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: hostRunsURL))) as? [String: Any])?["version"] as? Int
 expect("a runs file the host writes is version 2 and reads back whole", hostRunsVersion == 2 && TaskRunFile.read(at: hostRunsURL) == .loaded([hostOwnRun]))
-var tasksOwnRun = TaskRun(trigger: .byHand(at: hostNow), state: .running)
+var tasksOwnRun = TaskRun(trigger: TaskRunTrigger(automation: nil, slot: hostNow, origin: .hand), state: .running)
 tasksOwnRun.definition = .object(["name": .text("x")])
 let mixed = HostAutomations(automations: [host], runs: [hostOwnRun, tasksOwnRun], timerAge: 5, skipPermissions: false)
 let mixedBack = PeerJSON.decode(HostAutomations.self, from: PeerJSON.line(mixed))
@@ -1063,7 +1056,7 @@ var hostOff = ticking
 hostOff.enabled = false
 expect("an automation that is off is not judged", AutomationTick.plan(hostOff, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20")) == nil)
 var otherTask = ticking
-otherTask.task = BuiltInTask.onThisSite.name
+otherTask.task = "Other"
 expect("a Task the host doesn't run is not judged", AutomationTick.plan(otherTask, runs: TaskRunList(), going: false, now: at("2026-10-15 09:00:20")) == nil)
 let slotRun = TaskRun(trigger: TaskRunTrigger(automation: ticking.id, slot: at("2026-10-15 09:00")), state: .done)
 expect("the newest Run's slot is the anchor when it is newer than the last slot (a crash between the writes)",

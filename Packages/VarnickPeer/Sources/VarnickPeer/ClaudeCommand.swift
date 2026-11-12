@@ -16,7 +16,7 @@ public enum ClaudeCommand {
     /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
     /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. `permissionHooks: false` is for a session that gets
     /// `skipDeletePromptEntry`: it has no `PermissionRequest` entry, which would keep Claude Code's delete prompt on (`docs/agents/where-it-breaks.md`).
-    public static func hookSettings(problems: Bool, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
+    public static func hookSettings(problems: Bool, allowedTools: [String] = [], voice: Bool = false,
                                     permissionHooks: Bool = true) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
@@ -61,8 +61,7 @@ public enum ClaudeCommand {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         // Plain strings and arrays: encoding can't fail, and a silent fallback would drop every hook.
-        // `task_result` is a Claude step's answer, so it is allowed with `notify` in the pane that lists it (and in Allowed tools only).
-        let allow = [NotifyTool.qualifiedName] + (taskResult ? [TaskResultTool.qualifiedName] : []) + allowedTools
+        let allow = [NotifyTool.qualifiedName] + allowedTools
         return String(decoding: try! encoder.encode(HookSettings(hooks: hooks, permissions: .init(allow: allow))), as: UTF8.self)
     }
 
@@ -217,7 +216,7 @@ public enum ClaudeCommand {
     /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
     /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
     /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
-    /// start like `taskResult`. `permissionHooks` is `hookSettings`'s: false only for a session that gets `skipDeletePromptEntry`, read at each start. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
+    /// start. `permissionHooks` is `hookSettings`'s: false only for a session that gets `skipDeletePromptEntry`, read at each start. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
     /// `channelPlugin` is the folder of Varnick's channel plugin (`ChannelPlugin`), which a pane that receives messages loads with `--plugin-dir` and listens to
     /// with `--channels` (option 01 of `sessions-cant-reach-each-other-reliably`), read at each start like `mcpConfig` and not stored. Both flags take several
@@ -227,11 +226,11 @@ public enum ClaudeCommand {
     /// that record on a resume, so a later start's text matters only after a compaction.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
                                  sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
-                                 dontAsk: Bool = false, allowedTools: [String] = [], taskResult: Bool = false, voice: Bool = false,
+                                 dontAsk: Bool = false, allowedTools: [String] = [], voice: Bool = false,
                                  appendSystemPrompt: String? = nil, channelPlugin: String? = nil, permissionHooks: Bool = true) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
             + (channelPlugin.map { ["--plugin-dir", $0, "--channels", SessionMessage.channelArgument] } ?? [])
-            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, taskResult: taskResult, voice: voice,
+            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, voice: voice,
                                                        permissionHooks: permissionHooks)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
