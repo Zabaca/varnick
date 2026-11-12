@@ -3,7 +3,7 @@ import Foundation
 import VarnickPeer
 
 // The voice session's search tool (option 09 of `listening-never-answers`), the running Varnick's half: the answers to the calls a voice session's
-// `Varnick --mcp --search` relays (`VoiceSearchMCP`). They are answered over the socket in the task tools' order: the switch, Varnick having started,
+// `Varnick --mcp --search` relays (`VoiceSearchMCP`). They are answered over the socket in this order: the switch, Varnick having started,
 // the calling pane, then the tool. It runs the spoken pipeline's search step (`RelevanceSearch`'s passes back to back) with no filter and no judge,
 // sets no UI state, and sends nothing to TypeSafe. The rows go to Anthropic with the session, as anything it reads does (docs/privacy-and-security.md).
 

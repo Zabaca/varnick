@@ -1,11 +1,9 @@
 import Foundation
 
-// The record shape of an automation's work (option 01 of `work-cant-be-saved-or-chained`, slice 1): an automation is a trigger that names a Task, and a
-// Run is one execution of it, kept in a runs file of its own beside `automations.json`. The only Task is the built-in Claude prompt: the Tasks that
-// were saved as files, with their engine, were removed on 2026-11-12 (ADR 0041), so the fields only they filled (a Run's `definition`, a step's
-// `child`, a trigger's `origin` and the like) stay in the shape for one reason: a runs file an earlier build wrote reads and is written back unchanged,
-// and a build that brings Tasks back reads it. Foundation only, because the headless relay builds this package. The words are in CONTEXT.md (Automation,
-// Run); the rules in docs/agents/where-it-breaks.md (Automations). Swift's own `Task` keeps the bare name, so these types start with `Task`.
+// The record shape of an automation's work (option 01 of `work-cant-be-saved-or-chained`, slice 1): an automation is a trigger that names a Task (always
+// the built-in Claude prompt), and a Run is one execution of it, kept in a runs file of its own beside `automations.json`. The fields that only the removed
+// Tasks filled stay in the shape, and why is in docs/agents/where-it-breaks.md, Tasks (removed). Foundation only, because the headless relay builds this
+// package. The words are in CONTEXT.md (Automation, Run). Swift's own `Task` keeps the bare name, so these types start with `Task`.
 
 /// A value of a Task's input or result: text, a number, true or false, a list, an object, or nothing. The built-in Claude prompt Task checks its input in
 /// code (`BuiltInTask`).
@@ -185,18 +183,13 @@ public enum RunState: String, Codable, Equatable {
     }
 }
 
-/// How a Run that no automation started began. Nothing starts one now; an earlier build's runs file may hold them.
+/// How a Run that no automation started began. Only the removed Tasks started one; an earlier build's runs file may hold them.
 public enum TaskRunOrigin: String, Codable, Equatable {
-    /// The person, from `!task`'s form.
-    case hand
-    /// A Claude session, through `task_run`.
-    case session
-    /// Another Run's Task step.
-    case task
+    case hand, session, task
 }
 
-/// What started a Run: an automation's slot, or (slice 2a) the person, a session or a parent Run. Every field after `manual` is optional and left out
-/// of the file when it is nil, so an automation's Run is written as slice 1 wrote it.
+/// What started a Run: an automation's slot (or, in an earlier build's file, the person, a session or a parent Run). Every field after `manual` is
+/// optional and left out of the file when it is nil, so an automation's Run is written as slice 1 wrote it.
 public struct TaskRunTrigger: Codable, Equatable {
     /// Nil for a Run that no automation started.
     public var automation: UUID?
@@ -208,9 +201,8 @@ public struct TaskRunTrigger: Codable, Equatable {
     public var manual: Bool
     /// Who started a Run that no automation started.
     public var origin: TaskRunOrigin?
-    /// The title of the session that called `task_run`.
+    /// Only the removed Tasks set these three: the calling session's title, the parent Run and its step.
     public var session: String?
-    /// The Run whose Task step started this one, and that step.
     public var parent: UUID?
     public var parentStep: String?
 

@@ -266,8 +266,8 @@ enum PeerOpenTabs {
         let listed = voice && VoiceSession.isListed(turn: PaneFolder.recordedTurn(for: record.id),
                                                     takenAt: PaneFolder.modificationDate(PaneFolder.voiceTakenFile(for: record.id).path),
                                                     stopped: PaneFolder.hasStopped(for: record.id))
-        // The Messages checklist's throwaway sessions are listed nowhere: they are marked unlisted, which leaves their tab out.
-        return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, unlisted: record.messageCheck == true,
+        // The Messages checklist's throwaway sessions are listed nowhere: they are marked `messageCheck`, which leaves their tab out.
+        return PeerTabRecord(unopenedVoice: voice, unopenedRun: record.runUnopened == true && !record.isVoice, messageCheck: record.messageCheck == true,
                              automation: record.automation.map { $0.uuidString.lowercased() }, voiceListed: listed, quietDone: record.quietDone == true)
     }
 
