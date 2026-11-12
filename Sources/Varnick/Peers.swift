@@ -1069,10 +1069,6 @@ final class PeerManager: ObservableObject {
         if head.op == nil, PeerJSON.decode(OutlineAppendRequestHead.self, from: line)?.outlineAppend != nil {
             return await OutlineAppendAccess.shared.answer(line)
         }
-        // A task request (option 01 of `work-cant-be-saved-or-chained`, slice 2a) is told apart the same way, by its own key.
-        if head.op == nil, PeerJSON.decode(TaskToolRequestHead.self, from: line)?.tasks != nil {
-            return await TaskAccess.shared.answer(line)
-        }
         // A voice session's search request (option 09 of `listening-never-answers`) is told apart the same way, by its own key.
         if head.op == nil, PeerJSON.decode(VoiceSearchRequestHead.self, from: line)?.search != nil {
             return await VoiceSearchAccess.shared.answer(line)

@@ -151,9 +151,6 @@ public enum HostAutomationSave {
     /// Why a run can't start in the host account's own home folder.
     public static let homeRefusal = "Claude Code never saves trust for the home folder itself (it is session-only), so a run there would stop at its \"trust this folder?\" question with nobody to answer. Choose a project folder, or Home"
 
-    /// The On this site Task's refusal: its browser is the Website pane, which only a Mac's Varnick has.
-    public static let siteRefusal = "On this site needs a Mac: its browser runs only in Varnick on a Mac"
-
     /// Why a folder, an agent or the trust can't start a run there, one line each: what the host refuses before it starts, on a save and again at a start.
     public static func startProblems(_ automation: Automation, in environment: Environment) -> [String] {
         let folder = environment.folder(of: automation)
@@ -177,9 +174,7 @@ public enum HostAutomationSave {
     public static func problems(_ automation: Automation, in environment: Environment) -> [String] {
         var found: [String] = []
         if automation.name.trimmingCharacters(in: .whitespaces).isEmpty { found.append("It has no name") }
-        if automation.task == BuiltInTask.onThisSite.name {
-            found.append(siteRefusal)
-        } else if automation.task != BuiltInTask.claudePrompt.name {
+        if automation.task != BuiltInTask.claudePrompt.name {
             found.append("The host runs the Claude prompt Task only, not \"\(automation.task)\"")
         } else {
             found += BuiltInTask.claudePrompt.problems(in: automation.input).map { "Claude prompt: \($0)" }

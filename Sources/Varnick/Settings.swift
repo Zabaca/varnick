@@ -83,7 +83,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
     case swapLeft, swapDown, swapUp, swapRight
-    case webAddress, webReload, stopTask
+    case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
 
     var id: String { rawValue }
@@ -96,9 +96,9 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// A default added after users bound keys: it takes no key a user already gave another action (`Settings.combo`).
     var yieldsDefaultToUserKeys: Bool { isSwap || self == .toggleVoiceMode }
 
-    /// Not offered now: the Outline's shortcut while its switch is off, and the stop-task shortcut while Tasks is. A hidden action keeps its
-    /// binding but takes no key and counts in no conflict, so binding its keys to another action leaves it as it was.
-    @MainActor var isHidden: Bool { (self == .outline && !Settings.shared.outlineOn) || (self == .stopTask && !Settings.shared.tasksOn) }
+    /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no conflict, so
+    /// binding its keys to another action leaves it as it was.
+    @MainActor var isHidden: Bool { self == .outline && !Settings.shared.outlineOn }
 
     var title: String {
         switch self {
@@ -137,7 +137,6 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapRight: "Swap with pane right"
         case .webAddress: "Edit address (web pane)"
         case .webReload: "Reload (web pane)"
-        case .stopTask: "Stop the work (Website pane)"
         case .fontBigger: "Bigger text"
         case .fontSmaller: "Smaller text"
         case .fontReset: "Default text size"
@@ -151,7 +150,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
              .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
              .swapLeft, .swapDown, .swapUp, .swapRight: "Splits"
-        case .webAddress, .webReload, .stopTask: "Web"
+        case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
         }
     }
@@ -193,7 +192,6 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapRight: KeyCombo(keyCode: kVK_ANSI_L, [.command, .control, .shift])
         case .webAddress: KeyCombo(keyCode: kVK_ANSI_L, .command)
         case .webReload: KeyCombo(keyCode: kVK_ANSI_R, .command)
-        case .stopTask: KeyCombo(keyCode: kVK_ANSI_Period, .command)
         case .fontBigger: KeyCombo(keyCode: kVK_ANSI_Equal, .command)
         case .fontSmaller: KeyCombo(keyCode: kVK_ANSI_Minus, .command)
         case .fontReset: KeyCombo(keyCode: kVK_ANSI_0, .command)
@@ -252,10 +250,6 @@ final class Settings: ObservableObject {
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
     static let outlineOnKey = "outlineOn"
-    /// Experimental (Settings › Experimental): Tasks (`!task`, the split picker's Website tile and the Website pane). Off by default, for every install;
-    /// off means no command, no tile, and a running task stops at its next step.
-    @Published var tasksOn: Bool { didSet { defaults.set(tasksOn, forKey: Self.tasksOnKey) } }
-    static let tasksOnKey = "tasksOn"
     /// Experimental: "Answer with Varnick's own steps (Jev)", off by default and absent reads off. Off, the voice session answers Hey Varnick; on, the
     /// older pipeline does and the voice session is off. It replaced `voiceSessionOn`, never read now: ADR 0042's amendment says why.
     @Published var ownStepsOn: Bool { didSet { defaults.set(ownStepsOn, forKey: Self.ownStepsOnKey) } }
@@ -456,7 +450,8 @@ final class Settings: ObservableObject {
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
-        tasksOn = defaults.bool(forKey: Self.tasksOnKey)
+        // The retired Tasks switch (read by builds up to 2026-11-12): dropped, never carried over.
+        defaults.removeObject(forKey: "tasksOn")
         ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
         // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
         defaults.removeObject(forKey: "voiceSessionOn")
@@ -709,8 +704,7 @@ struct SettingsView: View {
     @AppStorage("settingsSection") private var sectionID = SettingsSection.claude.rawValue
 
     private var section: SettingsSection {
-        let chosen = SettingsSection(rawValue: sectionID) ?? .claude
-        return chosen == .tasks && !settings.tasksOn ? .claude : chosen
+        SettingsSection(rawValue: sectionID) ?? .claude
     }
 
     var body: some View {
@@ -825,8 +819,6 @@ struct SettingsView: View {
                                 .padding(.horizontal, 14).padding(.vertical, 6)
                             case .automations:
                             AutomationsSettingsView(store: launcher.automations, runStore: launcher.taskRuns, model: launcher)
-                            case .tasks:
-                            TasksSettingsView(catalog: launcher.taskCatalog, model: launcher, runStore: launcher.taskRuns)
                             case .apps:
                             AppsSettingsView(openAppFolders: openAppFolders)
                             case .search:
@@ -1108,10 +1100,6 @@ struct SettingsView: View {
                                        detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac; your listed devices see and edit them on its Phone page, and Claude sessions' Outline tools read and edit them without asking (docs/privacy-and-security.md, Your Outline, on the Phone page). Turning it off hides it and makes both refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             }
-                            SettingRow(title: "Tasks",
-                                       detail: "!task's On this site, or the split picker's Website tile, opens a browser of Varnick's own, without your logins, where you say what to do on a site and Varnick does it step by step; !task also starts saved Tasks (JSON files in .varnick/tasks) as Runs on the board. You type passwords and card numbers yourself, every form submit but a search waits for your Allow, and a click, a key or Stop (\(settings.combo(.stopTask)?.label ?? "its shortcut")) pauses or ends it. Sessions you start can list and start Tasks, steps go to TypeSafe or Claude on your plan (see Anthropic, through Tasks in docs/privacy-and-security.md), and turning it off stops every Run.") {
-                                Toggle("", isOn: $settings.tasksOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
                             SettingRow(title: "Answer with Varnick's own steps (Jev)",
                                        detail: "Hey Varnick answers with Varnick's own steps instead of the Claude Code voice session: it searches your history, bookmarks and sessions, answers out loud and opens nothing. Your words, your projects and the top results go to TypeSafe when the relevance filter is on TypeSafe with a key, to Anthropic to write the answer (and to judge the results without TypeSafe) when Text generation is on Claude Code, and spoken answers to ElevenLabs if you chose its voice. With the filter On this Mac nothing goes to TypeSafe and results are judged here; see docs/privacy-and-security.md.") {
                                 if settings.ownStepsOn, !settings.heyVarnick {
@@ -1177,7 +1165,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(spacing: 2) {
-            ForEach(SettingsSection.allCases.filter { $0 != .tasks || settings.tasksOn }) { item in
+            ForEach(SettingsSection.allCases) { item in
                 let selected = item == section
                 Button { sectionID = item.rawValue } label: {
                     HStack(spacing: 8) {
@@ -1366,7 +1354,7 @@ struct SettingsView: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case claude, notifications, automations, tasks, apps, search, listening, peers, models, shortcuts, resources, experimental
+    case claude, notifications, automations, apps, search, listening, peers, models, shortcuts, resources, experimental
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
@@ -1375,7 +1363,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .claude: "sparkles"
         case .notifications: "bell"
         case .automations: "clock.arrow.circlepath"
-        case .tasks: "checklist"
         case .apps: CustomApp.defaultIcon
         case .search: "magnifyingglass"
         case .listening: "waveform"

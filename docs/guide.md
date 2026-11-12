@@ -54,7 +54,7 @@ To build it yourself instead, see [`building.md`](building.md).
   runs tools without asking. See [privacy and security](privacy-and-security.md#skip-permissions).
   Claude Code still asks before an `rm` it can't resolve or that could hit your home folder or the project's root;
   **Skip the delete prompt too**, off until you turn it on, removes that last prompt for sessions that start skipping permissions,
-  an automation or task step set to Skip included, so `rm -rf ~` can then run unasked.
+  an automation set to Skip included, so `rm -rf ~` can then run unasked.
 - **The relevance filter is off** unless a TypeSafe key is present, in the Keychain, in the environment
   as `TYPESAFE_API_KEY`, or in `.env`. See [privacy and security](privacy-and-security.md#typesafe) for what turning it on sends.
 - **A session with no `#project` starts in Home,** a folder of Varnick's own, `~/Library/Application Support/Varnick/Home`, made the
@@ -64,7 +64,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
-  Phone page, the Problems board, the Outline and Tasks (Experimental, below); Automations are always on (below).
+  Phone page, the Problems board and the Outline (Experimental, below); Automations are always on (below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -423,7 +423,7 @@ this Mac still controls it and nothing in it is working. A session's `keys` stil
 `send`. A session opened with `tab_open` reaches the session that opened it as `opener`, whatever restarts either of them; it no longer waits for a name. A session that is waiting starts a turn on the message
 at once; one that is working reads it when its current tool call ends, and nothing is interrupted. The sender is told what the receiver was doing, never that the message was acted on. Any Claude pane on this Mac that
 receives messages can be sent to, except that **a session that skips permission checks takes messages only from one that was started skipping them too**, since a message runs as the receiver, with its permissions; the
-voice session, a run, a Task step, a terminal, a page, an app, a file and a pane of another Mac's tab are refused, and one pane sends at most 10 a minute. The receiving session is told the message comes from your
+voice session, a run, a terminal, a page, an app, a file and a pane of another Mac's tab are refused, and one pane sends at most 10 a minute. The receiving session is told the message comes from your
 own sessions and is never your approval for something that needs you. The pane shows each message as a line of its own, and the transcript keeps it.
 
 The switch opens a checklist, each row a tick, a button that fixes it, or the reason it can't be fixed from here: Claude Code is 2.1.319 or later; it is signed in with Anthropic directly (not Bedrock, Vertex, Foundry or
@@ -534,9 +534,9 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
   (its projects and agents are the host's, an automation with no project runs in Home, a folder Varnick keeps on the host, and never in the account's own home folder, and "Varnick's setting" for permissions is the host's own Skip permissions), and the host fires it on a
   timer that its installer adds once (`scripts/install-peer.sh <user@host> --automations`; the section says when the timer isn't running). The Mac
   that last saved it holds each run and raises its notices; the Runs tab lists the host's runs beside this Mac's, and the phone lists runs nobody has
-  opened under **Runs**. A host runs the Claude prompt only ("On this site" needs a Mac), and a Claude session's tools manage this Mac's automations only.
-- **Where they are kept:** the automations are in `automations.json` in Varnick's support folder (each is a cadence and the Task it runs,
-  for now always the built-in Claude prompt), and what became of each run in `runs.json` beside it.
+  opened under **Runs**. A Claude session's tools manage this Mac's automations only.
+- **Where they are kept:** the automations are in `automations.json` in Varnick's support folder (each is a cadence and a prompt, kept in the shape
+  the removed Tasks gave it), and what became of each run in `runs.json` beside it.
 
 ## Experimental
 
@@ -557,45 +557,6 @@ the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as an
 does not list the Outline, and Claude sessions' Outline tools stay listed but refuse (so does an automation's `outline_append`; see Automations). Its shortcut keeps its binding while hidden,
 and binding ⌘⇧Y to another action leaves it alone. If it is showing when you turn it off, the panel goes back to
 what was under it. Your outline file is never changed or removed by the switch, so turning it on again shows the same Outline.
-
-**Tasks** hands Varnick something to do on a website: find a fact ("how much is delivery to Canada"), or fill in forms ("create an
-account for Robin Vale"). On, `!task` and the split picker's Website tile open a **Website pane**, a browser of Varnick's own. It has none
-of your cookies or logins, keeps nothing when you close it, and is not saved, so a restart ends it. Open the site in it, write what
-to do in the line under the address bar and press ↩. A column of steps beside the page says what Jev, Claude and the harness do,
-one line each, and Varnick can say the milestones aloud (Speak progress, on in the pane). It reads and acts inside the page only, never
-on your screen, so it needs no permission and works while you use the Mac.
-- **You type** passwords, one-time codes and card numbers in the page yourself (Varnick never reads them, and no model sees them),
-  **you tick** the terms box, and **every form submit but a search asks**: Allow lets Varnick press it, I'll do it waits for you to
-  press it in the page and then Resume.
-- **A click or a key of yours in the page pauses the task** before its next action; Resume hands it back. Stop (the button, or
-  ⌘.) ends it at once and leaves the page as it is. Closing the pane, turning the switch off or restarting Varnick ends it too.
-- **Jev** chooses each step when the relevance filter is on TypeSafe with a key saved. Without it, or after it fails three times, Claude
-  chooses (the pane says "Without Jev"), more slowly. Your own Claude Code, logged in, is needed either way: it writes the values and
-  steers. Nothing starts without it.
-- One Website pane works at a time. A second piece of work in the same pane keeps the first one's cookies and cart.
-- What goes where is in [privacy and security](privacy-and-security.md#anthropic-through-tasks). To try it on a made-up shop,
-  run `python3 scripts/task-practice-shop.py` in a terminal and open `http://127.0.0.1:8780/` in a Website pane.
-
-**Saved Tasks** are work Varnick can repeat with values you give it. A Task is a JSON file in a project's `.varnick/tasks` folder or in
-your own `~/.varnick/tasks`: a typed input, steps (a Claude session, a judgement by Jev, a notice to you, another Task) and a typed
-result. You don't write one by hand; ask a Claude session ("make a Task called Haiku that takes a topic, writes a haiku and has a judge
-check it"), and Varnick checks the file as it is read, so a mistake is named before anything runs.
-- **`!task`** lists *On this site* first (the Website pane above, opened at once) and then the Tasks found from the focused pane's folder
-  and your own. A Task that isn't valid is dimmed and shows its problems. ↩ on a Task shows a form drawn from its input; ↩ in the form
-  checks it, naming each wrong field, or starts a **Run**, which opens nothing: the board's **Runs** tab (⌘⇧B, then Tab) shows it, and
-  opening it shows its steps one line each, marked with who acted (Jev, Claude, the harness), its result as fields, and **Open tab** for
-  the Claude session of a step. **Stop** ends the Run and everything it started.
-- **A Run tells you when it ends,** in the menu bar menu: Done with its result, Stopped on an error with the step that failed ("Failed at
-  check: no"), or a message from the Task's own notice step. A Claude step's session raises Needs you and messages as any session does.
-  These notices stay on this Mac. Each Claude step draws on your Claude subscription, and a Judge step sends its question and state to
-  TypeSafe (or to Claude when Jev is unsure or the relevance filter isn't on TypeSafe): see
-  [privacy and security](privacy-and-security.md#anthropic-through-task-runs).
-- **Settings › Tasks** (shown while Tasks is on) lists each Task file with its problems and the permissions of its Claude steps:
-  Varnick's setting, Ask, Allowed tools only or Skip, and the allowed tools. These are yours alone and never in the file. A file that is new
-  or changed since you pressed **Seen** is marked.
-- **A session can list, check and start Tasks** through four Varnick tools while Tasks is on (`tasks_list`, `task_check`, `task_run`,
-  `task_run_status`), with no approval step of Varnick's; a Run's own sessions never have them. It polls `task_run_status` for the result.
-- Not in this build: a Task step on a website, and a saved Task as an automation's work.
 
 **Answer with Varnick's own steps (Jev)** is the way Hey Varnick answered before the voice session was the default, now an experiment. On, the voice session is off and every request is answered as follows; Settings › Experimental then shows **Point at the screen** and **Answer from the web**, which only this way uses.
 

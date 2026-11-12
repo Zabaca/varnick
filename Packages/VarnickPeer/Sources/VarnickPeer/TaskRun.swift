@@ -1,12 +1,14 @@
 import Foundation
 
-// The record shape of Tasks (option 01 of `work-cant-be-saved-or-chained`, slice 1: this Mac, no protocol bump). A Task is a saved piece of
-// work with an input; a Run is one execution of it, kept in a runs file of its own beside `automations.json`. Foundation only, because the
-// headless relay builds this package. The words are in CONTEXT.md (Task, Run, Step, Capability); the rules in docs/agents/where-it-breaks.md
-// (Automations). Swift's own `Task` keeps the bare name, so these types start with `Task`.
+// The record shape of an automation's work (option 01 of `work-cant-be-saved-or-chained`, slice 1): an automation is a trigger that names a Task, and a
+// Run is one execution of it, kept in a runs file of its own beside `automations.json`. The only Task is the built-in Claude prompt: the Tasks that
+// were saved as files, with their engine, were removed on 2026-11-12 (ADR 0041), so the fields only they filled (a Run's `definition`, a step's
+// `child`, a trigger's `origin` and the like) stay in the shape for one reason: a runs file an earlier build wrote reads and is written back unchanged,
+// and a build that brings Tasks back reads it. Foundation only, because the headless relay builds this package. The words are in CONTEXT.md (Automation,
+// Run); the rules in docs/agents/where-it-breaks.md (Automations). Swift's own `Task` keeps the bare name, so these types start with `Task`.
 
-/// A value of a Task's input or result: text, a number, true or false, a list, an object, or nothing. The schema subset that types them waits
-/// for slice 2; the two built-in Tasks check their inputs in code (`BuiltInTask`).
+/// A value of a Task's input or result: text, a number, true or false, a list, an object, or nothing. The built-in Claude prompt Task checks its input in
+/// code (`BuiltInTask`).
 public enum TaskValue: Codable, Equatable {
     case text(String)
     case number(Double)
@@ -48,14 +50,32 @@ public enum TaskValue: Codable, Equatable {
     public var text: String? {
         if case .text(let value) = self { value } else { nil }
     }
+
+    /// A value from the objects `JSONSerialization` gives (an MCP call's arguments); nil when they aren't JSON.
+    public init?(any: Any) {
+        guard JSONSerialization.isValidJSONObject(any) || any is String || any is NSNumber || any is NSNull,
+              let data = try? JSONSerialization.data(withJSONObject: any, options: [.fragmentsAllowed]),
+              let value = try? JSONDecoder().decode(TaskValue.self, from: data) else { return nil }
+        self = value
+    }
+
+    /// The value as the objects `JSONSerialization` takes, for an MCP reply.
+    public var any: Any {
+        switch self {
+        case .text(let value): value
+        case .number(let value): value
+        case .bool(let value): value
+        case .list(let value): value.map(\.any)
+        case .object(let value): value.mapValues(\.any)
+        case .null: NSNull()
+        }
+    }
 }
 
 /// One of a built-in Task's input fields.
 public struct TaskField: Equatable {
     public enum Kind: Equatable {
         case text
-        /// An http or https address.
-        case address
     }
 
     public let name: String
@@ -64,7 +84,7 @@ public struct TaskField: Equatable {
     public let summary: String
 }
 
-/// The two Tasks that ship with Varnick. Their inputs are checked here, in code.
+/// The Task that ships with Varnick. Its input is checked here, in code.
 public struct BuiltInTask: Equatable {
     public let name: String
     public let summary: String
@@ -76,14 +96,6 @@ public struct BuiltInTask: Equatable {
         fields: [TaskField(name: "prompt", kind: .text, required: true, summary: "What Claude is asked."),
                  TaskField(name: "folder", kind: .text, required: false, summary: "A Project's folder; Home when absent."),
                  TaskField(name: "agent", kind: .text, required: false, summary: "A Claude Code agent of that folder.")])
-    /// One Website step whose input is a site and a goal: what `!task` starts by hand.
-    public static let onThisSite = BuiltInTask(
-        name: "On this site", summary: "Works toward a goal on a site in a Website pane.",
-        fields: [TaskField(name: "site", kind: .address, required: true, summary: "Where to start."),
-                 TaskField(name: "goal", kind: .text, required: true, summary: "What to find or do there.")])
-
-    public static let all = [claudePrompt, onThisSite]
-
     /// What is wrong with an input, one line for each; empty when it fits.
     public func problems(in input: [String: TaskValue]) -> [String] {
         var found: [String] = []
@@ -100,12 +112,6 @@ public struct BuiltInTask: Equatable {
             switch field.kind {
             case .text:
                 if trimmed.isEmpty && field.required { found.append("\(field.name) is empty") }
-            case .address:
-                if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-                   url.host?.isEmpty == false {
-                    continue
-                }
-                found.append("\(field.name) must be an http or https address")
             }
         }
         for name in input.keys.sorted() where !fields.contains(where: { $0.name == name }) { found.append("\(name) isn't a field of \(self.name)") }
@@ -179,7 +185,7 @@ public enum RunState: String, Codable, Equatable {
     }
 }
 
-/// How a Run that no automation started began.
+/// How a Run that no automation started began. Nothing starts one now; an earlier build's runs file may hold them.
 public enum TaskRunOrigin: String, Codable, Equatable {
     /// The person, from `!task`'s form.
     case hand
@@ -218,26 +224,6 @@ public struct TaskRunTrigger: Codable, Equatable {
         self.session = session
         self.parent = parent
         self.parentStep = parentStep
-    }
-
-    public static func byHand(at date: Date) -> TaskRunTrigger { TaskRunTrigger(automation: nil, slot: date, origin: .hand) }
-
-    public static func session(titled title: String, at date: Date) -> TaskRunTrigger {
-        TaskRunTrigger(automation: nil, slot: date, origin: .session, session: title)
-    }
-
-    public static func child(of parent: UUID, step: String, at date: Date) -> TaskRunTrigger {
-        TaskRunTrigger(automation: nil, slot: date, origin: .task, parent: parent, parentStep: step)
-    }
-
-    /// How it started, in a few words.
-    public var startedBy: String {
-        switch origin {
-        case .hand?: "By hand"
-        case .session?: session.map { "By a session: " + $0 } ?? "By a session"
-        case .task?: "By a parent Task"
-        case nil: manual ? "Run now" : "By the clock"
-        }
     }
 }
 
@@ -308,9 +294,6 @@ public struct TaskRunStep: Codable, Equatable {
 
     /// The conversation to resume, nil for a step with no pane.
     public var conversationID: String? { conversation ?? pane.map { $0.uuidString.lowercased() } }
-
-    /// Its capability, nil for one this build doesn't know.
-    public var kind: TaskCapability? { TaskCapability(rawValue: capability) }
 }
 
 /// One execution of a Task and what became of it. Its `input` is a copy of the Task's, so it holds the prompt and the folder; `detail` is a message's
@@ -438,19 +421,6 @@ public struct TaskRunList: Equatable {
 
     /// A Run by its id.
     public func run(_ id: UUID) -> TaskRun? { runs.first { $0.id == id } }
-
-    /// The Runs a Run's Task steps started, in the order they began.
-    public func children(of parent: UUID) -> [TaskRun] {
-        runs.filter { $0.trigger.parent == parent }.sorted { $0.trigger.slot < $1.trigger.slot }
-    }
-
-    /// The Run at the top of a Run's tree: the one with no parent.
-    public func root(of id: UUID) -> TaskRun? {
-        var current = run(id)
-        var seen: Set<UUID> = []
-        while let found = current, let parent = found.trigger.parent, seen.insert(found.id).inserted, let next = run(parent) { current = next }
-        return current
-    }
 
     /// Adds a Run to the front. A skipped or missed slot that follows one with the same state and reason is counted into it, so a Mac asleep through
     /// a day of 15-minute slots is a line, not a flood. Past `limit` the oldest Runs of that automation go, but never one that may still have a

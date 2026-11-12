@@ -294,19 +294,20 @@ extension LauncherModel {
     /// An automation's run tabs not yet opened become ordinary tabs when it is deleted (`deleteAutomation`). An automation's own switch releases
     /// nothing: its unopened runs stay hidden and are still ended by their limits.
     func releaseRuns(of automation: UUID) {
-        // A Task's Run tab is the Tasks switch's to release.
-        releaseHiddenRuns { pane in pane.record.taskRun == nil && !pane.record.isVoice && pane.record.automation == automation }
+        releaseHiddenRuns { pane in !pane.record.isVoice && pane.record.automation == automation }
     }
 
-    /// At launch, before the first check: a hidden run tab that no Run names becomes an ordinary tab. That covers an automations file of version 1,
-    /// whose runs aren't carried over, and a runs file that was lost or moved aside: nothing stays hidden that nothing tends. A runs file that can't
-    /// be read is not a missing one (its Runs are there, unread), so nothing is released while it is.
+    /// At launch, before the first check: a hidden run tab that no automation's Run names becomes an ordinary tab. That covers an automations file of
+    /// version 1, whose runs aren't carried over, a runs file that was lost or moved aside, and a step of a Task's Run that an earlier build hid (Tasks
+    /// were removed 2026-11-12, and nothing tends such a Run now): nothing stays hidden that nothing tends. A runs file that can't be read is not a
+    /// missing one (its Runs are there, unread), so nothing is released while it is.
     func releaseUnnamedRuns() {
         guard taskRuns.problem == nil else { return }
         // A view of a headless host's run is named by that host's runs file, not this Mac's: the host's listing says whether it is still a run (`adoptHostRuns`).
         // The voice session is no Run, and is tended by its own host (`VoiceSessionHost`). Nor is a throwaway session of the Messages checklist's test
         // (`MessagesSetup`), which a quit may have left behind: it must stay hidden until `MessagesSetup.start` ends it, so it never shows as a tab.
-        releaseHiddenRuns { pane in pane.record.host == nil && !pane.record.isVoice && pane.record.messageCheck != true && taskRuns.run(pane: pane.id) == nil }
+        releaseHiddenRuns { pane in pane.record.host == nil && !pane.record.isVoice && pane.record.messageCheck != true
+            && taskRuns.run(pane: pane.id)?.trigger.automation == nil }
     }
 
     private func releaseHiddenRuns(where wanted: (ClaudeSession) -> Bool) {
@@ -592,11 +593,11 @@ extension LauncherModel {
     /// permissions it started with. Nothing changes for a conversation that was not a run's.
     func applyRunFields(to record: inout SessionRecord) {
         let conversation = record.conversationID
-        // Found through any step's conversation: a miss here gives a resumed run Screen, Panel and automation tools.
-        guard let run = taskRuns.runs.first(where: { $0.state.ran && $0.step(conversation: conversation) != nil }),
+        // Found through any step's conversation: a miss here gives a resumed run Screen, Panel and automation tools. A Run no automation started (an earlier
+        // build's Task) gives nothing: it is an ordinary conversation now.
+        guard let run = taskRuns.runs.first(where: { $0.trigger.automation != nil && $0.state.ran && $0.step(conversation: conversation) != nil }),
               let step = run.step(conversation: conversation) else { return }
         record.automation = run.trigger.automation
-        if run.trigger.automation == nil { record.taskRun = run.id }
         if let launch = step.launch {
             record.skipPermissions = launch.skipPermissions
             record.dontAsk = launch.dontAsk ? true : nil

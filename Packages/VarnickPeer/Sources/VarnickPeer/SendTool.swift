@@ -28,7 +28,7 @@ public enum SendTool {
             + "and answers with its own `send`. `to` is a pane id this session was given: by board_read, panel, pane_open or tab_open, or the `from` of a message "
             + "it received; or `opener`, in a session opened with tab_open, which reaches the session that opened it whatever restarts either of them. "
             + "Every Claude pane that receives messages can be sent to, except one that skips permission checks when this one does not (a message runs as the "
-            + "receiver, with its permissions); the voice session, a run, a Task step, a terminal, a page, an app, a file and a session that isn't running "
+            + "receiver, with its permissions); the voice session, a run, a terminal, a page, an app, a file and a session that isn't running "
             + "are refused, each with the reason, and nothing is sent. A session in a tab a paired Mac or a headless host runs (board_read lists it \"on\" that machine) is reached while "
             + "Also between my Macs and hosts is on in Settings and that machine is ready; a machine that is asleep or on another build is refused, "
             + "with nothing held for later, and the receiver there sees `from_mac`. A pane that no list holds is looked for once more first: Varnick asks the paired "

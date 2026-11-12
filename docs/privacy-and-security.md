@@ -87,20 +87,6 @@ Mac** or leave it off (it is off by default): then none of this happens.
   app's, a remote desktop's or a virtual machine's, one past the limits of the read, or one that moved before
   the picture was taken. Don't use this with a password or other secret typed in such a field (ADR 0021).
 
-- **Tasks** (off by default; Settings › Experimental). While a task runs with the relevance filter on TypeSafe and a key
-  saved, Jev chooses each step, one call a turn: the task you wrote; the page's address, title, links and buttons (their
-  labels) and text blocks; for each link on the page, the title, headings, first lines and link names of the page behind
-  it; the text being read as the answer; the labels of form fields and the values the task types into them (the name,
-  email and address you wrote in the task, for example); the last few steps; and Claude's hints. A password, a one-time
-  code and a card number are never among them: you type those in the page, and the harness never reads them. Without the
-  filter on TypeSafe, none of this goes to TypeSafe and Claude chooses the steps instead (below). Not logged.
-- **Judge steps of a saved Task** (Settings › Experimental › Tasks). A Judge step asks Jev one question in the same filter
-  and key conditions: the question the Task's file wrote and, for a Choice, its options with their criteria, and the
-  step's `state`, which is the values the Task's file bound into it (the Task's input and earlier steps' results, so
-  whatever a Claude step wrote or the user typed into the Task's form, if the Task's file puts it there). Nothing else of
-  the Run goes. The Task's author, usually a Claude session, decides what is in the state; read a Task's file before you
-  start it. Without the filter on TypeSafe, none of this goes to TypeSafe. Not logged.
-
 None of this goes to a model server.
 
 ### ElevenLabs
@@ -202,47 +188,6 @@ session was read. A request that names one of your session folders, or is only a
 - Varnick speaks a sentence or two naming where the answer came from, and writes them to today's transcript. It does
   not log the request, the prompt, the search words, the reply or the answer.
 
-### Anthropic, through Tasks
-
-A task (Settings › Experimental › **Tasks**, off by default) is written in a Website pane and carried out in that pane's own
-browser, which has none of your cookies or logins and keeps nothing when it closes. Your own `claude` writes the values it
-types and steers, in two conversations kept open for the length of the task, on your plan.
-
-- **What goes to Anthropic:** the task you wrote; each page's address, title, links, buttons, text and form fields (their
-  labels and, for a field the task filled, its value); the previews of its links; the trail of every page the task has
-  visited, what was done there and what it led to; and the values Claude wrote itself. The first time Claude is shown a
-  page, it is shown whole; after that, what changed. When Jev isn't used (the relevance filter isn't on TypeSafe with a key
-  saved, or Jev failed three times in a row), Claude also makes each step's choices, so each step is a message.
-- **What never goes:** a password, a one-time code or a card field's value (ADR 0039 says which fields). The page script
-  does not read them: it sends only whether such a field is filled. You type them in the page. Anything else you type in
-  the page, in a field that isn't one of those, is shown to Claude (and to Jev) as that field's value, like one the task typed.
-- **What Claude Code itself sends** with a call, as above. The conversations are not sessions: nothing is saved as a
-  transcript.
-- Each message is a model turn and counts toward your plan's usage limits; a task takes from a handful of messages to
-  the 20 it is limited to, plus a call for each step when Jev isn't used.
-- Varnick doesn't log a task, a page's address or title, a label, a value or a reply; only each step's kind, who acted,
-  how long it took and the task's counts.
-
-### Anthropic, through Task Runs
-
-A saved Task (a JSON file in `.varnick/tasks`, run from `!task`, by a session's `task_run` or by another Task; Settings ›
-Experimental › **Tasks**, off by default) is carried out by Varnick in steps, and two kinds of step send to Anthropic.
-
-- **A Claude step** is a hidden Claude session like an automation's run, on your plan, started in the folder the step names
-  (Home when it names none) with the permissions you set in Settings › Tasks. What goes to Anthropic is what any session
-  sends: the step's prompt (with the Task's input and earlier steps' results filled in as the file bound them), what Claude
-  reads and runs, and the result it gives back through the `task_result` tool. Its MCP server lists `notify` and
-  `task_result` alone: no Screen access, Panel access or Varnick's automation and task tools. Its conversation is a session
-  like any, resumable from the Run's view.
-- **A Judge step asks Claude instead of Jev** when the relevance filter isn't on TypeSafe with a key, Jev fails, or Jev is
-  not sure (below 0.7): the question, the options and the step's state go to your Claude Code in a conversation opened for
-  that one call and ended after it, not saved as a session. Never this Mac's own model for a pick.
-- **The tools:** `tasks_list`, `task_run`, `task_run_status` and `task_check` answer a session with the Tasks' names,
-  descriptions, schemas, problems and results, which goes to Anthropic with that session. `task_run` starts a Run that draws on
-  your Claude subscription with nobody asked first, so a session starts only what you asked for.
-- Varnick doesn't log a Task, an input, a state, a prompt or a result: only the tool, the kind of outcome and durations.
-- A Task's Run stays on this Mac. Its notice is not pushed to the phone, and no paired Mac or phone lists it.
-
 ### Anthropic, through Automations
 
 An automation (Settings › **Automations**, which every install has) starts a Claude session on a cadence, with the prompt you
@@ -276,7 +221,7 @@ session's:
   pages (title, site, address, when, and a description) and 3 sessions (title, folder, when, prompts cut to 300 characters, the conversation id and,
   for one on this Mac, the transcript's path, or the paired Mac's name). Nothing is filtered or judged first, so rows that do not help go too.
   The tool is listed for sessions started as the voice session, until they are opened, and the app refuses a call from any other pane; a pane id is not a
-  secret, though, so any process on this Mac that knows the voice session's pane id and can open Varnick's socket could call it, as with the task tools.
+  secret, though, so any process on this Mac that knows the voice session's pane id and can open Varnick's socket could call it.
 - **The first request and its hint are saved as the session's prompt** in `sessions.json` in Varnick's support folder, with the session's record, as any
   session's first prompt is. Later requests are in Claude Code's transcript only.
 - **Each request counts toward your plan's usage limits;** it is at least one model turn, and a session is kept until 10 minutes after your
@@ -428,7 +373,7 @@ text through a Claude Code channel it loads into each pane while the switch is o
 - **A message steers the receiver.** It runs as that session, with that session's permissions, and the receiver is told it is a request from another of your sessions, never your approval for something that needs you.
   A session that asks before its tools cannot send to one that skips permission checks; a session that skips them can still steer another one that skips them, as `SendMessage` already lets it, so a page or a file
   read by one skipping session can reach the others. One pane sends at most 10 messages a minute, so two sessions that keep thanking each other stop.
-- **It reaches Claude sessions in Varnick's panes on this Mac,** and, with **Also between my Macs and hosts** on, on your paired Macs that have it on and are ready and on your headless hosts that you have approved from this Mac's Settings. Not the voice session, a run, a Task step, a terminal, a page, an app, a file or a session that is not running.
+- **It reaches Claude sessions in Varnick's panes on this Mac,** and, with **Also between my Macs and hosts** on, on your paired Macs that have it on and are ready and on your headless hosts that you have approved from this Mac's Settings. Not the voice session, a run, a terminal, a page, an app, a file or a session that is not running.
 - **Also between my Macs and hosts sends the text over the link the Macs already use** (SSH, the same one that carries the board), to the Mac that hosts the target, with the sending pane's id, project and Mac name and whether it skips permission checks. Each Mac turns it on itself: turning it on here only asks the others, with a notice in their menu, and a Mac that has not turned it on is skipped. The receiving Mac trusts the sender's facts as it trusts any request from a listed Mac, so a session misled on one Mac can steer the skipping sessions of every ready paired Mac. A listed phone or other device cannot send one. Nothing is held for a Mac that is asleep, and nothing goes through a third party but Anthropic, with the receiving session.
 - **Turning it on changes Claude Code's setup on this Mac, each step on your press of a button.** **Approve** adds one file of Varnick's to Claude Code's machine policy (`/Library/Application Support/ClaudeCode/managed-settings.d/`), behind the
   system's administrator password dialog; it changes none of the entries already there, lists Varnick's channel and Anthropic's own approved channel plugins (a policy list replaces Anthropic's), and **Remove approval** takes it out.
@@ -519,7 +464,7 @@ prompt, can then act with your account's rights.
   Claude Code still shows with permission checks skipped: before `rm` on a path it can't resolve, or one that could be your home
   folder or the project's root. A command such as `rm -rf ~` can then run without asking.
   - **Which sessions:** every session that starts with `--dangerously-skip-permissions` while the switch is on, whatever sets that:
-    the Skip permissions setting, an automation or task step set to Skip, or a start request from another Mac that carries Skip.
+    the Skip permissions setting, an automation set to Skip, or a start request from another Mac that carries Skip.
     The voice session never gets it. It is read at each start, so it changes new and restarted sessions, not running ones.
   - **How:** Varnick sets Claude Code's `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS` in the session's environment (Claude
     Code 2.1.311 or later; an older one ignores it), and starts the session without Varnick's `PermissionRequest` hooks, which
@@ -627,26 +572,6 @@ may also ask again after some weeks whether Varnick may keep recording (not veri
 Point at the screen itself only reads the window in front, and only when you ask about the screen. The arrow it draws can't
 take focus or clicks, and goes by itself.
 
-### Tasks act as you on a site, and wait for you
-
-A task (Settings › Experimental › Tasks, off by default) clicks links and buttons and types into forms in a Website pane's own browser,
-as you would, to carry out what you wrote. It is the other way round from Screen access: it acts inside Varnick's web view only,
-never on your screen, needs no permission, and brings nothing to the front.
-
-- **It can do anything a site lets a visitor do,** account creation and a purchase included, with the details you wrote in the
-  task and Claude filled in from it. What it doesn't do: type your password, a one-time code or a card number (you type those
-  in the page), tick a terms box Claude marked as yours (you tick it), or press a form's submit without you. **Every form
-  submit but a search box's asks** ("Allow" lets Varnick press it, "I'll do it" waits for you to press it in the page), and so
-  does any button on a page that has a form, a script-handled "Place order" included, and any link on a page that has a form or
-  that has no real address (`#`, `javascript:`). A submit the page itself makes as a field is filled is held until you allow it.
-  On a page with no form, a link to a page is an ordinary click: a site that changes things when such a link is followed, or a
-  script-handled button on a page with no form, is not stopped by this (inferred, not tried).
-- **A click or a key of yours in the page pauses the task** before its next action; Resume hands it back. Stop ends it at once.
-- The pane's cookies and storage are its own, empty at the start and gone when it closes, so a site never sees your logins and a
-  task can't use them.
-- **What steers a task can steer it:** a page it reads is read by Jev and by Claude, and a page that talks to them is read like
-  any text. The gates above are in code, not in the models' hands.
-
 ### Home is marked trusted in Claude Code
 
 When Varnick makes `Home` (`~/Library/Application Support/Varnick/Home`), it sets that one folder's trust in Claude Code's own
@@ -673,7 +598,7 @@ account. The choices that narrow it are Ask (a command that is not allowed waits
   goes to Anthropic through it. The bullets it writes are stored in your
   outline file on this Mac like any other, shown on a listed device's Phone page (ADR 0046), and one ⌘Z takes one back. A run that read something
   hostile can be steered into writing text of the attacker's choosing there; the bounds limit its size, not its words. It is refused while the
-  Outline is off or its file can't be read (ADR 0030), and a Task step, the voice session and a headless host's run never have it (ADR 0040's
+  Outline is off or its file can't be read (ADR 0030), and the voice session and a headless host's run never have it (ADR 0040's
   amendment of 2026-10-29). **A Claude session you start can save an automation whose allowed tools name this rule** (`automation_create` and
   `automation_edit` take `allowed_tools`), which makes a recurring, unattended writer to your Outline with no approval step of Varnick's; the mark on the
   automation names the rules the session set and stays until you open its editor, switch it or press Seen. Taking the rule out stops future runs
@@ -699,7 +624,7 @@ The Voice session runs with permissions skipped: Claude Code never asks before a
 permissions says (that was the choice made for it, so a spoken request is not stopped at a dialog nobody is looking at). So anything the
 microphone hears that starts "Hey Varnick" (or, in voice mode, anything, below) can make it run a command on this Mac as your account, in Home and anywhere your account can reach:
 your own voice misheard, a video or a call played through the speakers (Listening hears the Mac's audio too), or another person in the room.
-It also has Varnick's tools your other sessions have (Screen access when it is on, Panel access, notifications, automations and Tasks),
+It also has Varnick's tools your other sessions have (Screen access when it is on, Panel access, notifications and automations),
 which can click, type and press keys without asking. Settings › Listening says so beside Hey Varnick. If that is too much, turn on Settings › Experimental ›
 Answer with Varnick's own steps: that Hey Varnick only reads, searches and answers, and opens nothing (the voice session is then off, and so is Voice mode on the phone).
 

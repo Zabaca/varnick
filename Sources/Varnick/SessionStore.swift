@@ -26,10 +26,6 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Code's conversation transcript.
     var liveTranscript: Bool?
 
-    /// Task pane (`!task`, the split picker's Task tile): a web pane whose task Varnick carries out. Never saved: a restart ends the task, and
-    /// the tab comes back without the pane (`SavedTab.withoutTasks`).
-    var task: Bool?
-
     /// Chromium pane (prototype, `ChromiumPage`): a web pane drawn by zebkit's Chromium instead of WebKit, which a session can drive over CDP.
     var chromium: Bool?
 
@@ -85,11 +81,6 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// Its Done is quiet now: only while nobody has opened it, so an opened run raises Done like any session.
     var quietsDone: Bool { quietDone == true && runUnopened == true }
 
-    /// The Task's Run whose step this pane is (option 01 of `work-cant-be-saved-or-chained`, slice 2a), for the whole life of the record. Like
-    /// `automation`, it keeps the pane's MCP server to `notify` and `task_result`, and it hides the tab while `runUnopened`. Optional so older records
-    /// load, and an older build ignores it.
-    var taskRun: UUID?
-
     /// The host's voice session (option 09 of `listening-never-answers`), for the whole life of the record: the one Claude session in Home that
     /// answers spoken requests. Unlike a run it has a pane's full MCP set (and the search tool), and it is started with permissions skipped, which
     /// the record's `skipPermissions` carries. Its tab is hidden while `runUnopened`, as a run's is. Optional so older records load, and an older
@@ -119,8 +110,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     /// caller's is true. Optional so older records load; nil counts as no.
     var skippedAtStart: Bool?
 
-    /// A run of an automation or a step of a Task's Run: its MCP server lists `notify` (and a step's `task_result`) alone, whatever the switches say.
-    var isRun: Bool { automation != nil || taskRun != nil }
+    /// A run of an automation: its MCP server lists `notify` alone, whatever the switches say.
+    var isRun: Bool { automation != nil }
 
     /// Only read by the migration of a file saved before marks were the tab's (ADR 0032): the mark of a Completed copy, or of a Claude
     /// pane here that another Mac marked. `SessionStore.State` turns it into a tab's mark and never writes it again. Optional so older files load.
@@ -171,7 +162,6 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var isWeb: Bool { url != nil }
     var isFile: Bool { file != nil }
     var isApp: Bool { app != nil }
-    var isTask: Bool { task == true }
     var isChromium: Bool { chromium == true }
     var isLiveTranscript: Bool { liveTranscript == true }
 
@@ -381,17 +371,6 @@ struct SessionStore {
 
         /// A layout always holds a record.
         var resolvedID: UUID { id ?? layout.records[0].id }
-
-        /// The tab as it is kept: a Task pane is never saved (a restart ends its task), so a tab of Task panes alone is not kept at all.
-        func withoutTasks() -> SavedTab? {
-            guard layout.records.contains(where: \.isTask) else { return self }
-            guard let kept = layout.pruned({ !$0.isTask }) else { return nil }
-            var tab = self
-            tab.id = resolvedID
-            tab.layout = kept
-            if let focused, !kept.records.contains(where: { $0.id == focused }) { tab.focused = nil }
-            return tab
-        }
 
         /// The tab as `State.openTabs` hands it out: its id set, and no mark (ADR 0045: an open tab carries none, and a file's old `done` key is ignored
         /// on decoding), so one whose panes' records carry a mark from before marks were the tab's is open and unmarked.

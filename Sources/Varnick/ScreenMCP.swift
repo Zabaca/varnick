@@ -239,10 +239,7 @@ enum ScreenMCP {
         /// The automation tools (option 01 of `prompts-cant-run-on-a-schedule`, slice 3): in every Claude pane, a run's excepted, and behind no
         /// switch of their own.
         static let automations = Sets(rawValue: 8)
-        /// The task tools (option 01 of `work-cant-be-saved-or-chained`, slice 2a): in every Claude pane started while Tasks is on, a run's excepted.
-        static let tasks = Sets(rawValue: 16)
-        /// `task_result`, a Claude step's answer: answered by this server alone, and listed only while the pane's folder holds the step's schema.
-        static let taskResult = Sets(rawValue: 32)
+        // Raw values 16 and 32 were the task tools and `task_result` (removed 2026-11-12): an argument from an older build naming them is ignored.
         /// `search` (option 09 of `listening-never-answers`): History, Bookmarks and Claude sessions, listed for the voice session alone.
         static let voiceSearch = Sets(rawValue: 64)
         /// `pane_open` and `pane_close` (option 01 of `panes-open-only-by-hand-at-a-mac`). Their calls travel as Panel access's requests.
@@ -256,7 +253,6 @@ enum ScreenMCP {
         static let screenArgument = "--screen"
         static let panelArgument = "--panel"
         static let automationsArgument = "--automations"
-        static let tasksArgument = "--tasks"
         static let voiceSearchArgument = "--search"
         static let panesArgument = "--panes"
         static let messagesArgument = "--send"
@@ -267,8 +263,6 @@ enum ScreenMCP {
             if arguments.contains(Self.screenArgument) { found.insert(.screen) }
             if arguments.contains(Self.panelArgument) { found.insert(.panel) }
             if arguments.contains(Self.automationsArgument) { found.insert(.automations) }
-            if arguments.contains(Self.tasksArgument) { found.insert(.tasks) }
-            if arguments.contains(TaskResultTool.argument) { found.insert(.taskResult) }
             if arguments.contains(NotifyTool.argument) { found.insert(.notify) }
             if arguments.contains(Self.voiceSearchArgument) { found.insert(.voiceSearch) }
             if arguments.contains(Self.panesArgument) { found.insert(.panes) }
@@ -283,13 +277,13 @@ enum ScreenMCP {
     /// The JSON `--mcp-config` takes for a pane: one stdio server, `varnick`, that is this binary through the peer link, with the pane
     /// id as an argument so nothing depends on claude passing its environment on, and an argument for each set of tools that pane gets
     /// (`ClaudeSession.launchClaude` says which). `--notify` is always there.
-    static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool, tasks: Bool = false, taskResult: Bool = false,
+    static func configuration(pane: UUID, screen: Bool, panel: Bool, automations: Bool,
                               voiceSearch: Bool = false, panes: Bool = false, outlineAppend: Bool = false, messages: Bool = false) -> String {
         MCPServer.configuration(command: PeerLink.mcpCommand,
                                  arguments: ["--mcp", "--pane", pane.uuidString.lowercased()]
                                     + (screen ? [Sets.screenArgument] : []) + (panel ? [Sets.panelArgument] : [])
-                                    + (automations ? [Sets.automationsArgument] : []) + (tasks ? [Sets.tasksArgument] : [])
-                                    + [NotifyTool.argument] + (taskResult ? [TaskResultTool.argument] : []) + (voiceSearch ? [Sets.voiceSearchArgument] : [])
+                                    + (automations ? [Sets.automationsArgument] : [])
+                                    + [NotifyTool.argument] + (voiceSearch ? [Sets.voiceSearchArgument] : [])
                                     + (panes ? [Sets.panesArgument] : []) + (outlineAppend ? [OutlineAppendTool.argument] : [])
                                     + (messages ? [Sets.messagesArgument] : []))
     }
@@ -406,16 +400,14 @@ enum ScreenMCP {
 
     // MARK: The server
 
-    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, the task tools, then `notify`,
-    /// `task_result` (which is listed only while the pane's folder holds a step's schema), the voice session's `search`, the pane tools and `outline_append`.
-    static func tools(for sets: Sets, pane: UUID? = nil) -> [[String: Any]] {
+    /// The tools `tools/list` gives for the sets: the screen tools, then Panel access's, the automation tools, then `notify`, the voice session's `search`,
+    /// the pane tools and `outline_append`.
+    static func tools(for sets: Sets) -> [[String: Any]] {
         var listed: [[String: Any]] = []
         if sets.contains(.screen) { listed += tools }
         if sets.contains(.panel) { listed += PanelMCP.tools }
         if sets.contains(.automations) { listed += AutomationMCP.tools }
-        if sets.contains(.tasks) { listed += TaskMCP.tools }
         if sets.contains(.notify) { listed.append(NotifyTool.tool) }
-        if sets.contains(.taskResult), let pane { listed += TaskResultTool.tools(in: TaskResultTool.folder(for: pane)) }
         if sets.contains(.voiceSearch) { listed += VoiceSearchMCP.tools }
         if sets.contains(.panes) { listed += PaneMCP.tools }
         if sets.contains(.outlineAppend) { listed.append(OutlineAppendTool.tool) }
@@ -431,8 +423,7 @@ enum ScreenMCP {
     /// The reply to one JSON-RPC message; nil for a notification, which is never answered, and for what can't be answered. The JSON-RPC is
     /// `MCPServer`'s, which the headless relay's `--mcp` shares.
     static func answer(_ line: String, pane: String, sets: Sets = .screen, ask: (String) -> ScreenReply = ScreenMCP.ask) -> [String: Any]? {
-        let paneID = UUID(uuidString: pane)
-        return MCPServer.answer(line, tools: tools(for: sets, pane: paneID)) { name, arguments in
+        MCPServer.answer(line, tools: tools(for: sets)) { name, arguments in
             let reply: ScreenReply
             if ScreenTool(rawValue: name) != nil, sets.contains(.screen) {
                 let decoded = arguments.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
@@ -448,16 +439,11 @@ enum ScreenMCP {
                 reply = ask(AutomationMCP.requestLine(pane: pane, tool: name, arguments: PanelMCP.arguments(from: arguments)))
             } else if sets.contains(.outlineAppend), name == OutlineAppendTool.name {
                 reply = ask(OutlineAppendMCP.requestLine(pane: pane, arguments: PanelMCP.arguments(from: arguments)))
-            } else if sets.contains(.tasks), TaskMCP.names.contains(name) {
-                reply = ask(TaskMCP.requestLine(pane: pane, tool: name, arguments: arguments))
             } else if sets.contains(.voiceSearch), VoiceSearchMCP.names.contains(name) {
                 reply = ask(VoiceSearchMCP.requestLine(pane: pane, tool: name, arguments: arguments))
             } else if sets.contains(.notify), name == NotifyTool.name {
                 // Answered here: the hook records the call, and nothing is sent to the app.
                 return NotifyTool.call(arguments)
-            } else if sets.contains(.taskResult), name == TaskResultTool.name, let paneID {
-                // Answered here too, against the schema file the host wrote into the pane's folder: nothing is sent to the app.
-                return TaskResultTool.call(arguments, in: TaskResultTool.folder(for: paneID))
             } else {
                 return nil
             }

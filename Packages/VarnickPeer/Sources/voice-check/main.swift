@@ -92,7 +92,7 @@ let voiceBefore = PeerTabRecord(unopenedVoice: true, voiceListed: false)
 let voiceAfter = PeerTabRecord(unopenedVoice: true, voiceListed: true)
 let voiceOpened = PeerTabRecord()
 let automationRun = PeerTabRecord(unopenedRun: true, automation: "11111111-0000-4000-8000-000000000001")
-let taskStep = PeerTabRecord(unopenedRun: true, taskRun: true, automation: "11111111-0000-4000-8000-000000000001")
+let unlistedRun = PeerTabRecord(unopenedRun: true, unlisted: true, automation: "11111111-0000-4000-8000-000000000001")
 expect("tab: a voice session before its first turn is left out", PeerTabMarks.choose([voiceBefore]) == nil)
 expect("tab: after it, it has the voice mark and no run mark", PeerTabMarks.choose([voiceAfter]) == PeerTabMarks.Choice(run: nil, voice: true))
 expect("tab: the race of a later request does not leave it out",
@@ -102,7 +102,7 @@ expect("tab: once opened it is an ordinary tab", PeerTabMarks.choose([voiceOpene
 expect("tab: an automation's unopened run keeps its run mark and no voice mark",
        PeerTabMarks.choose([automationRun]) == PeerTabMarks.Choice(run: PeerRunMark(automation: "11111111-0000-4000-8000-000000000001"), voice: nil))
 expect("tab: an unopened run of no automation is a mark with none", PeerTabMarks.choose([PeerTabRecord(unopenedRun: true)]) == PeerTabMarks.Choice(run: PeerRunMark(), voice: nil))
-expect("tab: a Task's unopened step is left out", PeerTabMarks.choose([taskStep]) == nil)
+expect("tab: an unlisted unopened run is left out", PeerTabMarks.choose([unlistedRun]) == nil)
 expect("tab: a pane beside the voice session doesn't change its choice", PeerTabMarks.choose([voiceAfter, voiceOpened]) == PeerTabMarks.Choice(run: nil, voice: true))
 // A run whose Done is quiet says so on its mark (option 01 of `automation-runs-crowd-the-menu`), and one that tells leaves the field out.
 let quietRun = PeerTabRecord(unopenedRun: true, automation: "11111111-0000-4000-8000-000000000001", quietDone: true)

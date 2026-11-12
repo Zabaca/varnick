@@ -45,8 +45,8 @@ enum InstalledApp {
     }
 
     /// Links `<skillsFolder>/<skill>` to the app's own copy of the skill (`target`), when nothing is at that path (a dangling link counts as
-    /// something) or when the link there points into a `<name>.app/Contents/Resources/skills/<skill>`. Anything else is left alone. The skills are
-    /// `custom-apps` and `tasks`.
+    /// something) or when the link there points into a `<name>.app/Contents/Resources/skills/<skill>`. Anything else is left alone. The one skill is
+    /// `custom-apps`.
     static func linkSkill(_ skill: String = "custom-apps", in skillsFolder: URL, to target: URL) -> LinkOutcome {
         let fm = FileManager.default
         let path = skillsFolder.appendingPathComponent(skill)
@@ -79,6 +79,19 @@ enum InstalledApp {
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// Removes `<skillsFolder>/<skill>` when it is a link into an app's own copy (`…/<name>.app/Contents/Resources/skills/<skill>`), whether or not the copy is
+    /// still there: the link an earlier build made for a skill this one no longer ships (`tasks`, removed 2026-11-12). A file or folder of the user's, or a
+    /// link anywhere else (a checkout's), is left alone. Nothing is reported when there is nothing to remove.
+    @discardableResult
+    static func unlinkRetiredSkill(_ skill: String, in skillsFolder: URL) -> Bool {
+        let fm = FileManager.default
+        let path = skillsFolder.appendingPathComponent(skill)
+        var info = stat()
+        guard lstat(path.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFLNK, let written = try? fm.destinationOfSymbolicLink(atPath: path.path) else { return false }
+        guard isAppSkill(URL(fileURLWithPath: written, relativeTo: skillsFolder).standardizedFileURL, skill) else { return false }
+        return (try? fm.removeItem(at: path)) != nil
     }
 
     /// `…/<name>.app/Contents/Resources/skills/<skill>`.

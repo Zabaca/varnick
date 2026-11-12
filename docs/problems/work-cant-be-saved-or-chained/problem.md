@@ -7,6 +7,8 @@ evidence: The user's idea of 2026-10-15, relayed by the coordinator (below). Cod
 status: open
 ---
 
+Note, 2026-11-12: Tasks, as option 01 built them (Task files, the engine, the task tools, `!task`, Settings › Tasks), were removed at the user's request (experimental; they may return): see the amendment of [ADR 0041](../../adr/0041-a-task-is-a-checked-state-graph-run-by-varnick-and-an-automation-is-its-trigger.md). What stays is the record shape: an Automation as a trigger that names the Claude prompt Task, and the runs file. The problem is still open, and what is written below about what shipped describes code that is gone.
+
 ## What the user wants (2026-10-15)
 
 - **A Task is a foundational primitive:** a saved, named workflow. It is a state machine of steps, and each step uses a **capability**:

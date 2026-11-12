@@ -235,8 +235,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if self.model.showingOutline, !self.model.showingSettings, self.model.outline.key(event) { return nil }
             // And Resources: it too takes the End session key, so ⌘W closes the selected tab and never reaches the tab underneath.
             if self.model.showingResources, !self.model.showingSettings, self.model.resources.key(event) { return nil }
-            // The Tasks view takes ↑, ↓, ↩ and esc; typing in a form's fields goes on to them.
-            if self.model.showingTasks, !self.model.showingSettings, self.model.tasksPanel.key(event) { return nil }
             // Settings › Resources takes the same keys, but only while that tab shows: the tab underneath gets none of them.
             if self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
             guard let action = settings.action(for: event) else { return event }
@@ -276,7 +274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.notifier.start(model: model)
         // The saved tabs are restored and the notifier reads by now. The first check runs a slot missed while Varnick was quit, once.
         model.startAutomations()
-        model.startTasks()
         model.startVoiceSession()
         MessagesSetup.shared.start(model: model, claudeCode: claudeCode)
         PresenceReader.shared.start()
@@ -368,10 +365,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .swapRight where inSession: model.swapPane(.right)
         case .webAddress: return model.webAction { $0.editingAddress = true }
         case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
-        case .stopTask:
-            // Ends the task that runs, whichever pane has the keyboard; the key goes on when none does.
-            guard Settings.shared.tasksOn, let running = TaskController.running, running.phase.isActive else { return false }
-            running.stop()
         case .fontBigger: Settings.shared.adjustFont(0.5)
         case .fontSmaller: Settings.shared.adjustFont(-0.5)
         case .fontReset: Settings.shared.fontSize = Settings.defaultFontSize
@@ -510,12 +503,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if model.notifier.deletions.contains(id) {
             model.notifier.clearDeletion(id)
             showSettings(.automations)
-            return
-        }
-        // A Task Run's notice shows the Run (option 01 of `work-cant-be-saved-or-chained`, slice 2a).
-        if model.notifier.notices.first(where: { $0.id == id })?.runLine != nil {
-            if let why = model.openTaskRun(id) { model.claudeError = why }
-            show()
             return
         }
         guard model.claudePane(id) != nil || model.endedRun(id) != nil else { return }
@@ -1098,13 +1085,15 @@ MainActor.assumeIsolated {
     let app = VarnickApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
-    // The app's own copy of the custom-apps and tasks skills, linked for Claude Code as `make skill-link` does for a checkout.
+    // The app's own copy of the custom-apps skill, linked for Claude Code as `make skill-link` does for a checkout. The tasks skill, which an earlier
+    // build linked the same way, is gone: its link into an app's copy is removed, so Claude Code isn't left a skill that points nowhere.
     if ResourceFolder.current.inBundle {
-        for name in ["custom-apps", "tasks"] {
+        let skills = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills", isDirectory: true)
+        InstalledApp.unlinkRetiredSkill("tasks", in: skills)
+        for name in ["custom-apps"] {
             let skill = ResourceFolder.current.folder.appendingPathComponent("skills/\(name)", isDirectory: true)
             guard FileManager.default.fileExists(atPath: skill.path) else { continue }
-            let outcome = InstalledApp.linkSkill(
-                name, in: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills", isDirectory: true), to: skill)
+            let outcome = InstalledApp.linkSkill(name, in: skills, to: skill)
             if case .failed(let reason) = outcome { NSLog("Varnick: the \(name) skill link failed: \(reason)") }
         }
     }

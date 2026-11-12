@@ -206,7 +206,7 @@ public enum SendRules {
         public var running: Bool
         /// Its channel server runs (the pane's mark).
         public var receives: Bool
-        /// The voice session, a run or a Task step: never given the channel.
+        /// The voice session or a run: never given the channel.
         public var neverReceives: Bool
         /// It was started skipping permission checks.
         public var skipsPermissions: Bool
@@ -290,7 +290,7 @@ public enum SendRules {
             case .cannotReceive:
                 "That session can't receive messages: it was started before Messages between sessions was ready on this Mac, or while it was off. Restart that pane, then send again. Nothing was sent."
             case .cannotReceiveEver:
-                "That session does not receive messages (the voice session, a run and a Task step don't). Nothing was sent."
+                "That session does not receive messages (the voice session and a run don't). Nothing was sent."
             case .noOpener:
                 "This session was not opened with tab_open by a session that can receive messages, so it has no opener. Nothing was sent."
             case .openerGone:

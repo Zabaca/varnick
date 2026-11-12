@@ -115,7 +115,7 @@ else:
 find_tools = ["find", "session_read", "find_open"]
 if only_panel[:6] != ["panel", "show", "keys"] + find_tools:
     fail("--panel lists %s first, not panel, show, keys and the find tools" % only_panel[:6])
-for arguments in ([], ["--screen"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"]):
+for arguments in ([], ["--screen"], ["--notify"], ["--automations"], ["--search"], ["--panes"]):
     if set(listed(arguments)) & set(find_tools):
         fail("%s lists a find tool" % arguments)
 found = {t["name"]: t for t in listed(["--panel"], full=True)}
@@ -242,107 +242,29 @@ if all(name in described for name in automation_tools):
     if described["automations_list"]["inputSchema"].get("required"):
         fail("automations_list requires %s" % described["automations_list"]["inputSchema"].get("required"))
 
-# The task tools (option 01 of work-cant-be-saved-or-chained, slice 2a): their own set, named by the app only while Tasks is on and never for a Run's
-# session. Named alone it lists the four; with the others it comes after the automation tools and before notify. NEVER call one of these tools here:
-# with Varnick running, the call reaches it and starts a real Run, which draws on the user's accounts. Only a call to a server that does not list them
-# is made (below), and that is refused before anything is sent.
-task_tools = ["tasks_list", "task_run", "task_run_status", "task_check"]
-only_tasks, every_set = listed(["--tasks"]), listed(["--screen", "--panel", "--automations", "--tasks", "--notify"])
-if only_tasks != task_tools:
-    fail("--tasks lists %s, not the four task tools" % only_tasks)
-if every_set != screen + only_panel + automation_tools + task_tools + ["notify"]:
-    fail("every set lists %s, not the screen tools, Panel access's, the automation tools, the task tools and notify" % every_set)
-if listed(["--tasks", "--notify"]) != task_tools + ["notify"]:
-    fail("--tasks --notify lists %s" % listed(["--tasks", "--notify"]))
-for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--screen", "--panel", "--automations", "--notify"]):
-    if set(listed(arguments)) & set(task_tools):
+# The task tools and `task_result` are gone (Tasks were removed 2026-11-12). A server an older build started may still name `--tasks` or `--task-result`:
+# those are ignored, never an error and never a tool. NEVER call a tool through `--tasks` alone: with no set understood the server lists the screen tools.
+removed_tools = ["tasks_list", "task_run", "task_run_status", "task_check", "task_result"]
+if listed(["--tasks", "--notify"]) != ["notify"] or listed(["--notify", "--task-result"]) != ["notify"]:
+    fail("--tasks or --task-result changes what --notify lists: %s, %s" % (listed(["--tasks", "--notify"]), listed(["--notify", "--task-result"])))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks", "--notify"], ["--notify", "--task-result"],
+                  ["--screen", "--panel", "--automations", "--tasks", "--notify", "--task-result"]):
+    if set(listed(arguments)) & set(removed_tools):
         fail("%s lists a task tool" % arguments)
-task_described = {t["name"]: t for t in listed(["--tasks"], full=True)}
-if all(name in task_described for name in task_tools):
-    run_schema = task_described["task_run"]["inputSchema"]
-    if run_schema.get("required") != ["task"] or run_schema.get("properties", {}).get("input", {}).get("type") != "object" \
-            or run_schema.get("properties", {}).get("task", {}).get("type") != "string":
-        fail("task_run is %s: a required string task and an object input" % run_schema)
-    status_schema = task_described["task_run_status"]["inputSchema"]
-    if status_schema.get("required") != ["run"] or status_schema.get("properties", {}).get("run", {}).get("type") != "string":
-        fail("task_run_status is %s: a required string run" % status_schema)
-    check_schema = task_described["task_check"]["inputSchema"]
-    if check_schema.get("required") != ["path"] or check_schema.get("properties", {}).get("path", {}).get("type") != "string":
-        fail("task_check is %s: a required string path" % check_schema)
-    if task_described["tasks_list"]["inputSchema"].get("required"):
-        fail("tasks_list requires %s" % task_described["tasks_list"]["inputSchema"].get("required"))
-    if "task_run_status" not in task_described["task_run"]["description"]:
-        fail("task_run's description doesn't send the session to task_run_status for the result")
-else:
-    fail("--tasks lists %s" % sorted(task_described))
-
-# task_result: a Claude step's answer, listed only while the pane's folder holds the step's schema file, and answered by the server alone. It runs here
-# against a scratch home folder, so the schema and the result files are written only there.
-scratch = tempfile.mkdtemp(prefix="check-mcp-home-")
-try:
-    step_pane = "00000000-0000-0000-0000-0000000000aa"
-    folder = os.path.join(scratch, "Library", "Application Support", "Varnick", "panes", step_pane)
-    os.makedirs(folder)
-
-    def result_server(messages):
-        return talk(["--task-result"], messages, home=scratch, pane=step_pane)
-
-    def tool_list():
-        replies = result_server([{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}])
-        return replies.get(2, {}).get("result", {}).get("tools", [])
-
-    if tool_list():
-        fail("--task-result lists %s for a pane whose folder has no schema" % [t["name"] for t in tool_list()])
-    with open(os.path.join(folder, ".varnick-task-schema.json"), "w") as schema_file:
-        json.dump({"type": "object", "required": ["amount", "currency"], "properties": {
-            "amount": {"type": "number"}, "currency": {"type": "string", "enum": ["USD", "EUR"]}, "note": {"type": "string"}}}, schema_file)
-    listed_result = tool_list()
-    if [t["name"] for t in listed_result] != ["task_result"]:
-        fail("--task-result lists %s for a pane whose folder has a schema, not task_result alone" % [t["name"] for t in listed_result])
-    elif listed_result[0]["inputSchema"].get("required") != ["amount", "currency"] \
-            or set(listed_result[0]["inputSchema"].get("properties", {})) != {"amount", "currency", "note"}:
-        fail("task_result's input schema is %s, not the step's result schema" % listed_result[0]["inputSchema"])
-    if "task_result" in listed(["--notify"]) or "task_result" in listed(["--screen"]):
-        fail("a server started without --task-result lists task_result")
-
-    def task_result(call_id, arguments):
-        replies = result_server([{"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {"name": "task_result", "arguments": arguments}}])
-        return replies.get(call_id, {}).get("result", {})
-
-    refused_call = task_result(5, {"amount": "five", "extra": 1})
-    text = refused_call.get("content", [{}])[0].get("text", "")
-    if refused_call.get("isError") is not True or "amount must be" not in text or "currency is missing" not in text or "extra isn't a field" not in text:
-        fail("a task_result call that doesn't fit was not refused naming each wrong field: %s" % refused_call)
-    if os.path.exists(os.path.join(folder, ".varnick-task-result.json")):
-        fail("a refused task_result call left a result behind")
-    good = task_result(6, {"amount": 5, "currency": "USD"})
-    if good.get("isError") is not False:
-        fail("a task_result call that fits was refused: %s" % good)
-    try:
-        with open(os.path.join(folder, ".varnick-task-result.json")) as result_file:
-            kept = json.load(result_file)
-    except (OSError, ValueError):
-        kept = None
-    if kept != {"amount": 5, "currency": "USD"}:
-        fail("an accepted task_result call kept %s, not its value" % kept)
-    if task_result(7, {"amount": 6, "currency": "EUR"}).get("isError") is not True:
-        fail("a second task_result call was not refused")
-finally:
-    shutil.rmtree(scratch, ignore_errors=True)
 
 # The voice session's own set (option 09 of listening-never-answers, and option 10's end_voice_mode): named by the app for the voice session's pane alone.
 # Named alone it lists search and end_voice_mode; with the others they come last. NEVER call either here: with Varnick running and the voice session on,
 # a call from the voice session's pane would search the user's history and sessions, or end the Mac's voice mode (a call from any other pane is refused by
 # the app). Only a call to a server that does not list it is made (below), and that is refused before anything is sent.
 voice_tools = ["search", "end_voice_mode"]
-only_search, search_with = listed(["--search"]), listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search"])
+only_search, search_with = listed(["--search"]), listed(["--screen", "--panel", "--automations", "--notify", "--search"])
 if only_search != voice_tools:
     fail("--search lists %s, not search and end_voice_mode alone" % only_search)
-if search_with != screen + only_panel + automation_tools + task_tools + ["notify"] + voice_tools:
+if search_with != screen + only_panel + automation_tools + ["notify"] + voice_tools:
     fail("every set and --search lists %s, with the voice session's tools last" % search_with)
 if listed(["--notify", "--search"]) != ["notify"] + voice_tools:
     fail("--notify --search lists %s" % listed(["--notify", "--search"]))
-for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--screen", "--panel", "--automations", "--tasks", "--notify"]):
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--screen", "--panel", "--automations", "--notify"]):
     for name in voice_tools:
         if name in listed(arguments):
             fail("%s lists %s" % (arguments, name))
@@ -367,7 +289,7 @@ if listed(["--screen", "--panel", "--panes"]) != screen + only_panel + pane_tool
     fail("--screen --panel --panes lists %s, not the screen tools, Panel access's and the pane tools" % listed(["--screen", "--panel", "--panes"]))
 if listed(["--notify", "--search", "--panes"]) != ["notify"] + voice_tools + pane_tools:
     fail("--notify --search --panes lists %s, with the pane tools last" % listed(["--notify", "--search", "--panes"]))
-for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search"]):
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--search"], ["--screen", "--panel", "--automations", "--notify", "--search"]):
     if set(listed(arguments)) & set(pane_tools):
         fail("%s lists a pane tool" % arguments)
 for name in pane_tools:
@@ -427,10 +349,10 @@ if listed(["--notify"]) != ["notify"]:
     fail("a run's set without --outline-append lists %s, not notify alone" % listed(["--notify"]))
 if listed(["--outline-append"]) != append_tool:
     fail("--outline-append lists %s, not outline_append alone" % listed(["--outline-append"]))
-if listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"]) \
-        != screen + only_panel + automation_tools + task_tools + ["notify"] + voice_tools + pane_tools + append_tool:
-    fail("every set lists %s, with outline_append last" % listed(["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"]))
-for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"], ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes"]):
+if listed(["--screen", "--panel", "--automations", "--notify", "--search", "--panes", "--outline-append"]) \
+        != screen + only_panel + automation_tools + ["notify"] + voice_tools + pane_tools + append_tool:
+    fail("every set lists %s, with outline_append last" % listed(["--screen", "--panel", "--automations", "--notify", "--search", "--panes", "--outline-append"]))
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--search"], ["--panes"], ["--screen", "--panel", "--automations", "--notify", "--search", "--panes"]):
     if "outline_append" in listed(arguments):
         fail("%s lists outline_append" % arguments)
 appended = [t for t in listed(["--outline-append"], full=True) if t["name"] == "outline_append"]
@@ -450,11 +372,11 @@ if appended:
 # anything is sent.
 if listed(["--send"]) != ["send"]:
     fail("--send lists %s, not send alone" % listed(["--send"]))
-everything = ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append", "--send"]
+everything = ["--screen", "--panel", "--automations", "--notify", "--search", "--panes", "--outline-append", "--send"]
 if listed(everything)[-1:] != ["send"] or listed(everything)[:-1] != listed(everything[:-1]):
     fail("every set lists %s, with send last" % listed(everything))
-for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--tasks"], ["--search"], ["--panes"], ["--outline-append"],
-                  ["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"], ["--notify", "--outline-append"]):
+for arguments in ([], ["--screen"], ["--panel"], ["--notify"], ["--automations"], ["--search"], ["--panes"], ["--outline-append"],
+                  ["--screen", "--panel", "--automations", "--notify", "--search", "--panes", "--outline-append"], ["--notify", "--outline-append"]):
     if "send" in listed(arguments):
         fail("%s lists send" % arguments)
 sending = [t for t in listed(["--send"], full=True) if t["name"] == "send"]
@@ -470,20 +392,20 @@ if sending:
     if len(description) > 2400:
         fail("send's description is %d characters" % len(description))
 
-# A tool a server doesn't list is unknown to it, and nothing is sent to the app.
-for arguments, name in ((["--tasks"], "automations_list"), (["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
-                        (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--tasks"], "look"), (["--tasks"], "notify"), (["--notify"], "task_result"),
+# A tool a server doesn't list is unknown to it, and nothing is sent to the app. The removed task tools are listed by no set.
+for arguments, name in ((["--screen", "--panel", "--automations", "--notify"], "tasks_list"), ([], "task_run"),
+                        (["--notify"], "task_check"), (["--automations"], "task_run_status"), (["--notify"], "task_result"),
                         ([], "panel"), (["--screen"], "panel"), (["--panel"], "look"), (["--panel"], "nothing_of_ours"), ([], "notify"), (["--screen"], "notify"), (["--panel"], "notify"), (["--notify"], "look"),
                         ([], "automations_list"), (["--screen"], "automation_create"), (["--panel"], "automation_edit"), (["--notify"], "automation_switch"), (["--screen", "--panel"], "automation_delete"),
                         (["--screen", "--panel", "--notify"], "automations_list"), (["--automations"], "panel"), (["--automations"], "look"),
-                        ([], "search"), (["--notify"], "search"), (["--tasks"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
-                        ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--tasks"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
+                        ([], "search"), (["--notify"], "search"), (["--screen", "--panel", "--automations", "--notify"], "search"),
+                        ([], "end_voice_mode"), (["--notify"], "end_voice_mode"), (["--screen", "--panel", "--automations", "--notify"], "end_voice_mode"),
                         (["--search"], "look"), (["--search"], "notify"), (["--search"], "tasks_list"),
-                        ([], "pane_open"), ([], "pane_close"), ([], "tab_open"), ([], "tab_done"), ([], "project_search"), (["--panel"], "pane_open"), (["--panel"], "tab_open"), (["--panel"], "tab_done"), (["--panel"], "project_search"), (["--screen", "--panel", "--automations", "--tasks", "--notify"], "pane_close"),
+                        ([], "pane_open"), ([], "pane_close"), ([], "tab_open"), ([], "tab_done"), ([], "project_search"), (["--panel"], "pane_open"), (["--panel"], "tab_open"), (["--panel"], "tab_done"), (["--panel"], "project_search"), (["--screen", "--panel", "--automations", "--notify"], "pane_close"),
                         (["--search"], "pane_open"), (["--search"], "tab_open"), (["--search"], "tab_done"), (["--search"], "project_search"), (["--send"], "project_search"), (["--panes"], "panel"), (["--panes"], "look"), (["--panes"], "notify"),
                         ([], "outline_append"), (["--notify"], "outline_append"), (["--panel"], "outline_append"), (["--automations"], "outline_append"), (["--outline-append"], "notify"), (["--outline-append"], "outline_act"),
-                        ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"), (["--tasks"], "find_open"),
-                        ([], "send"), (["--panes"], "send"), (["--panel"], "send"), (["--notify"], "send"), (["--screen", "--panel", "--automations", "--tasks", "--notify", "--search", "--panes", "--outline-append"], "send"),
+                        ([], "find"), (["--screen"], "find"), (["--notify"], "session_read"), (["--panes"], "find_open"), (["--search"], "find"),
+                        ([], "send"), (["--panes"], "send"), (["--panel"], "send"), (["--notify"], "send"), (["--screen", "--panel", "--automations", "--notify", "--search", "--panes", "--outline-append"], "send"),
                         (["--send"], "panel"), (["--send"], "pane_open"), (["--send"], "tab_open"), (["--send"], "notify")):
     replies = talk(arguments, [{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": name, "arguments": {}}}])
     if replies.get(3, {}).get("error", {}).get("message") != "Unknown tool":
