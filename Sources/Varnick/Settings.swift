@@ -419,7 +419,7 @@ final class Settings: ObservableObject {
     private let defaults = UserDefaults.standard
 
     /// Stores Skip permissions once when absent: on if a sessions file exists (an install from before the default
-    /// changed), else off. Runs first in `applicationDidFinishLaunching` after `ChromiumEngine.startAtLaunch` (see where-it-breaks).
+    /// changed), else off. Runs at the start of `applicationDidFinishLaunching`, before `makeModel` (see where-it-breaks).
     static func storeSkipPermissionsIfAbsent() {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: skipPermissionsKey) == nil else { return }

@@ -236,8 +236,8 @@ struct PanePanelView: PanelAccessView {
     /// A Chromium pane (prototype): where to drive it over CDP. Its contents are read through CDP, not here.
     @MainActor private static func chromiumLines(_ page: ChromiumPage, url: String?) -> String {
         var lines = ["A Chromium page" + ((url ?? "").isEmpty ? ", no address yet" : " at \(url!)") + "."]
-        if let failure = ChromiumEngine.failure {
-            lines.append("Chromium isn't running in this Varnick (\(failure)); it won't start again until Varnick restarts, so there is no page to drive.")
+        if ChromiumEngine.hasFailed {
+            lines.append("Chromium isn't running in this Varnick, and it won't start again until Varnick restarts, so there is no page to drive.")
             return lines.joined(separator: "\n")
         }
         guard let port = ChromiumEngine.cdpPort, let target = page.targetID else {

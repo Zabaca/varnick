@@ -141,7 +141,7 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 ## Testing Decisions
 
 - No test target: `make build`, the `make check-*` targets, then the hand checks above, each after a restart the user makes. No agent restarts Varnick, runs the built binary past settings code, or clicks or types on the screen.
-- Pure rules get a harness compiled alone, as other parts do: which engine a page gets, the failure card's message and retry interval for an address, and the run-loop depth count (an observer fed by hand-made entries and exits).
+- Pure rules get a harness compiled alone, as other parts do: which engine a page gets, the failure card's message and retry interval for an address. The run-loop depth count gets none: as built in step 1 it is one clamped counter beside a direct question to the run loop, with no rule of its own to check (ADR 0048 has the measurement).
 - The start without a restart is checked only by hand, in the real app: a harness proved the principle, not Varnick's loops.
 
 ## Out of Scope
