@@ -29,7 +29,6 @@ enum ChromiumEngine {
 
     enum State {
         case notStarted
-        case starting
         case running(Zebkit, cdpPort: UInt32)
         case failed(String)
     }
@@ -43,30 +42,28 @@ enum ChromiumEngine {
     }
     /// Panes waiting for the start to settle, told when it has, whether it worked or not.
     private static var waiters: [@MainActor () -> Void] = []
-    private static var startAsked = false
 
     /// The engine for a page that wants it now. Not running yet, it is started at the next dispatch between runs of the main run loop,
     /// the one place it can start (ADR 0048), and `whenSettled` is called once it has, or failed, so the page asks again.
     static func engine(whenSettled: @escaping @MainActor () -> Void) -> Availability {
         switch state {
         case .running(let kit, _): return .running(kit)
-        case .failed(let reason):
-            return .unavailable("Chromium didn't start in this Varnick: \(reason). It can't start again until Varnick is restarted.")
-        case .notStarted, .starting:
+        case .failed: return .unavailable(failedNote)
+        case .notStarted:
             guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
             waiters.append(whenSettled)
-            if !startAsked {
-                startAsked = true
-                RunLoopGate.run { start(between: $0) }
-            }
+            // A start already waiting or under way takes no second request.
+            RunLoopGate.whenBetweenRuns { start() }
             return .starting
         }
     }
 
-    /// The only start, and it takes proof that no run of the main run loop is under way, so a start inside one can't be written.
-    private static func start(between _: BetweenRuns) {
+    /// What a pane says once the start failed: the reason is in the log, and nothing starts the engine again in this process.
+    static let failedNote = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted."
+
+    /// Only ever called by `RunLoopGate`, which calls it between runs of the main run loop.
+    private static func start() {
         guard case .notStarted = state else { return }
-        state = .starting
         defer {
             let told = waiters
             waiters = []
@@ -100,10 +97,10 @@ enum ChromiumEngine {
         }
     }
 
-    /// Why the engine isn't running, once it failed to start (it is never tried again in this process).
-    static var failure: String? {
-        if case .failed(let reason) = state { return reason }
-        return nil
+    /// The engine failed to start, or has stopped: it is never started again in this process.
+    static var hasFailed: Bool {
+        if case .failed = state { return true }
+        return false
     }
 
     static var cdpPort: UInt32? {
@@ -376,8 +373,8 @@ final class ChromiumPage: NSView {
         makePage()
     }
 
-    /// Made on the next turn of the main queue, never inside the layout pass or the view move that asked: starting the engine is slow and its
-    /// first pump may call back into the session's published state.
+    /// Made on the next turn of the main queue, never inside the layout pass or the view move that asked: the engine's first pump may call back
+    /// into the session's published state.
     private func makePage() {
         guard view == nil, !pageQueued else { return }
         pageQueued = true
@@ -405,8 +402,11 @@ final class ChromiumPage: NSView {
         // The engine is asked for once while it starts: every layout pass lands here.
         guard !waitingForEngine else { return }
         switch ChromiumEngine.engine(whenSettled: { [weak self] in
-            self?.waitingForEngine = false
-            self?.makePage()
+            guard let self else { return }
+            self.waitingForEngine = false
+            // The start's note goes; a pane that can't make its page now (it left the window) shows nothing, and one that can shows its page or why not.
+            self.note.isHidden = true
+            self.makePage()
         }) {
         case .starting:
             waitingForEngine = true
