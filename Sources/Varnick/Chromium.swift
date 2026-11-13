@@ -61,10 +61,15 @@ enum ChromiumEngine {
     /// What a pane says once the start failed: the reason is in the log, and nothing starts the engine again in this process.
     static let failedNote = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted."
 
+    private static var isStarting = false
+
     /// Only ever called by `RunLoopGate`, which calls it between runs of the main run loop.
     private static func start() {
-        guard case .notStarted = state else { return }
+        // The engine's init may run the loop and dispatch events, the gate's among them: a start inside a start would load the engine twice.
+        guard case .notStarted = state, !isStarting else { return }
+        isStarting = true
         defer {
+            isStarting = false
             let told = waiters
             waiters = []
             for waiter in told { waiter() }
