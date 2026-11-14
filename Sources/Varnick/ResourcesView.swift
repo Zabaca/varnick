@@ -27,6 +27,9 @@ struct ResourcesView: View {
     }
 }
 
+/// The section of what belongs to no tab, which a Chromium page's pane points to.
+private let untabbedTitle = "Not in a tab"
+
 /// The keys besides ↑, ↓ and esc, which the view's header and Settings show their own way.
 struct ResourcesHints: View {
     var body: some View {
@@ -83,7 +86,7 @@ private struct ResourcesBody: View {
             if let app { appSplit(app) }
             if !report.tabs.isEmpty { section("Tabs", count: report.tabs.count) { ForEach(report.tabs) { tab in TabBlock(resources: resources, tab: tab) } } }
             if !report.helpers.isEmpty {
-                section("Not in a tab") {
+                section(untabbedTitle) {
                     ForEach(report.helpers) { helper in
                         FigureRow(title: helper.helper.title, detail: ResourceFigure.processes(helper.processes.count), figure: helper.total)
                     }
@@ -188,9 +191,9 @@ private struct TabBlock: View {
                     .frame(width: 10)
                 SourceTile(source: tab.kind, size: 26, symbol: tab.panes.count > 1 ? "rectangle.split.2x1" : nil)
                 Text(tab.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(ResourceFigure.processes(tab.count)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                Text(tab.inChromiumAlone ? "In Chromium" : ResourceFigure.processes(tab.count)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 8)
-                Text(ResourceFigure.text(tab.total)).font(.system(size: 13).monospacedDigit())
+                if !tab.inChromiumAlone { Text(ResourceFigure.text(tab.total)).font(.system(size: 13).monospacedDigit()) }
                 CloseButton(help: "Close tab" + (tab.panes.count > 1 ? " (\(tab.panes.count) panes)" : "")) { resources.closeTab(tab.id) }
             }
             .padding(.horizontal, 10)
@@ -205,14 +208,17 @@ private struct TabBlock: View {
                         HStack(spacing: 8) {
                             Text(pane.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
                             Spacer(minLength: 8)
-                            Text(ResourceFigure.text(pane.total)).font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                            if !pane.inChromiumAlone {
+                                Text(ResourceFigure.text(pane.total)).font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                            }
                         }
                         .padding(.leading, 56)
                         .padding(.trailing, 10)
                         .frame(height: 24)
                     }
                     if pane.processes.isEmpty {
-                        Text("Nothing running").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Text(pane.inChromiumAlone ? "Drawn by Chromium, counted in its helpers under \(untabbedTitle)" : "Nothing running")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
                             .padding(.leading, tab.panes.count > 1 ? 68 : 56).frame(height: 22)
                     }
                     ForEach(pane.processes) { process in
