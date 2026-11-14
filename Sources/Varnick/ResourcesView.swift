@@ -107,7 +107,7 @@ private struct ResourcesBody: View {
                     .padding(.horizontal, 10)
             }
             if !WebKitProcess.canTellResponsibility {
-                Text("macOS's responsible-process call is missing here, so WebKit's shared processes and any page no pane names are not counted.")
+                Text("macOS's responsible-process call is missing here, so WebKit's shared processes and any rendered Markdown no pane names are not counted.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 10)

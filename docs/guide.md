@@ -340,10 +340,10 @@ for what a session is shown.
 ⌘⇧M (or `!resources`, also found as `!memory`) shows how much memory Varnick uses and what uses it, in place of the panel's
 content as the session board does; the same key again, or esc, goes back. The figures are footprints, the number Activity
 Monitor's Memory column shows. At the top are Varnick's total and its process count, and the same processes grouped by
-kind (the app, Claude Code, MCP tools, web pages, Chromium, the Phone page server, app servers, zmx, shells and other). Under it is the
+kind (the app, Claude Code, MCP tools, WebKit, Chromium, the Phone page server, app servers, zmx, shells and other). Under it is the
 app's own memory: what the on-device models hold (MLX's own count, naming the models loaded now), its graphics memory
 beyond that, and everything else. The tabs that run on this Mac follow, biggest first; → opens one into its panes and their
-processes (Claude Code, its MCP tool, the commands it runs, a terminal's shell and what runs in it, an app's server, a page's
+processes (Claude Code, its MCP tool, the commands it runs, a terminal's shell and what runs in it, an app's server, a rendered Markdown file's
 WebKit process, zmx), and ↩ shows the tab. The Close button on a tab, or your End session key (⌘W) on the selected one, closes
 it as its × does, so a tab with a Claude conversation goes to Stopped and Recent, and a session that must ask first brings its
 tab up to ask. A page in Chromium has no process of its own to show: its tab says it is in Chromium, and what Chromium costs is one row of its helpers
@@ -352,9 +352,9 @@ shared processes, Chromium's helpers, links to other machines), the tabs of othe
 since their memory is on that machine), and, greyed, the Claude Code that runs in other apps and terminals, so the figures
 add up to Activity Monitor's. A process is Varnick's only when its ancestry leads to Varnick or to one of its zmx sessions,
 never by its name. Rows keep their order while the view is open, and the figures are read every 3 seconds only while it
-shows in a visible panel; Varnick runs no other program to read them. WebKit gives no public way to tell which process runs a
-web page, so Varnick asks WebKit's private interface and macOS's private "responsible process" call; if a macOS update removes
-either, pages show together outside the tabs, or drop out of the total (the view says so in that case).
+shows in a visible panel; Varnick runs no other program to read them. WebKit, which draws a file's rendered Markdown, gives no public way to tell which
+process runs it, so Varnick asks WebKit's private interface and macOS's private "responsible process" call; if a macOS update removes
+either, the Markdown views show together outside the tabs, or drop out of the total (the view says so in that case).
 
 Settings › **Resources** shows the same table inside Settings, and measures only while that tab shows. ↑, ↓, →, ←, ↩ and your
 End session key work there as in the view, and only while that tab is open; esc closes Settings. ↩ on a tab, or a tab that must
@@ -371,7 +371,7 @@ board's cards, one per tab with its sessions listed under it, by column (Running
 shows them. Each pane gets an id such as `s1` (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
 title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
 never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a file or
-a page in WebKit, its kind and title only (it says it can't be driven), and for a page in Chromium, a custom app's or Scratch's included, its address and the endpoint a session drives it with (Experimental, below). **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
+a file's, its kind and title only, and for a page, a custom app's or Scratch's included, its address and the endpoint a session drives it with (Pages, below). **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
 your Outline's bullets: by default the tree from Home, or
 from a bullet, three levels down (`depth` 0 for all), with each bullet's id (`o1`, the same every time), text, whether it
 is done, collapsed or a mirror, its tags and its note, and which ones your view hides; with `as_shown`, the rows exactly
@@ -387,7 +387,7 @@ caret keeps its place in your text, your next key adds to the new text, and ⌘Z
 method is composing there, it waits for the composition to end.
 
 Two more tools, **opening panes**, have no switch either, and the voice session lacks them. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
-(with a first message if the session gives one), a custom app such as Scratch (its page is in Chromium where it can run, like a page's), a page (in Chromium where it can run, which the session can then read and drive: the page is made once the pane is on screen, so the reply tells it to read the pane again shortly; a page in WebKit can't be driven, and `pane_read` says so and why) or a file beside the session's own pane,
+(with a first message if the session gives one), a custom app such as Scratch (its page is Chromium's, like a page's), a page (which the session can then read and drive: the page is made once the pane is on screen, so the reply tells it to read the pane again shortly; where Chromium can't run, the reply and `pane_read` say why) or a file beside the session's own pane,
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude
@@ -537,15 +537,15 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 - **Where they are kept:** the automations are in `automations.json` in Varnick's support folder (each is a cadence and a prompt, kept in the shape
   the removed Tasks gave it), and what became of each run in `runs.json` beside it.
 
+## Pages
+
+Every page in a pane is drawn by Chromium: the split picker's Browser, a custom app's page and Scratch, the pages of another Mac's tab, a page a session opens and a page found by search beside a session. Chromium is a copy of it that sits beside Varnick (inside Varnick.app in the app), with logins of its own, and it is the only browser a page has: WebKit draws only a file's rendered Markdown. A session that reads any one page pane with `pane_read` is given an endpoint to read and drive it with, for as long as it keeps reading, and through it can reach every page of this Varnick, logged in as you are (what that lets it do, and what leaves your Mac, is in [privacy and security](privacy-and-security.md#pages-in-chromium)). Chromium starts the first time a page is on screen, with no restart, and costs about 200 MB until Varnick quits. The sites you were logged into in the old WebKit pages are copied into Chromium once.
+
+There is no switch for any of this. Where Chromium can't run, a page pane says so and what to do, and so does a session's `pane_read`: if this Varnick has no Chromium in it, use a build that does (`make build` fetches it, `make app` puts it in the app); if it failed to start, restart Varnick (it can't start twice in one run) and look at the log. If Varnick itself stops at launch because of it, run `defaults write com.zabaca.varnick chromiumOff -bool true` in a terminal and open Varnick again: pages then say Chromium is off. `defaults delete com.zabaca.varnick chromiumOff` and Reload on the page turn it back on. `docs/agents/where-it-breaks.md`, "By hand, the whole browser", has the rest.
+
 ## Experimental
 
-Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on except **Pages in Chromium**, which is on.
-
-**Pages in Chromium** draws the Browser pane, custom apps and Scratch, the pages of another Mac's tab, the pages a session opens and the pages found by search in Chromium (a copy of it sits beside Varnick, with logins of its own) instead of WebKit, wherever
-it can run, so that a session can read and drive the page you are looking at: `pane_read` on it gives the session an endpoint to do that with, for as long as it keeps reading
-(what that lets it do is in [privacy and security](privacy-and-security.md#pages-in-chromium)). Chromium starts the first time a page is on screen, with no restart, and costs about 200 MB until Varnick quits.
-Off, a page you open from then on is WebKit's, which a session can't drive; a Chromium page already open stays until Varnick restarts. Where Chromium isn't in this Varnick, or failed to start, pages are WebKit's whatever the
-switch says (ADR 0048 lists when). The switch goes when WebKit's pages do.
+Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
 
 **Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
 the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts

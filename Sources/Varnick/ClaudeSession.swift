@@ -3,32 +3,26 @@ import Combine
 import VarnickPeer
 import SwiftTerm
 import SwiftUI
-import WebKit
 
 /// One pane: interactive Claude Code (or a plain shell, ⌘⇧T, or the live transcript) in an
-/// embedded terminal (SwiftTerm), or a web page in Chromium (`ChromiumPage`) or WebKit (a WKWebView; split picker).
+/// embedded terminal (SwiftTerm), a web page in Chromium (`ChromiumPage`), or a file (`FileViewer`).
 /// The session outlives panel hide/show; it ends when claude exits or on ⌘W.
 /// Sessions restored after a relaunch start dormant and resume when first shown.
 @MainActor
-final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate, WKNavigationDelegate {
+final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate {
     let view: LocalProcessTerminalView
-    /// Web panes in WebKit only.
-    private(set) var webView: WKWebView?
-    /// Web panes in Chromium only (`ChromiumPage`), in place of `webView`. Which a pane gets is decided once, when it is made (`pageEngine`).
+    /// Web panes (`ChromiumPage`): the page, or the pane's own words for why there is none (`ChromiumEngine.unavailableNote`).
     private(set) var chromiumPage: ChromiumPage?
-    /// A web pane in WebKit: why it isn't in Chromium, for `pane_read` and `pane_open`'s reply. Nil for a Chromium page and for any other pane.
-    private(set) var webKitNote: String?
     /// File panes only.
     private(set) var fileViewer: FileViewer?
     /// File panes showing Markdown: the source instead of the rendered page.
     @Published var showsSource = false { didSet { fileViewer?.showsSource = showsSource } }
     /// Web panes: the address bar has focus (new pane, or ⌘L).
     @Published var editingAddress = false
-    private var webObservers: [NSKeyValueObservation] = []
     private var retry: DispatchWorkItem?
-    /// The page last asked for failed to load and hasn't loaded since: a proxied address that returns tries again at once. In Chromium, while its card is up.
+    /// The page last asked for failed to load and hasn't loaded since, while its card is up: a proxied address that returns tries again at once.
     private var loadFailed = false
-    /// A Chromium page: whether its card is up, from the engine's events (`LoadFailure.Watch`).
+    /// Whether the card is up, from the engine's events (`LoadFailure.Watch`).
     private var loadWatch = LoadFailure.Watch()
     /// Terminal title Claude Code sets (it names the conversation once it has a topic).
     @Published private(set) var title = ""
@@ -313,7 +307,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var isOnPeer: Bool { record.host != nil }
     /// A pane of another machine's tab that this Mac doesn't show (`SessionRecord.staysOnHost`). A page that has loaded stays, whatever the host's
     /// listing says next.
-    var staysOnHost: Bool { record.staysOnHost && webView == nil && chromiumPage == nil }
+    var staysOnHost: Bool { record.staysOnHost && chromiumPage == nil }
     /// What its card says: a title, the detail, and the address on the host when it has one.
     var remoteNote: (title: String, detail: String, address: String?)? {
         guard staysOnHost else { return nil }
@@ -336,9 +330,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         objectWillChange.send()
         record.proxy = address
         record.proxyNote = note
-        if let address, webView == nil, chromiumPage == nil {
+        if let address, chromiumPage == nil {
             record.url = address
-            makePage()
+            makeChromiumPage()
             if started { load(address) }
         } else if let address, loadFailed {
             // The address is back after a page failed to load: try it now, not at the next retry (at the new address if the port moved).
@@ -379,8 +373,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var runsOnText: String { "The session runs on " + (hostName ?? "this Mac") }
     /// Source name for icons and colours (Theme).
     var kind: String { isWeb ? "web" : isFile ? "file" : isShell ? "terminal" : isLiveTranscript ? "transcript" : "claude" }
-    /// What the pane shows: the terminal, the web view, or the file.
-    var content: NSView { webView ?? chromiumPage ?? fileViewer ?? view }
+    /// What the pane shows: the terminal, the page, or the file.
+    var content: NSView { chromiumPage ?? fileViewer ?? view }
 
     init(record: SessionRecord, resuming: Bool, onExit: @escaping (Int32?) -> Void) {
         self.record = record
@@ -397,7 +391,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.caretColor = .systemBlue
         // The `chromium` mark of a record an earlier build saved means nothing now, and is not saved again.
         self.record.chromium = nil
-        if record.isWeb, !record.staysOnHost { makePage() }
+        if record.isWeb, !record.staysOnHost { makeChromiumPage() }
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
         }
@@ -1679,62 +1673,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // MARK: Web
 
-    /// The engine a page pane gets, asked once when the pane is made and again at each restore (`PageEngine`, ADR 0048).
-    private static func pageEngine() -> PageEngine.Decision {
-        PageEngine.choose(frameworkPresent: ChromiumEngine.isInstalled, switchOn: Settings.shared.pagesInChromium, engineFailed: ChromiumEngine.hasFailed)
-    }
-
-    /// Makes the pane's page in the engine the rule gives. Every place that makes one comes here, or `pane_read` has no `webKitNote` for a WebKit page.
-    private func makePage() {
-        let decision = Self.pageEngine()
-        if decision.engine == .chromium { makeChromiumPage() } else { makeWebView() }
-        webKitNote = decision.reason.map(Self.words)
-    }
-
-    /// Why a page is in WebKit, for `pane_read` and `pane_open`'s reply.
-    private static func words(_ reason: PageEngine.Reason) -> String {
-        switch reason {
-        case .noFramework: "Chromium isn't in this Varnick"
-        case .switchOff: "Pages in Chromium (Settings › Experimental) was off when it was made"
-        case .engineFailed: "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted"
-        }
-    }
-
-    /// A Chromium page the engine can't make (its start failed) becomes a WebKit page at its Reload, and stays one.
-    private func fallBackToWebKit() {
-        guard let old = chromiumPage else { return }
-        old.close()
-        old.removeFromSuperview()
-        chromiumPage = nil
-        loadFailed = false
-        loadWatch.reset()
-        makeWebView()
-        webKitNote = Self.words(.engineFailed)
-        objectWillChange.send()
-        if let url = record.url, !url.isEmpty { load(url) }
-    }
-
-    private func makeWebView() {
-        let config = WKWebViewConfiguration()
-        // Right-click › Inspect Element, and Safari's Develop menu.
-        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 760, height: 520), configuration: config)
-        web.isInspectable = true
-        web.navigationDelegate = self
-        web.setValue(false, forKey: "drawsBackground")   // no white flash before the first paint
-        webView = web
-        webObservers = [
-            web.observe(\.title, options: [.new]) { [weak self] web, _ in
-                Task { @MainActor in self?.webChanged(title: web.title ?? "") }
-            },
-            web.observe(\.url, options: [.new]) { [weak self] web, _ in
-                Task { @MainActor in self?.webChanged(url: web.url) }
-            },
-        ]
-    }
-
     private func makeChromiumPage(adopting popup: ChromiumPage? = nil) {
         let page = popup ?? ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
+        // An app's server runs whether or not its page can be shown: its address is the way to it from another browser.
+        if isApp, record.host == nil { page.unavailableHint = "This app's server is still running: its address is in the address bar (⌘L), and opens in another browser." }
         page.onTitle = { [weak self] title in self?.webChanged(title: title) }
         page.onURL = { [weak self] text in self?.webChanged(url: URL(string: text)) }
         page.onNote = { [weak self] note in self?.showPageNote(note) }
@@ -1756,10 +1698,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// never loads its own, and it ends when the site closes the window.
     func adopt(_ popup: ChromiumPage, openedBy opener: ClaudeSession) {
         chromiumPage?.close()
-        // The pane was made while the switch was off, so it holds a WebKit view the window replaces.
-        webObservers = []
-        webView = nil
-        webKitNote = nil
         makeChromiumPage(adopting: popup)
         popup.onClosedItself = { [weak self] in self?.end() }
         // A download of the popup outlives its pane, so the opener's pane says what became of it too.
@@ -1791,7 +1729,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         chromiumPage?.hideCard()
         record.url = url.absoluteString
         if editingAddress { editingAddress = false }
-        webView?.load(URLRequest(url: url))
         chromiumPage?.load(url.absoluteString)
         onLabelChange()
     }
@@ -1812,27 +1749,14 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // A file of another machine is read again.
         if let viewer = fileViewer, viewer.remote != nil { return viewer.load() }
         if appExited, isWeb { return restartApp() }
-        if let chromiumPage {
-            if chromiumPage.targetID == nil, ChromiumEngine.cannotRun { return fallBackToWebKit() }
-            // Under a card the page never loaded, so it is asked for again by address (as WebKit does for a view that shows an error card).
-            if loadFailed, let url = record.url.flatMap(URL.init(string:)) {
-                retry?.cancel()
-                return tryAgain(at: url)
-            }
-            return chromiumPage.reload()
+        guard let chromiumPage else { return }
+        // Under a card the page never loaded, so it is asked for again by address.
+        if loadFailed, let url = record.url.flatMap(URL.init(string:)) {
+            retry?.cancel()
+            return tryAgain(at: url)
         }
-        guard let web = webView else { return }
-        if let url = record.url.flatMap(URL.init(string:)), web.url == nil || web.url?.scheme == "about" {
-            web.load(URLRequest(url: url))
-        } else {
-            web.reload()
-        }
-    }
-
-    /// A dev server that isn't up yet: say so and keep retrying, so the page appears
-    /// on its own once the server starts.
-    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        Task { @MainActor in self.showLoadError(error) }
+        // A pane with no page (Chromium can't run, or is off) asks the engine again, and says why not when nothing has changed.
+        chromiumPage.reload()
     }
 
     /// A page that loads through the port proxy of this pane's host: the host's own name, whatever its listing says now.
@@ -1842,48 +1766,27 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         return PeerProxyAddress.accepts(url.absoluteString, forPeer: peer.address, in: TailnetNodes.shared.nodes)
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor in
-            // The error page this class loads is about:blank; a real page that finished means the failure is over.
-            if let url = webView.url, url.scheme != "about" { self.loadFailed = false }
-        }
-    }
-
-    private func showLoadError(_ error: Error) {
-        guard let web = webView, let target = record.url.flatMap(URL.init(string:)) else { return }
-        if (error as NSError).code == NSURLErrorCancelled { return }
-        loadFailed = true
-        guard let card = failureCard(for: target, other: error.localizedDescription) else { return }
-        let html = """
-            <body style="background:#1a1a1a;color:#999;font:13px -apple-system;display:grid;place-items:center;height:90vh">
-            <div>\(card.message.replacingOccurrences(of: "<", with: "&lt;"))</div></body>
-            """
-        web.loadHTMLString(html, baseURL: nil)
-        scheduleRetry(of: target, after: card.retryAfter)
-    }
-
-    /// What a failed load of `target` says and when it is tried again, for either engine (`LoadFailure`). A load refused for a page of another machine's tab
+    /// What a failed load of `target` says and when it is tried again (`LoadFailure`). A load refused for a page of another machine's tab
     /// means its server, or the host's Phone page server, stopped; the host's own reason wins.
-    private func failureCard(for target: URL, other: String?) -> LoadFailure.Card? {
-        LoadFailure.card(for: target.absoluteString, isHostProxy: isHostProxy(target), hostName: hostName, proxyNote: record.proxyNote, other: other)
+    private func failureCard(for target: URL) -> LoadFailure.Card? {
+        LoadFailure.card(for: target.absoluteString, isHostProxy: isHostProxy(target), hostName: hostName, proxyNote: record.proxyNote)
     }
 
     private func scheduleRetry(of target: URL, after seconds: TimeInterval?) {
         guard let seconds else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            // A Chromium page the site closed is not made again by a retry; the pane closing cancels it (`endNow`).
-            if let page = self.chromiumPage, !page.isOpen { return }
+            // A page the site closed is not made again by a retry; the pane closing cancels it (`endNow`).
+            guard let page = self.chromiumPage, page.isOpen else { return }
             self.tryAgain(at: target)
         }
         retry = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
-    /// Loads an address again in whichever engine the pane has: a retry, an address the host lists again, a server run again. Not the user's typing (`load`).
-    /// Chromium's engine call waits for the pump under way to return (ADR 0048).
+    /// Loads an address again: a retry, an address the host lists again, a server run again. Not the user's typing (`load`).
+    /// The engine call waits for the pump under way to return (ADR 0048).
     private func tryAgain(at url: URL) {
-        webView?.load(URLRequest(url: url))
         guard let page = chromiumPage else { return }
         _ = loadWatch.handle(.requested, target: url.absoluteString)
         ChromiumPump.shared.afterPump { [weak page] in page?.load(url.absoluteString) }
@@ -1901,7 +1804,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         case .dismiss:
             dismissFailure()
         case .showCard:
-            guard let target = URL(string: address), let card = failureCard(for: target, other: nil) else { return dismissFailure() }
+            guard let target = URL(string: address), let card = failureCard(for: target) else { return dismissFailure() }
             loadFailed = true
             page.showCard(card.message)
             retry?.cancel()

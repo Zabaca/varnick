@@ -1,7 +1,7 @@
 import Foundation
 
-// What a page pane says when its page fails to load, when it tries again, and when the card goes (option 02 of `two-browser-panes`, step 6): one rule for the
-// WebKit page and the Chromium page, with Chromium's reading of the engine's events, so `make check-load` runs it over a table of cases. The running Varnick's
+// What a page pane says when its page fails to load, when it tries again, and when the card goes (option 02 of `two-browser-panes`, step 6): the card's texts and
+// intervals and the reading of the engine's events, so `make check-load` runs it over a table of cases. The running Varnick's
 // half, which draws the card and holds the retry, is `ClaudeSession`; ADR 0048 has the event order, read from the engine's source and not yet seen to run.
 
 public enum LoadFailure {
@@ -21,15 +21,15 @@ public enum LoadFailure {
     public static let hostRetry: TimeInterval = 3
 
     /// The card for a failed load of `address`: the host's reason for a page through the pane's host's proxy, the waiting text for a local address, else
-    /// `other` (WebKit's description) with no retry; nil with no `other`, so Chromium's own error page stays.
-    public static func card(for address: String, isHostProxy: Bool, hostName: String?, proxyNote: String?, other: String?) -> Card? {
+    /// nil, so Chromium's own error page stays.
+    public static func card(for address: String, isHostProxy: Bool, hostName: String?, proxyNote: String?) -> Card? {
         if isHostProxy {
             let host = hostName ?? "the host"
             return Card(message: proxyNote.map { "\(host): \($0)" } ?? "\(host)'s Phone page server isn't running, or this page's server has stopped.",
                         retryAfter: hostRetry)
         }
         if PeerProxyAddress.isProxiable(address) { return Card(message: "Waiting for \(address) to start…", retryAfter: localRetry) }
-        return other.map { Card(message: $0, retryAfter: nil) }
+        return nil
     }
 
     /// Whether two spellings are one address: scheme and host in any case, the default port left out, an empty path the root, the fragment ignored.

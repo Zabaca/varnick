@@ -126,11 +126,11 @@ extension PanelAccess {
             ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
         var later = ""
         let showsPage = kind == .page || kind == .app
-        if showsPage, pane.chromiumPage != nil {
+        if showsPage, pane.chromiumPage != nil, let told = ChromiumEngine.sessionNote {
+            later = " " + told
+        } else if showsPage, pane.chromiumPage != nil {
             later = " \(kind == .app ? "Its page is a Chromium page" : "It is a Chromium page"), made once the pane is on screen and Chromium is up, usually a few seconds: call pane_read on it again shortly: that read serves the CDP endpoint (opening serves none) and gives it with the target, and \(ChromiumEngine.cdpStopText)"
                 + " (until then it says Chromium is starting or the pane is not shown yet), and again if the user has not opened the tab yet."
-        } else if showsPage, let why = pane.webKitNote {
-            later = " \(kind == .app ? "Its page is" : "It is") a WebKit page, which can't be read or driven: \(why)."
         }
         return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)\(later)",
                         action: kind.rawValue + elsewhere)

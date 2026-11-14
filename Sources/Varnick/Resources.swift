@@ -161,7 +161,7 @@ final class Resources: ObservableObject {
         let here = !pane.isOnPeer
         // SwiftTerm keeps the pid of a client that has ended, which the system may give to another process.
         let pid = pane.view.process.running ? pane.view.process.shellPid : 0
-        let pages = [pane.webView, pane.fileViewer?.pageView].compactMap { $0 }.compactMap(WebKitProcess.pageProcess)
+        let pages = [pane.fileViewer?.pageView].compactMap { $0 }.compactMap(WebKitProcess.pageProcess)
         return ResourcePane(id: pane.id, title: pane.label, kind: pane.kind, isApp: pane.isApp,
                             session: here && (pane.runsInZmx || pane.isApp) ? Zmx.sessionName(pane.id) : nil,
                             client: pid > 0 ? pid : nil, pages: pages,
