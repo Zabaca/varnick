@@ -178,7 +178,7 @@ struct PanePanelView: PanelAccessView {
         summary: "Reads a pane: its kind and title, and for a terminal (a Claude session or a shell, this session's own included) the text "
             + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
             + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
-            + "live. A pane not started yet says so. A page in WebKit, a file, a custom app and the live transcript give their kind and title only (a WebKit page says it can't be driven and why); a page in Chromium also gives its address and its CDP endpoint and target, to read and drive it with (the page is logged in as the user is); the read serves that endpoint on demand and \(ChromiumEngine.cdpStopText). "
+            + "live. A pane not started yet says so. A page in WebKit, a file and the live transcript give their kind and title only (a WebKit page says it can't be driven and why); a page in Chromium, a custom app's included, also gives its address and its CDP endpoint and target, to read and drive it with (the page is logged in as the user is); the read serves that endpoint on demand and \(ChromiumEngine.cdpStopText). "
             + "The id is a pane's from panel or board_read (a card's own id is its tab's, which has no screen). The screen holds whatever is on it, a session's latest "
             + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
         properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
@@ -217,6 +217,8 @@ struct PanePanelView: PanelAccessView {
     /// A page in Chromium: where to drive it over CDP, which this read serves, or keeps serving. Its contents are read through CDP, not here.
     @MainActor private static func chromiumLines(_ page: ChromiumPage, url: String?) async -> String {
         var lines = ["A Chromium page" + ((url ?? "").isEmpty ? ", no address yet" : " at \(url!)") + "."]
+        // The pane shows its own card over the page while a local address's server isn't up (or a host's proxy isn't): the page under it is Chromium's error page.
+        if let card = page.cardText { lines.append("The pane shows a card over the page, which has not loaded: \"\(card)\" It is tried again by itself, and the page appears once it loads.") }
         if ChromiumEngine.hasFailed {
             lines.append("Chromium isn't running in this Varnick, and it won't start again until Varnick restarts, so there is no page to drive.")
             return lines.joined(separator: "\n")
