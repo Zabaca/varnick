@@ -47,11 +47,7 @@ enum ChromiumEngine {
     /// The engine for a page that wants it now. Not running yet, it is started at the next dispatch between runs of the main run loop,
     /// the one place it can start (ADR 0048), and `whenSettled` is called once it has, or failed, so the page asks again.
     static func engine(whenSettled: @escaping @MainActor () -> Void) -> Availability {
-        // The first start's copy of WebKit's logins is under way: pages wait for it, so none loads before the cookies are in.
-        if ChromiumLogins.isHolding {
-            waiters.append(whenSettled)
-            return .starting
-        }
+        if ChromiumLogins.holdPage(whenSettled) { return .starting }
         switch state {
         case .running(let kit): return .running(kit)
         case .failed: return .unavailable(failedNote)
@@ -74,10 +70,9 @@ enum ChromiumEngine {
         // The engine's init may run the loop and dispatch events, the gate's among them: a start inside a start would load the engine twice.
         guard case .notStarted = state, !isStarting else { return }
         isStarting = true
-        var holding = false
         defer {
             isStarting = false
-            if !holding { tellWaiters() }
+            tellWaiters()
         }
         do {
             let kit = try Zebkit(framework: frameworkURL)
@@ -99,7 +94,7 @@ enum ChromiumEngine {
             state = .running(kit)
             NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane")
             ChromiumPump.shared.wake(afterMilliseconds: 0)
-            holding = ChromiumLogins.carry(kit) { tellWaiters() }
+            ChromiumLogins.carry(kit)
         } catch {
             ChromiumLogins.abandon()
             let reason = (error as? ChromiumFailure)?.reason ?? error.localizedDescription
@@ -108,10 +103,11 @@ enum ChromiumEngine {
         }
     }
 
+    /// Tells the waiting pages, except those the copy of WebKit's logins holds back until it ends (`ChromiumLogins`).
     private static func tellWaiters() {
         let told = waiters
         waiters = []
-        for waiter in told { waiter() }
+        for waiter in told where !ChromiumLogins.holdPage(waiter) { waiter() }
     }
 
     /// The engine failed to start, or has stopped: it is never started again in this process.

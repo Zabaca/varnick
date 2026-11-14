@@ -51,15 +51,12 @@ public enum CookieCarry {
         public var expires: Int?
         public var secure: Bool
         public var httpOnly: Bool
-        /// "Lax" or "Strict"; nil leaves the attribute unset, which Chromium reads as Lax.
+        /// "Lax", "Strict" or "None"; nil leaves it unset, which Chromium reads as Lax.
         public var sameSite: String?
     }
 
-    /// The cookie as Chromium gets it, nil when it isn't carried: one with no domain (nowhere to put it) or one that has expired.
-    /// - Domain and path go as WebKit has them: Playwright's `domain` with a leading dot is a domain cookie, without one a host-only cookie.
-    /// - A session cookie stays a session cookie: it lives until Varnick quits, as it would in any browser, and is never given an expiry it didn't have.
-    /// - Lax and Strict carry over; a cookie WebKit has no policy for gets none (Chromium treats an unset attribute as Lax, as for a site's own cookie
-    ///   there), never `None`, which Chromium accepts only with Secure and which WebKit's cookie can't tell apart from unset.
+    /// The cookie as Chromium gets it, nil when it has no domain or has expired. Domain (lowercased), path and flags go as WebKit has them; a session
+    /// cookie stays one. Lax and Strict carry over; with no policy (WebKit's unset and `None` look alike), a Secure cookie gets `None` and another none.
     public static func entry(for cookie: WebKitCookie, now: Date) -> Entry? {
         guard !cookie.domain.isEmpty else { return nil }
         var expires: Int?
@@ -71,7 +68,7 @@ public enum CookieCarry {
         switch cookie.sameSite?.lowercased() {
         case "lax": sameSite = "Lax"
         case "strict": sameSite = "Strict"
-        default: sameSite = nil
+        default: sameSite = cookie.isSecure ? "None" : nil
         }
         return Entry(key: Key(name: cookie.name, domain: cookie.domain, path: cookie.path), value: cookie.value, expires: expires,
                      secure: cookie.isSecure, httpOnly: cookie.isHTTPOnly, sameSite: sameSite)
@@ -87,9 +84,8 @@ public enum CookieCarry {
         public var unplaceable = 0
     }
 
-    /// The cookies to copy: every one `entry(for:now:)` carries unless Chromium already holds a cookie with its name, domain and path. A cookie
-    /// Chromium has is never replaced, whatever its value or expiry: the copy is of an older store, and a login made in Chromium since is the newer one.
-    /// Two WebKit cookies of one key (the store has none) keep the first.
+    /// The cookies to copy: those `entry(for:now:)` carries, but never one whose name, domain and path Chromium holds already, whatever its value or
+    /// expiry (WebKit's store is the older). Two of one key keep the first.
     public static func plan(webkit: [WebKitCookie], chromiumHas: Set<Key>, now: Date) -> Plan {
         var plan = Plan()
         var taken = chromiumHas
@@ -108,8 +104,8 @@ public enum CookieCarry {
         return plan
     }
 
-    /// The parameters of `BrowserContext.addCookies` for these cookies, as JSON.
-    public static func params(_ entries: [Entry]) -> String {
+    /// The parameters of `BrowserContext.addCookies` for these cookies, as JSON; nil if they can't be encoded.
+    public static func params(_ entries: [Entry]) -> String? {
         let cookies: [[String: Any]] = entries.map { entry in
             var cookie: [String: Any] = [
                 "name": entry.key.name, "value": entry.value, "domain": entry.key.domain, "path": entry.key.path,
@@ -119,12 +115,11 @@ public enum CookieCarry {
             if let sameSite = entry.sameSite { cookie["sameSite"] = sameSite }
             return cookie
         }
-        let data = (try? JSONSerialization.data(withJSONObject: ["cookies": cookies], options: [.sortedKeys])) ?? Data("{\"cookies\":[]}".utf8)
+        guard let data = try? JSONSerialization.data(withJSONObject: ["cookies": cookies], options: [.sortedKeys]) else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// The keys of the cookies in the answer of `BrowserContext.cookies` (`{"cookies": [{name, domain, path, …}]}`); nil when the answer isn't that
-    /// shape, in which case nothing is known of what Chromium holds and nothing may be copied.
+    /// The keys in the answer of `BrowserContext.cookies`; nil when it isn't `{"cookies": [{name, domain, …}]}`, and then nothing is known of what Chromium holds.
     public static func keys(inCookiesAnswer json: String) -> Set<Key>? {
         guard let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
               let cookies = object["cookies"] as? [[String: Any]] else { return nil }
@@ -136,10 +131,59 @@ public enum CookieCarry {
         return keys
     }
 
-    /// Whether the copy is finished for good (the done mark is set) once `sent` cookies were given to Chromium and `accepted` of them taken. Nothing to
-    /// give is finished; some taken is finished, the cookies Chromium refused each being counted and left; none taken of some sent means the route or
-    /// every cookie failed, and the next start tries again.
-    public static func isDone(sent: Int, accepted: Int) -> Bool {
-        sent == 0 || accepted > 0
+    /// How many starts try the copy before it stops trying.
+    public static let maxAttempts = 3
+
+    /// One cookie a copy gave Chromium, kept as a digest (below) so the file names no site, with its expiry in Unix seconds.
+    public struct Carried: Codable, Equatable, Sendable {
+        public var digest: String
+        public var expires: Int
+        public init(digest: String, expires: Int) {
+            self.digest = digest
+            self.expires = expires
+        }
+    }
+
+    /// What the last copy left, in a file in Chromium's profile folder: the starts that tried, how many cookies Chromium took, and the persistent ones as
+    /// salted digests of their keys, which the next start looks for.
+    public struct Record: Codable, Equatable, Sendable {
+        public var attempts: Int
+        public var accepted: Int
+        public var salt: String
+        public var carried: [Carried]
+        public init(attempts: Int, accepted: Int, salt: String, carried: [Carried]) {
+            self.attempts = attempts
+            self.accepted = accepted
+            self.salt = salt
+            self.carried = carried
+        }
+    }
+
+    /// What a later start makes of the record, once it has read the digests of the cookies Chromium holds.
+    public enum Verdict: Equatable, Sendable {
+        /// Some carried persistent cookies are there: the write reached the profile.
+        case confirmed(present: Int, of: Int)
+        /// Nothing persistent was carried, or all of it has expired: nothing could be lost.
+        case nothingToConfirm
+        /// None is there, or Chromium took none: copy again.
+        case retry
+        /// None is there after `maxAttempts` starts: stop.
+        case giveUp
+    }
+
+    /// A removed cookie is copied again only when none of the carried ones is left, so a logout never undoes itself, and only up to `maxAttempts` starts.
+    public static func verdict(for record: Record, chromiumDigests: Set<String>, now: Date) -> Verdict {
+        let live = record.carried.filter { Date(timeIntervalSince1970: TimeInterval($0.expires)) > now }
+        let present = live.filter { chromiumDigests.contains($0.digest) }.count
+        if present > 0 { return .confirmed(present: present, of: live.count) }
+        if live.isEmpty && record.accepted > 0 { return .nothingToConfirm }
+        return record.attempts >= maxAttempts ? .giveUp : .retry
+    }
+
+    /// Whether a start's copy ends it for good, with this start's `attempts` counted. Not on an empty read (WebKit may answer empty before it has loaded its
+    /// store), nor when Chromium took none; nothing to give, or nothing persistent taken, can't be lost and ends it.
+    public static func endsAfterCopy(attempts: Int, webKitCookies: Int, given: Int, accepted: Int, acceptedPersistent: Int) -> Bool {
+        if webKitCookies == 0 || (given > 0 && accepted == 0) { return attempts >= maxAttempts }
+        return given == 0 || acceptedPersistent == 0
     }
 }

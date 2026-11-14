@@ -40,8 +40,11 @@ expect("HttpOnly is kept", CookieCarry.entry(for: cookie(httpOnly: true), now: n
 expect("Lax is kept", CookieCarry.entry(for: cookie(sameSite: "lax"), now: now)?.sameSite == "Lax")
 expect("Strict is kept", CookieCarry.entry(for: cookie(sameSite: "strict"), now: now)?.sameSite == "Strict")
 expect("a policy in any case is read", CookieCarry.entry(for: cookie(sameSite: "Strict"), now: now)?.sameSite == "Strict")
-expect("no policy leaves SameSite unset, never None", plain?.sameSite == nil && CookieCarry.entry(for: cookie(secure: true), now: now)?.sameSite == nil)
-expect("an unknown policy leaves it unset", CookieCarry.entry(for: cookie(sameSite: "none"), now: now)?.sameSite == nil)
+expect("no policy on a non-Secure cookie leaves SameSite unset", plain?.sameSite == nil)
+expect("no policy on a Secure cookie is None, as WebKit sent it", CookieCarry.entry(for: cookie(secure: true), now: now)?.sameSite == "None")
+expect("a policy that isn't Lax or Strict counts as none", CookieCarry.entry(for: cookie(secure: true, sameSite: "none"), now: now)?.sameSite == "None"
+    && CookieCarry.entry(for: cookie(sameSite: "none"), now: now)?.sameSite == nil)
+expect("Lax on a Secure cookie stays Lax", CookieCarry.entry(for: cookie(secure: true, sameSite: "lax"), now: now)?.sameSite == "Lax")
 expect("a session cookie has no expiry", plain?.expires == nil)
 expect("a cookie that expires has its expiry in whole Unix seconds, rounded down",
        CookieCarry.entry(for: cookie(expires: later), now: now)?.expires == 1_800_086_400, "\(String(describing: CookieCarry.entry(for: cookie(expires: later), now: now)?.expires))")
@@ -74,7 +77,7 @@ expect("an empty store gives an empty plan", CookieCarry.plan(webkit: [], chromi
 
 // MARK: What Chromium is given
 
-let params = CookieCarry.params(CookieCarry.plan(webkit: [cookie(secure: true, httpOnly: true, sameSite: "lax", expires: later), cookie("s", domain: ".example.test", path: "/a")], chromiumHas: [], now: now).entries)
+let params = CookieCarry.params(CookieCarry.plan(webkit: [cookie(secure: true, httpOnly: true, sameSite: "lax", expires: later), cookie("s", domain: ".example.test", path: "/a")], chromiumHas: [], now: now).entries) ?? ""
 let sent = (try? JSONSerialization.jsonObject(with: Data(params.utf8))) as? [String: Any]
 let sentCookies = sent?["cookies"] as? [[String: Any]] ?? []
 expect("the parameters are a cookies array", sentCookies.count == 2, params)
@@ -84,7 +87,7 @@ if sentCookies.count == 2 {
         && a["secure"] as? Bool == true && a["httpOnly"] as? Bool == true && a["sameSite"] as? String == "Lax" && a["expires"] as? Int == 1_800_086_400, "\(a)")
     expect("a session cookie has no expiry and no SameSite key", b["expires"] == nil && b["sameSite"] == nil && b["domain"] as? String == ".example.test" && b["path"] as? String == "/a", "\(b)")
 }
-expect("no cookies are an empty array", CookieCarry.params([]) == "{\"cookies\":[]}", CookieCarry.params([]))
+expect("no cookies are an empty array", CookieCarry.params([]) == "{\"cookies\":[]}", "\(String(describing: CookieCarry.params([])))")
 
 // MARK: What Chromium holds
 
@@ -95,12 +98,35 @@ expect("an answer without a cookies array is not known", CookieCarry.keys(inCook
 expect("a cookie without a domain makes the answer not known", CookieCarry.keys(inCookiesAnswer: #"{"cookies":[{"name":"a"}]}"#) == nil)
 expect("text that isn't JSON is not known", CookieCarry.keys(inCookiesAnswer: "nope") == nil)
 
-// MARK: Done
+// MARK: What a later start makes of the last copy
 
-expect("nothing to give is done", CookieCarry.isDone(sent: 0, accepted: 0))
-expect("all taken is done", CookieCarry.isDone(sent: 5, accepted: 5))
-expect("some refused is done: the rest were taken, and the refused are counted", CookieCarry.isDone(sent: 5, accepted: 2))
-expect("none taken of some sent is not done, so the next start tries again", !CookieCarry.isDone(sent: 5, accepted: 0))
+func record(attempts: Int = 1, accepted: Int = 3, carried: [(String, Int)]) -> CookieCarry.Record {
+    CookieCarry.Record(attempts: attempts, accepted: accepted, salt: "s", carried: carried.map { CookieCarry.Carried(digest: $0.0, expires: $0.1) })
+}
+let far = 1_900_000_000, past = 1_700_000_000
+expect("all carried cookies there confirms", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a", "b", "z"], now: now) == .confirmed(present: 2, of: 2))
+expect("one of them there confirms: the rest were logged out or refused later", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a"], now: now) == .confirmed(present: 1, of: 2))
+expect("an expired carried cookie is not looked for", CookieCarry.verdict(for: record(carried: [("a", far), ("b", past)]), chromiumDigests: ["a"], now: now) == .confirmed(present: 1, of: 1))
+expect("none there is a retry on the first attempt", CookieCarry.verdict(for: record(carried: [("a", far)]), chromiumDigests: ["z"], now: now) == .retry)
+expect("none there is a retry on the second", CookieCarry.verdict(for: record(attempts: 2, carried: [("a", far)]), chromiumDigests: [], now: now) == .retry)
+expect("none there after the last attempt is giving up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, carried: [("a", far)]), chromiumDigests: [], now: now) == .giveUp)
+expect("only session cookies taken has nothing to confirm", CookieCarry.verdict(for: record(carried: []), chromiumDigests: [], now: now) == .nothingToConfirm)
+expect("persistent cookies all expired by now has nothing to confirm", CookieCarry.verdict(for: record(carried: [("a", past)]), chromiumDigests: [], now: now) == .nothingToConfirm)
+expect("a copy Chromium took nothing of is retried", CookieCarry.verdict(for: record(accepted: 0, carried: []), chromiumDigests: [], now: now) == .retry)
+expect("a copy Chromium took nothing of, at the last attempt, is given up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, accepted: 0, carried: []), chromiumDigests: [], now: now) == .giveUp)
+expect("an expired carried cookie that is there anyway doesn't count", CookieCarry.verdict(for: record(carried: [("a", past), ("b", far)]), chromiumDigests: ["a"], now: now) == .retry)
+
+// MARK: Whether a copy ends it
+
+let max = CookieCarry.maxAttempts
+expect("an empty WebKit read on the first start does not end it", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 0, given: 0, accepted: 0, acceptedPersistent: 0))
+expect("an empty read at the last attempt ends it", CookieCarry.endsAfterCopy(attempts: max, webKitCookies: 0, given: 0, accepted: 0, acceptedPersistent: 0))
+expect("cookies read but nothing to give (all there, or expired) ends it", CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 0, accepted: 0, acceptedPersistent: 0))
+expect("cookies given and taken, some persistent, waits for the next start's confirmation", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 5, acceptedPersistent: 3))
+expect("cookies given and all taken, none persistent, ends it", CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 5, acceptedPersistent: 0))
+expect("some refused, some persistent taken, waits", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 2, acceptedPersistent: 1))
+expect("cookies given and none taken does not end it", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 0, acceptedPersistent: 0))
+expect("cookies given and none taken at the last attempt ends it", CookieCarry.endsAfterCopy(attempts: max, webKitCookies: 9, given: 5, accepted: 0, acceptedPersistent: 0))
 
 print("check-cookies: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
