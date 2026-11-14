@@ -95,6 +95,8 @@ enum ChromiumEngine {
             state = .running(kit)
             NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane" + (arguments.count > 1 ? ", page accessibility asked for" : ""))
             ChromiumPump.shared.wake(afterMilliseconds: 0)
+            // Must stay the last statement of the `do`: it sets the page hold, and `abandon()` below releases nothing, so a line that throws after it would
+            // strand every held page.
             ChromiumLogins.carry(kit)
         } catch {
             ChromiumLogins.abandon()
@@ -403,14 +405,19 @@ struct Zebkit {
     /// A command's result as JSON, or an error, both the engine's for the call.
     typealias AutomationFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     typealias DownloadFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+    /// A navigation stage: the view, the request to answer, its JSON (borrowed) and the data.
+    typealias NavigationFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     /// A download's progress and a context menu's request, each as JSON; a chosen menu item's id has this shape too.
     typealias JSONFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
 
     static let loadCommitted: Int32 = 1
+    static let loadFinished: Int32 = 2
+    static let loadFailed: Int32 = 3
     static let beforeUnloadDialog: Int32 = 3
     static let downloadSave: Int32 = 0
     static let downloadCancel: Int32 = 1
     static let fullscreenDeny: Int32 = 1
+    static let navigationContinue: Int32 = 0
 
     let engineVersion: @convention(c) () -> UnsafePointer<CChar>
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
@@ -443,6 +450,8 @@ struct Zebkit {
     let onContextMenu: @convention(c) (View, JSONFunc?, UnsafeMutableRawPointer?) -> Void
     let showContextMenu: @convention(c) (View, UInt64, UnsafePointer<CChar>?, JSONFunc?, UnsafeMutableRawPointer?, ErrorOut) -> Bool
     /// `zebkit_automation_call`: a Playwright command run in-process; a nil view takes the engine's `BrowserContext.*` commands (`ChromiumLogins`).
+    let onNavigation: @convention(c) (View, NavigationFunc?, UnsafeMutableRawPointer?) -> Void
+    let navigationRespond: @convention(c) (OpaquePointer, Int32, UnsafePointer<CChar>?, ErrorOut) -> Bool
     let automationCall: @convention(c) (View?, UnsafePointer<CChar>, UnsafePointer<CChar>?, AutomationFunc?, UnsafeMutableRawPointer?) -> Void
 
     init(framework: URL) throws {
@@ -484,6 +493,8 @@ struct Zebkit {
         cancelDownload = try symbol("zebkit_view_cancel_download")
         onContextMenu = try symbol("zebkit_view_on_context_menu")
         showContextMenu = try symbol("zebkit_view_context_menu_show")
+        onNavigation = try symbol("zebkit_view_on_navigation")
+        navigationRespond = try symbol("zebkit_navigation_respond")
         automationCall = try symbol("zebkit_automation_call")
     }
 
@@ -551,8 +562,18 @@ final class ChromiumPage: NSView {
     var onClosedItself: (() -> Void)?
     /// What became of a download, for the pane to say.
     var onNote: (String) -> Void = { _ in }
+    /// What the pane needs of the load events for its card (`LoadFailure.Watch`): a document of an http or https address committed or finished, a load
+    /// failed or stopped (with its address), and a main-frame navigation stage (its JSON).
+    var onLoaded: () -> Void = {}
+    var onLoadFailed: (String) -> Void = { _ in }
+    var onNavigation: (String) -> Void = { _ in }
     /// Why there is no page (the engine starting, missing or failed), shown in place of it.
     private let note = NSTextField(labelWithString: "")
+    /// The pane's own card over the engine's error page (`ClaudeSession`'s load failure), a sibling of the engine's view. Unverified that it draws above it.
+    private let card = NSView()
+    private let cardLabel = NSTextField(wrappingLabelWithString: "")
+    /// What the card says now, nil while it is hidden.
+    var cardText: String? { card.isHidden ? nil : cardLabel.stringValue }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -561,6 +582,14 @@ final class ChromiumPage: NSView {
         note.alignment = .center
         note.isHidden = true
         addSubview(note)
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor(white: 0.1, alpha: 1).cgColor
+        cardLabel.textColor = NSColor(white: 0.6, alpha: 1)
+        cardLabel.font = .systemFont(ofSize: 13)
+        cardLabel.alignment = .center
+        card.addSubview(cardLabel)
+        card.isHidden = true
+        addSubview(card)
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
@@ -590,6 +619,34 @@ final class ChromiumPage: NSView {
         return String(cString: id)
     }
 
+    fileprivate func owns(_ other: Zebkit.View?) -> Bool { other != nil && other == view }
+
+    /// The page exists and hasn't closed: a retry that finds it gone (the site closed it) stops rather than making it again.
+    var isOpen: Bool { view != nil && !closed }
+
+    func showCard(_ message: String) {
+        cardLabel.stringValue = message
+        card.isHidden = false
+        layoutCard()
+        addSubview(card, positioned: .above, relativeTo: nil)
+        // The pane was focused before there was a card, so the engine's view has the keys: the pane takes them, or typing would reach the error page under it.
+        if let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) { window?.makeFirstResponder(self) }
+    }
+
+    func hideCard() {
+        card.isHidden = true
+        // The keyboard was kept from the page while the card was up (`acceptsFirstResponder`): the pane has it still, so the page gets it back.
+        if window?.firstResponder === self { ChromiumPump.shared.afterPump { [weak self] in self?.focusPage() } }
+    }
+
+    /// While the card is up the pane takes focus itself, so keys don't reach the page under it.
+    override var acceptsFirstResponder: Bool { !card.isHidden }
+
+    private func layoutCard() {
+        card.frame = bounds
+        cardLabel.frame = bounds.insetBy(dx: 20, dy: max(0, bounds.height / 2 - 30))
+    }
+
     func load(_ url: String) {
         wanted = url
         if let kit, let view { kit.loadURL(view, url) } else { makePage() }
@@ -601,7 +658,7 @@ final class ChromiumPage: NSView {
     }
 
     func focusPage() {
-        guard let kit, let view else { window?.makeFirstResponder(self); return }
+        guard let kit, let view, card.isHidden else { window?.makeFirstResponder(self); return }
         kit.focus(view)
     }
 
@@ -621,6 +678,7 @@ final class ChromiumPage: NSView {
         kit.onDownload(view, nil, nil)
         kit.onDownloadProgress(view, nil, nil)
         kit.onContextMenu(view, nil, nil)
+        kit.onNavigation(view, nil, nil)
         kit.close(view)
     }
 
@@ -651,6 +709,7 @@ final class ChromiumPage: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         note.frame = bounds.insetBy(dx: 20, dy: max(0, bounds.height / 2 - 30))
+        layoutCard()
         guard let kit, let view, newSize.width >= 1, newSize.height >= 1 else { return makePage() }
         kit.setBounds(view, 0, 0, Int32(newSize.width), Int32(newSize.height))
     }
@@ -697,14 +756,40 @@ final class ChromiumPage: NSView {
         let me = Unmanaged.passUnretained(self).toOpaque()
         // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
         _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
+        // Every stage of a navigation is answered "continue" inside its callback (an unanswered one holds the page until the engine's 30 s deadline); the pane
+        // reads the main frame's stages for its card (`LoadFailure`).
+        kit.onNavigation(view, { view, request, json, data in
+            guard let data else { return }
+            if let request { ChromiumPage.now(data) { page in _ = page.kit?.navigationRespond(request, Zebkit.navigationContinue, nil, nil) } }
+            guard let json else { return }
+            let text = String(cString: json)
+            // A popup is decided for by its opener's handler until it has its own, with the popup as the view: only the page's own view is its stages.
+            nonisolated(unsafe) let from = view
+            ChromiumPage.later(data) { page in if page.owns(from) { page.onNavigation(text) } }
+        }, me)
+        // Committed moves the address; committed and finished both say a page loaded, failed that a load did not (a failed load of the engine's own error
+        // page is told by what its address is: only an http or https one is a page of the site, as with `checkAddress`).
         kit.onLoad(view, { _, event, url, data in
-            guard event == Zebkit.loadCommitted, let url, let data else { return }
+            guard let url, let data else { return }
             let text = String(cString: url)
-            ChromiumPage.later(data) { page in
-                // A reload after the page closed itself opens where it was, not where it started.
-                page.wanted = text
-                page.seenAddress = text
-                page.onURL(text)
+            let isPage = text.hasPrefix("http://") || text.hasPrefix("https://")
+            switch event {
+            case Zebkit.loadCommitted:
+                ChromiumPage.later(data) { page in
+                    guard isPage else { return }
+                    // A reload after the page closed itself opens where it was, not where it started.
+                    page.wanted = text
+                    page.seenAddress = text
+                    page.onURL(text)
+                    page.onLoaded()
+                }
+            case Zebkit.loadFinished:
+                guard isPage else { return }
+                ChromiumPage.later(data) { $0.onLoaded() }
+            case Zebkit.loadFailed:
+                ChromiumPage.later(data) { $0.onLoadFailed(text) }
+            default:
+                return
             }
         }, me)
         kit.onTitle(view, { _, title, data in

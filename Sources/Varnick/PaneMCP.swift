@@ -45,7 +45,7 @@ enum PaneMCP {
         summary: "Opens a pane beside this session's own, in its own tab on this Mac, and answers its id (s…, the one pane_read, show and board_read use) at once. "
             + "`kind` is terminal (the account's login shell in `folder`, opened empty: nothing is typed into it), claude (a Claude session in `folder`, started at "
             + "once with `prompt` as its first message, or waiting if none; `agent` must be one found in the folder), app (a custom app from this session's folder, "
-            + "such as Scratch, by `app`: it is told it was split from this pane, so Scratch serves this session's area), page (a Browser pane at the http or https "
+            + "such as Scratch, by `app`: it is told it was split from this pane, so Scratch serves this session's area; its page is in Chromium where a page's is, and is read and driven the same way), page (a Browser pane at the http or https "
             + "`url`: in Chromium where it can run, and then pane_read on it serves the CDP endpoint, on demand, and gives it with the target to drive it; the page is made once the pane is on screen and the engine, which starts on demand, is up, so the reply says when to read again; "
             + "opening serves nothing, and \(ChromiumEngine.cdpStopText); a page in WebKit can't be read or driven, and pane_read says so and why) "
             + "or file (a file pane for `path`, a file inside this session's project). The new pane takes half of this pane's place, `beside` it (the default) "
