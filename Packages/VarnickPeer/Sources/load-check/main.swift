@@ -58,31 +58,29 @@ expect("nothing reported is not the page's", !LoadFailure.isSame("", as: "http:/
 expect("unparsable on both sides compares as text", LoadFailure.isSame("not an address", as: "not an address"))
 
 
-// A navigation stage from the engine's callback JSON (hooks.h's field names; the phase's spelling and the error's form are guesses, each form covered).
+// A navigation stage from the engine's callback JSON (zebkit's navigation_hooks.cc: lower-case phases, a string navigationId and frameId, a negative int netError).
 func stage(_ json: String) -> LoadFailure.Stage? { LoadFailure.stage(fromJSON: json) }
-expect("a start of the main frame", stage(#"{"phase":"start","navigationId":"7","mainFrame":true,"url":"http://localhost:3000/"}"#) == .start(id: "7", address: "http://localhost:3000/"))
-expect("a numeric navigation id", stage(#"{"phase":"start","navigationId":7,"mainFrame":true,"url":"http://localhost:3000/"}"#) == .start(id: "7", address: "http://localhost:3000/"))
-expect("the phase in any case", stage(#"{"phase":"Response","navigationId":"7","mainFrame":true}"#) == .response(id: "7"))
-expect("a failure with a numeric code", stage(#"{"phase":"failure","navigationId":"7","mainFrame":true,"url":"http://localhost:3000/","netError":-102}"#) == .failure(id: "7", address: "http://localhost:3000/", error: -102))
-expect("a failure with a named abort", stage(#"{"phase":"failure","navigationId":"7","mainFrame":true,"netError":"net::ERR_ABORTED"}"#) == .failure(id: "7", address: "", error: -3))
-expect("a failure with another name", stage(#"{"phase":"failure","navigationId":"7","mainFrame":true,"netError":"net::ERR_CONNECTION_REFUSED"}"#) == .failure(id: "7", address: "", error: -1))
-expect("a failure with a numeric string", stage(#"{"phase":"failure","navigationId":"7","mainFrame":true,"netError":"-3"}"#) == .failure(id: "7", address: "", error: -3))
-expect("a failure with no code", stage(#"{"phase":"failure","navigationId":"7","mainFrame":true}"#) == .failure(id: "7", address: "", error: nil))
-expect("a frame is not the page", stage(#"{"phase":"failure","navigationId":"7","mainFrame":false,"netError":-102}"#) == nil)
-expect("no mainFrame field is not the page", stage(#"{"phase":"failure","navigationId":"7","netError":-102}"#) == nil)
-expect("a redirect is no stage that matters", stage(#"{"phase":"redirect","navigationId":"7","mainFrame":true}"#) == nil)
+expect("a start of the main frame", stage(#"{"phase":"start","navigationId":"7","frameId":"f2","mainFrame":true,"url":"http://localhost:3000/"}"#) == .start(id: "7", frame: "f2", address: "http://localhost:3000/"))
+expect("a response", stage(#"{"phase":"response","navigationId":"7","frameId":"f2","mainFrame":true}"#) == .response(id: "7", frame: "f2"))
+expect("an activation", stage(#"{"phase":"activation","navigationId":"8","frameId":"f2","mainFrame":true,"activationType":"back-forward-cache"}"#) == .activation(id: "8", frame: "f2"))
+expect("a refused failure", stage(#"{"phase":"failure","navigationId":"7","frameId":"f2","mainFrame":true,"url":"http://localhost:3000/","netError":-102}"#) == .failure(id: "7", frame: "f2", address: "http://localhost:3000/", error: -102))
+expect("a failure with no code", stage(#"{"phase":"failure","navigationId":"7","frameId":"f2","mainFrame":true}"#) == .failure(id: "7", frame: "f2", address: "", error: nil))
+expect("a subframe is not the page", stage(#"{"phase":"failure","navigationId":"7","frameId":"f9","mainFrame":false,"netError":-102}"#) == nil)
+expect("a redirect and a commit are no stage that matters", stage(#"{"phase":"redirect","navigationId":"7","frameId":"f2","mainFrame":true}"#) == nil
+       && stage(#"{"phase":"commit","navigationId":"7","frameId":"f2","mainFrame":true}"#) == nil)
 expect("JSON that isn't JSON", stage("not json") == nil)
 
-// The card's life. `watch` runs events through `Watch`, from a fresh one unless one is passed.
+// The card's life. `run` feeds events to a `Watch`, a fresh one unless one is passed.
 let own = "http://localhost:3000/"
 func run(_ events: [LoadFailure.Event], target: String = own, from start: LoadFailure.Watch = .init()) -> (actions: [LoadFailure.Action], watch: LoadFailure.Watch) {
     var watch = start, actions: [LoadFailure.Action] = []
     for event in events { actions.append(watch.handle(event, target: target)) }
     return (actions, watch)
 }
-func start(_ id: String, _ address: String = own) -> LoadFailure.Event { .stage(.start(id: id, address: address)) }
-func fail(_ id: String, _ code: Int? = -102, _ address: String = own) -> LoadFailure.Event { .stage(.failure(id: id, address: address, error: code)) }
-func answer(_ id: String) -> LoadFailure.Event { .stage(.response(id: id)) }
+func start(_ id: String, _ address: String = own, frame: String = "f2") -> LoadFailure.Event { .stage(.start(id: id, frame: frame, address: address)) }
+func fail(_ id: String, _ code: Int? = -102, _ address: String = own, frame: String = "f2") -> LoadFailure.Event { .stage(.failure(id: id, frame: frame, address: address, error: code)) }
+func answer(_ id: String, frame: String = "f2") -> LoadFailure.Event { .stage(.response(id: id, frame: frame)) }
+func activate(_ id: String, frame: String = "f2") -> LoadFailure.Event { .stage(.activation(id: id, frame: frame)) }
 
 let refused = run([start("1"), fail("1")])
 expect("a refused connection raises the card", refused.actions == [.none, .showCard] && refused.watch.cardUp, "\(refused.actions)")
@@ -97,9 +95,16 @@ expect("a load a newer one stopped, even with another code, is the older one's",
 expect("a same-address load stopped by a reload raises nothing", run([start("1"), start("2"), fail("1", -3), answer("2")]).actions == [.none, .none, .none, .none])
 expect("a navigation that began at another address is not the pane's own", run([start("1", "http://localhost:3000/other"), fail("1", -102, "http://localhost:3000/other")]).actions == [.none, .none])
 expect("a failure after redirects is the pane's own, by where it began", run([start("1"), fail("1", -102, "http://localhost:3000/login")]).actions == [.none, .showCard])
-expect("a failure with no start seen is judged by its address", run([fail("1")]).actions == [.showCard] && run([fail("1", -102, "http://other.example/")]).actions == [.none])
 expect("an answer with no card up does nothing", run([start("1"), answer("1")]).actions == [.none, .none])
 expect("an older answer does not take the card down", run([start("2"), answer("1")], from: refused.watch).actions == [.none, .none] && run([start("2"), answer("1")], from: refused.watch).watch.cardUp)
+
+expect("a page restored from the back-forward cache takes the card down", run([activate("9")], from: refused.watch).actions == [.dismiss])
+expect("an activation with no card up does nothing", run([activate("9")]).actions == [.none])
+expect("a prerender's start between the page's own start and its failure does not make the failure not its own",
+       run([start("1"), start("p1", "http://localhost:3000/next", frame: "f7"), fail("1")]).actions == [.none, .none, .showCard])
+expect("a prerender's failure is not the page's", run([start("1"), fail("p1", -102, own, frame: "f7")]).actions == [.none, .none])
+expect("a failure whose start was never delivered is judged by its address", run([fail("1")]).actions == [.showCard] && run([fail("1", -102, "http://other.example/")]).actions == [.none])
+expect("an answer whose start was never delivered takes the card down", run([answer("2")], from: run([fail("1")]).watch).actions == [.dismiss])
 
 // The engine's own error page loading after the failure is not the page.
 expect("a document loading after the failure, with no load of ours asked for, leaves the card", run([.loaded, .loaded], from: refused.watch).actions == [.none, .none])

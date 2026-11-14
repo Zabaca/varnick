@@ -71,7 +71,7 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
    *Checked by hand:* a page at a localhost port before its server starts says it is waiting and appears by itself once it runs; Scratch opens beside a Claude pane and reloads as Claude writes; an app whose server is killed shows its output and Reload runs it again; a page of another Mac's tab at that Mac's localhost loads through its proxy, says the host's reason when the host's Phone page server is stopped, and loads at once when it is back.
 7. **Resources and screen reading count Chromium.** Resources gives the engine's helpers a row of their own; a spoken screen request with Varnick's panel in front over a Chromium page reads the page (a session's `look` never reads Varnick's own windows).
    *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for this Varnick's helpers; a spoken screen request about a page in the panel answers from the page's text.
-8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization.
+8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization (built and verified locally 2026-11-13; notarization not tried, hand check not done).
    *Checked by hand:* `make app` notarizes; on a Mac, the installed app opens a Browser pane in Chromium, a custom app and Scratch, survives a restart with them, and Gatekeeper raises nothing for the helper.
 9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check.
    *Checked by hand:* every check of steps 3, 5 and 6 again on the installed app, and a file pane's rendered Markdown still shows.
@@ -147,10 +147,12 @@ Built as ADR 0048's step-7 bullet says: the helpers are one row, "Chromium's hel
 
 ### The framework in Varnick.app (step 8)
 
-- Copied into the bundle's Frameworks folder, where Varnick already looks for it in a bundle (untested there).
-- Signed inside out, never with `--deep`: the helper with the hardened runtime, the secure timestamp and an entitlements file asking for JIT (V8 needs it), then the framework, then the bundle. Notarization refuses an executable without the hardened runtime (Apple's rule, from memory), and today's helper has none. Which entitlements the helper needs under the runtime is untested: as for Bun, one goes in only for a failure seen.
-- The app grows by 143 MB on disk; the disk image's compressed size is unmeasured.
-- The notices and licences carry zebkit's LGPL-2.1 and Chromium's notices (unverified what zebkit ships for them).
+Built and verified locally on 2026-11-13 (the signature, not a run); notarization not tried, and the installed-app hand check not done. ADR 0048 ("Where the framework sits", "Signed with Varnick's identity") has the layout, the signing and what is unverified; `docs/releasing.md` has the trial and the check.
+
+- Copied into the bundle's `Contents/Frameworks` by `make app`, where `ChromiumEngine.frameworkURL` looks in a bundle. Signed inside out, never with `--deep`: the helper with the hardened runtime, the secure timestamp and an entitlements file (`allow-jit`), then the framework, then the bundle. A checkout is signed the same way minus the timestamp, so its restart tests the entitlement.
+- The app grows by 143 MB on disk; the zipped app is 140.2 MB and the zipped framework 61.0 MB; the disk image's size is unmeasured.
+- **The notices and licences carry zebkit's LGPL-2.1 and Chromium's notices (unverified what zebkit ships for them). Open release blocker, James's to resolve:** the archive ships no licence or notice file, so a release must not ship the framework until `LICENSES/` carries the LGPL-2.1 text, the source offer the LGPL requires and Chromium's third-party notices (`docs/releasing.md`, Before you start).
+- **After step 9, on this evidence:** an installed app would have a working browser if notarization accepts the app and the helpers run from `Contents/Frameworks` with the one entitlement; none of those is known. If one fails, step 9 must not land, because WebKit's fallback is what it deletes.
 
 ### Step 9
 
@@ -188,4 +190,4 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 
 **Answered by the code, not the user's:** where the engine starts (between runs of the main run loop, at an event's dispatch); light and dark (the engine's startup setting); the failure card's texts and intervals (today's); the saved state (no new field, the `chromium` mark ignored); Resources (one row for the helpers: the C API gives no process per page).
 
-**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; `addCookies` reaching the persistent profile with no view in the engine yet (step 4); the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.
+**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; `addCookies` reaching the persistent profile with no view in the engine yet (step 4); the framework working from the bundle's Frameworks folder (zebkit's source says it does; the prototype's crash with the host elsewhere is unexplained); the helper's entitlements under the hardened runtime (`allow-jit` alone is built); whether the engine marks downloads with quarantine itself.

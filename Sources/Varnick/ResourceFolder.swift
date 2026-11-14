@@ -15,6 +15,11 @@ enum ResourceFolder {
         var helpers: URL {
             bundle.map { $0.appendingPathComponent("Contents/Helpers", isDirectory: true) } ?? folder
         }
+
+        /// Where `Zebkit.framework` is (ADR 0048): the bundle's `Contents/Frameworks`, else beside the binary, where `make build` puts it.
+        var frameworks: URL {
+            bundle.map { $0.appendingPathComponent("Contents/Frameworks", isDirectory: true) } ?? folder
+        }
     }
 
     /// This process's, from its executable with links resolved: the relay runs through the `varnick-peer` link, and `Bundle.main` answers

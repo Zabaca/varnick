@@ -6,18 +6,16 @@ import VarnickPeer
 // Chromium page panes: zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
 // 127.0.0.1 on demand so a session can drive the page the user sees (`pane_read` serves it and gives the address). The framework is loaded with dlopen the first time a
 // Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (pages are then WebKit's, `PageEngine`),
-// `--mcp` never maps it, and its 133 MB stays out of a Mac that never shows a Chromium pane.
+// `--mcp` never maps it, and its 143 MB stays out of a Mac that never shows a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
 /// and its CDP endpoint, when it is served (each pane is a target of its own).
 @MainActor
 enum ChromiumEngine {
-    /// `Zebkit.framework` beside the binary (`make build` puts it there), or in a bundle's Contents/Frameworks. Its helpers crash at start when the
-    /// host executable is anywhere else (found 2026-11-11), so this is the one place looked at.
+    /// `Zebkit.framework`: in a bundle's Contents/Frameworks, else beside the binary (`make build` puts it there); nowhere else is looked at
+    /// (ADR 0048, "Where the framework sits").
     static var frameworkURL: URL {
-        let place = ResourceFolder.current
-        let folder = place.bundle.map { $0.appendingPathComponent("Contents/Frameworks", isDirectory: true) } ?? place.folder
-        return folder.appendingPathComponent("Zebkit.framework", isDirectory: true)
+        ResourceFolder.current.frameworks.appendingPathComponent("Zebkit.framework", isDirectory: true)
     }
 
     /// A page pane gets Chromium only when the engine is there to load (`PageEngine`).
@@ -52,7 +50,7 @@ enum ChromiumEngine {
         case .running(let kit): return .running(kit)
         case .failed: return .unavailable(failedNote)
         case .notStarted:
-            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
+            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't in this Varnick.") }
             waiters.append(whenSettled)
             // A start already waiting or under way takes no second request.
             RunLoopGate.whenBetweenRuns { start() }
@@ -454,7 +452,6 @@ struct Zebkit {
     /// `zebkit_automation_call`: a Playwright command run in-process; a nil view takes the engine's `BrowserContext.*` commands (`ChromiumLogins`).
     let onNavigation: @convention(c) (View, NavigationFunc?, UnsafeMutableRawPointer?) -> Void
     let navigationRespond: @convention(c) (OpaquePointer, Int32, UnsafePointer<CChar>?, ErrorOut) -> Bool
-    let setNavigationTimeout: @convention(c) (View, UInt32) -> Bool
     let automationCall: @convention(c) (View?, UnsafePointer<CChar>, UnsafePointer<CChar>?, AutomationFunc?, UnsafeMutableRawPointer?) -> Void
 
     init(framework: URL) throws {
@@ -498,7 +495,6 @@ struct Zebkit {
         showContextMenu = try symbol("zebkit_view_context_menu_show")
         onNavigation = try symbol("zebkit_view_on_navigation")
         navigationRespond = try symbol("zebkit_navigation_respond")
-        setNavigationTimeout = try symbol("zebkit_view_set_navigation_timeout")
         automationCall = try symbol("zebkit_automation_call")
     }
 
@@ -633,6 +629,8 @@ final class ChromiumPage: NSView {
         card.isHidden = false
         layoutCard()
         addSubview(card, positioned: .above, relativeTo: nil)
+        // The pane was focused before there was a card, so the engine's view has the keys: the pane takes them, or typing would reach the error page under it.
+        if let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) { window?.makeFirstResponder(self) }
     }
 
     func hideCard() {
@@ -758,9 +756,8 @@ final class ChromiumPage: NSView {
         let me = Unmanaged.passUnretained(self).toOpaque()
         // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
         _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
-        // Every stage of a main-frame navigation is answered at once with "continue" (an unanswered one holds the page until the engine's deadline, which is
-        // cut to a quarter second in case an answer inside the callback turns out not to count); the pane reads the stage for its card (`LoadFailure`).
-        _ = kit.setNavigationTimeout(view, 250)
+        // Every stage of a navigation is answered "continue" inside its callback (an unanswered one holds the page until the engine's 30 s deadline); the pane
+        // reads the main frame's stages for its card (`LoadFailure`).
         kit.onNavigation(view, { view, request, json, data in
             guard let data else { return }
             if let request { ChromiumPage.now(data) { page in _ = page.kit?.navigationRespond(request, Zebkit.navigationContinue, nil, nil) } }

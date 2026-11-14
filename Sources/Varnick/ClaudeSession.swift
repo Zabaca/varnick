@@ -1741,7 +1741,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         page.onLoaded = { [weak self] in self?.chromiumEvent(.loaded) }
         page.onLoadFailed = { [weak self] address in self?.chromiumEvent(.loadFailed(address)) }
         page.onNavigation = { [weak self] json in
-            Self.logNavigationShape(json)
             if let stage = LoadFailure.stage(fromJSON: json) { self?.chromiumEvent(.stage(stage)) }
         }
         page.onPageWindow = { [weak self] opened in
@@ -1908,16 +1907,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             retry?.cancel()
             scheduleRetry(of: target, after: card.retryAfter)
         }
-    }
-
-    private static var loggedPhases: Set<String> = []
-
-    /// The first navigation event of each phase is logged by its field names, phase and codes, never an address, so the format `LoadFailure.stage` guesses can be read.
-    private static func logNavigationShape(_ json: String) {
-        guard loggedPhases.count < 12, let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else { return }
-        let phase = (object["phase"] as? String) ?? "none"
-        guard loggedPhases.insert(phase).inserted else { return }
-        NSLog("Varnick: Chromium navigation phase \(phase): keys \(object.keys.sorted().joined(separator: ",")), mainFrame \(object["mainFrame"] ?? "none"), netError \(object["netError"] ?? "none")")
     }
 
     private func dismissFailure() {
