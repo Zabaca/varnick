@@ -2,7 +2,7 @@
 problem: two-browser-panes
 title: "Chromium serves every page pane where it can run, WebKit stands in until the framework ships inside Varnick.app and the hand check passes, then WebKit's page path goes"
 summary: One Browser pane, drawn by Chromium, built in nine small merges. The engine starts the first time a page needs it, with no restart. Until the last merge a page pane gets Chromium when the engine can run on this Mac (the framework is there, it hasn't failed in this process, and a Settings › Experimental switch is on) and WebKit otherwise, so the installed app and a Mac whose engine failed still show pages. CDP is reworked before the user's logins move in, WebKit's cookies are carried over once, and what a page asks of its pane (dialogs, menus, new windows, downloads) is answered by Varnick. Once Varnick.app carries the framework and the user's hand check passes on it, WebKit's page path is deleted; a file pane's rendered Markdown stays on WebKit.
-status: proposed
+status: in-progress
 ---
 
 ## Solution
@@ -115,11 +115,13 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 | | What | For | Against |
 |---|---|---|---|
 | A | As the prototype: CDP from the engine's start until quit, no auth | Nothing to build | Any process on the Mac can read every cookie of the profile and drive any logged-in page, all the time. Chrome stopped allowing remote debugging on its default profile in 2025 for this reason (from memory, not checked here) |
-| B | CDP on demand: served at a session's `pane_read` of a page pane, stopped 30 minutes after the last such read and when the last page pane closes | Small; the clients sessions use today keep working | No auth while it is open, and a driving session keeps it open. Unverified that the engine serves again after a stop |
-| C | zebkit's Playwright endpoint instead of CDP: its address holds a random token and refuses a request with an Origin header, and only `pane_read` gives it | A real credential, from the engine itself | Sessions use Playwright's `connect`, not CDP clients. Unverified that a client sees the panes' own pages rather than a fresh browser: a spike first |
+| B | CDP on demand: served at a session's `pane_read` of a page pane, stopped 30 minutes after the last such read and when the last page pane closes | Small; the clients sessions use today keep working | No auth while it is open, and a session still driving when the idle time ends is cut off unless it read again, since Varnick can't see clients. Verified in the 2026-11-13 spike that the engine serves again after a stop, repeatedly in one run |
+| C | zebkit's Playwright endpoint instead of CDP: its address holds a random token and refuses a request with an Origin header, and only `pane_read` gives it | A real credential, from the engine itself | Sessions use Playwright's `connect`, not CDP clients. The 2026-11-13 spike found it can't reach a view the host made |
 | D | No endpoint: Varnick drives pages itself inside the engine, behind tools of its own that know the caller, as Panel access does | Nothing reachable from outside Varnick | The largest build: a new tool surface for reading and acting in pages |
 
-**Recommended:** a spike of C (a page pane open, Playwright's `connect` to the endpoint, list the contexts and pages). If it shows the panes' pages, C; else B. Never A once real logins are in the profile.
+**B, taken 2026-11-13** by this option's own rule below ("if C doesn't show the panes' pages, B") after the spike (notes kept locally) showed that zebkit's token endpoint can't reach a view the host made, so C is out. James was shown this and said to keep going. B was built as step 2; ADR 0048 has what it does, the spike's evidence and what it leaves open. D (`zebkit_automation_call` inside Varnick, no port, behind tools that know the caller) remains a possible end, not decided or built.
+
+**Recommended (before the spike):** a spike of C (a page pane open, Playwright's `connect` to the endpoint, list the contexts and pages). If it shows the panes' pages, C; else B. Never A once real logins are in the profile.
 
 ### Logins and the profile (step 4)
 
@@ -160,7 +162,7 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 **What it leaves broken, step by step.** For the installed app, nothing: it shows pages in WebKit until step 8 and in Chromium after. For a checkout build, a Mac whose engine fails to start shows new pages in WebKit until the next restart. The headless host is unchanged throughout: it has no browser, lists no page pane, and its relay never loads the framework; a Mac viewing another Mac's tab shows its pages in its own engine, whichever that is.
 
 **Decisions that are the user's:**
-1. CDP: A, B, C or D (recommended: spike C, then C or B; never A with real logins).
+1. CDP: decided, B (see CDP above); D stays a possibility.
 2. Carry WebKit's cookies over once (recommended: yes)? And clear WebKit's store at step 9, or leave it on disk (recommended: leave it)?
 3. New windows and popups as panes beside the page (recommended), in the default browser, or dropped as today?
 4. Downloads to the Downloads folder with quarantine (recommended), or refused as today?
@@ -172,4 +174,4 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 
 **Answered by the code, not the user's:** where the engine starts (between runs of the main run loop, at an event's dispatch); light and dark (the engine's startup setting); the failure card's texts and intervals (today's); the saved state (no new field, the `chromium` mark ignored); Resources (one row for the helpers: the C API gives no process per page).
 
-**Unverified, to settle in the steps that need them:** the engine serving CDP again after a stop; Playwright's endpoint showing existing pages; page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.
+**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.
