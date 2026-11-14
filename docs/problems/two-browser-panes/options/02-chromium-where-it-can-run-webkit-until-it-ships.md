@@ -89,6 +89,7 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
 - Decided once per pane, when its page is made (the table in Solution). The rule is a pure function of three facts, so a harness can check it.
 - **Saved state.** No new field. The `chromium` mark on saved records is still decoded and means nothing from step 5; it is never written again. An older build reading the file shows those pages in WebKit. One new UserDefaults key for the switch, and one that says WebKit's cookies have been copied (step 4).
 - **The switch** (Settings › Experimental, "Pages in Chromium"), on by default wherever the framework is. Off, new page panes open in WebKit; a running engine stays until the restart. Removed at step 9.
+- **Step 5 built it so** (ADR 0048, "Which engine a page gets", has the rule, the files and what is unverified), with these decisions where the option was silent: until step 6, a custom app's page (Scratch too), a page of another machine's tab and a page opened at a local address stay in WebKit, one line in front of the rule that step 6 deletes (the waiting card and its retries are WebKit's alone, so a local address can't go to Chromium before they are built for it); `pane_open`'s `chromium` kind is no kind but is accepted as `page` for sessions started before; a pane the engine couldn't start moves to WebKit at its Reload, as Solution says; the address of a page's own history changes is read from the engine once a second, since neither its load nor its navigation events carry it; light and dark came with the engine's `appearance.follow`, which the tile never set.
 
 ### What carries over (steps 5 and 6)
 
@@ -168,7 +169,7 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 4. Downloads to the Downloads folder with quarantine (recommended), or refused as today?
 5. Dialogs answered silently as WebKit does today (recommended for now), or a card in the pane?
 6. Inspect Element: dropped (recommended), or offered by opening Chrome's DevTools on the page while an endpoint is served?
-7. The Pages in Chromium switch while WebKit stands in (recommended: on by default)?
+7. The Pages in Chromium switch while WebKit stands in (recommended: on by default)? Built on by default in step 5; the user hasn't answered it separately.
 8. Delete WebKit's page path at the end (this option), or keep it as a fallback for good (option 03)?
 9. Varnick.app 143 MB larger, and 200 MB of memory from the first page until quit: acceptable?
 

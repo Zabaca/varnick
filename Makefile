@@ -97,7 +97,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-open check-messages apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit zebkit-codesign text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-open check-messages check-page apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit zebkit-codesign text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -232,6 +232,12 @@ check-open:
 # no network. Built the same way as check-slots; `scripts/check-mcp.sh` runs the channel server's binary.
 check-messages:
 	@swift run --package-path Packages/VarnickPeer message-check
+
+# Which engine a page pane gets (`PageEngine`, Packages/VarnickPeer; option 02 of `two-browser-panes`, step 5) over every combination of its three
+# facts: the framework is there, Settings > Experimental > Pages in Chromium is on, the engine hasn't failed to start. No Varnick and no engine. Built the
+# same way as check-slots.
+check-page:
+	@swift run --package-path Packages/VarnickPeer page-check
 
 # Moved into place by rename, so a reader never sees half a line. `git diff HEAD` looks at tracked files only:
 # untracked ones don't make a build dirty. Outside a git checkout there is no commit to name, so there is no stamp.

@@ -305,9 +305,10 @@ they were asked in the last few seconds, and waits up to 5 seconds; a machine th
 (`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
 you would see it: a session's latest exchange, a command's output, a secret that was just printed or typed where it
 echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
-controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only, except a
-**Chromium pane**: its read gives the page's address and the address of its DevTools endpoint (CDP, on 127.0.0.1 with no
-password), through which the session can read and act in that page, logged in wherever you have logged in inside a Chromium pane (its profile is Varnick's own, apart from the Browser pane's; ADR 0048). The endpoint is served
+controls gives the last screen the card holds. A file or a custom app gives its kind and title only, and so does a page in
+WebKit (which says it can't be driven), except a **page in Chromium**, which is where a Browser pane opens wherever Chromium can run
+([Pages in Chromium](#pages-in-chromium)): its read gives the page's address and the address of its DevTools endpoint (CDP, on
+127.0.0.1 with no password), through which the session can read and act in that page. The endpoint is served
 only after such a read, for a limited time (ADR 0048), but while it is served any program on
 this Mac can reach it. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
@@ -356,10 +357,10 @@ panel is up (as Return would), and open a page in your default browser, which lo
 or in a Browser pane beside the session. It opens only a page that is in your history or bookmarks. Varnick's log holds the tool, the outcome's kind,
 counts and the time, never a query, a name, an address or a conversation id.
 
-Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page, a Chromium page
+Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page
 or a file beside their own pane, in their own tab on this Mac, close the panes they opened until you first use one, and mark Done a tab they opened with `tab_open`, on this Mac or another of your machines, until you first use that. They read
 nothing more than the tools above let them, but opening a pane is not free of risk: a custom app they open runs that app's code
-outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, a Chromium page they open at an address they choose is logged in wherever you have logged in inside a Chromium pane and can be driven by any program on this Mac while its endpoint is served (see the Chromium pane above), and a Claude session
+outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, and in Chromium it can be driven by any program on this Mac while its endpoint is served ([Pages in Chromium](#pages-in-chromium)), and a Claude session
 they open draws on your Claude subscription. Whether it skips permission checks is in the guide (Panel access); the limits are in
 docs/agents/where-it-breaks.md (Panel access). Varnick's log holds the tool, the kind of pane, the outcome and the time, never a prompt,
 an address or a path.
@@ -446,6 +447,12 @@ permissions (see Screen permissions reach every pane, below). Nothing sandboxes 
 are reviewed in its repository before they ship and run only the code of the release you installed; that is a
 review, not a restriction. A project's `.varnick/custom-apps/` is read from any repository you open a pane in, so a
 cloned repository's apps appear in the picker, and picking one runs its code.
+
+### Pages in Chromium
+
+Browser panes, the pages a session opens with `pane_open` and the pages `find_open` opens beside a session are drawn by Chromium (zebkit's engine, in a copy that sits beside Varnick) wherever it can run, and by WebKit where it can't: when the framework isn't there, Settings › Experimental › Pages in Chromium is off, or the engine failed to start. Custom apps, Scratch and the pages of another Mac's tab stay in WebKit for now. Chromium keeps its own profile, in Varnick's support folder, apart from the Browser pane's WebKit store and from any browser of yours, shared by every page in it.
+
+A session that reads a page in Chromium with `pane_read` is given the address of a DevTools endpoint (CDP) through which it can read and act in that page as you are logged in, with no further asking: what you are logged into in Varnick's Chromium is open to it, and what it reads goes to Anthropic with the session. The endpoint is served only after such a read, stops 30 minutes after the last one or when the last Chromium page closes, and has no password: any program on this Mac can use it while it is served (ADR 0048 has the rules and what they leave open). A page in WebKit can't be read or driven by a session. Turning the switch off changes only pages opened afterwards: a Chromium page already open, and the engine, stay until Varnick restarts. Varnick's log holds the port while CDP is served and when it stops, never an address or a page.
 
 ### Skip permissions
 

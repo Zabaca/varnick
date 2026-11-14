@@ -6,16 +6,18 @@ import SwiftUI
 import WebKit
 
 /// One pane: interactive Claude Code (or a plain shell, ⌘⇧T, or the live transcript) in an
-/// embedded terminal (SwiftTerm), or a web page in a WKWebView (split picker).
+/// embedded terminal (SwiftTerm), or a web page in Chromium (`ChromiumPage`) or WebKit (a WKWebView; split picker).
 /// The session outlives panel hide/show; it ends when claude exits or on ⌘W.
 /// Sessions restored after a relaunch start dormant and resume when first shown.
 @MainActor
 final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate, WKNavigationDelegate {
     let view: LocalProcessTerminalView
-    /// Web panes only.
+    /// Web panes in WebKit only.
     private(set) var webView: WKWebView?
-    /// Chromium panes only (`ChromiumPage`), in place of `webView`.
+    /// Web panes in Chromium only (`ChromiumPage`), in place of `webView`. Which a pane gets is decided once, when it is made (`pageEngine`).
     private(set) var chromiumPage: ChromiumPage?
+    /// A web pane in WebKit: why it isn't in Chromium, for `pane_read` and `pane_open`'s reply. Nil for a Chromium page and for any other pane.
+    private(set) var webKitNote: String?
     /// File panes only.
     private(set) var fileViewer: FileViewer?
     /// File panes showing Markdown: the source instead of the rendered page.
@@ -392,10 +394,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         view.nativeBackgroundColor = NSColor(white: 0.1, alpha: 1)
         view.nativeForegroundColor = NSColor(white: 0.9, alpha: 1)
         view.caretColor = .systemBlue
-        if record.isChromium {
-            makeChromiumPage()
-        } else if record.isWeb, !record.staysOnHost {
-            makeWebView()
+        // The `chromium` mark of a record an earlier build saved means nothing now, and is not saved again.
+        self.record.chromium = nil
+        if record.isWeb, !record.staysOnHost {
+            let (engine, why) = Self.pageEngine(for: record)
+            if engine == .chromium { makeChromiumPage() } else { makeWebView() }
+            webKitNote = why
         }
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
@@ -1679,6 +1683,35 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // MARK: Web
 
+    /// The engine a page pane gets, asked once when the pane is made (`PageEngine`), and why when it is WebKit. Step 6 of option 02 of `two-browser-panes`
+    /// moves what stays in WebKit until it lands: a custom app's page (Scratch too), a page of another machine's tab (`proxy`, `applyHostProxy`), and a page
+    /// opened at a local address, which only WebKit's load-failure card waits on and retries (`showLoadError`). Deleting the first `if` flips all three.
+    private static func pageEngine(for record: SessionRecord) -> (PageEngine, why: String?) {
+        if record.isApp { return (.webKit, "it is a custom app's page, which stays in WebKit for now") }
+        if record.host != nil { return (.webKit, "it is a page of another Mac's tab, which stays in WebKit for now") }
+        if PeerProxyAddress.isProxiable(record.url ?? "") {
+            return (.webKit, "it was opened at a local address, which stays in WebKit for now (only WebKit's page waits for a server that isn't up yet)")
+        }
+        let (installed, on, failed) = (ChromiumEngine.isInstalled, Settings.shared.pagesInChromium, ChromiumEngine.hasFailed)
+        let engine = PageEngine.choose(frameworkPresent: installed, switchOn: on, engineFailed: failed)
+        guard engine == .webKit else { return (engine, nil) }
+        return (engine, !installed ? "Chromium isn't in this Varnick" : !on ? "Pages in Chromium (Settings › Experimental) was off when it was opened" : Self.engineFailedWhy)
+    }
+
+    private static let engineFailedWhy = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted"
+
+    /// A Chromium page the engine can't make (its start failed) becomes a WebKit page at its Reload, and stays one.
+    private func fallBackToWebKit() {
+        guard let old = chromiumPage else { return }
+        old.close()
+        old.removeFromSuperview()
+        chromiumPage = nil
+        makeWebView()
+        webKitNote = Self.engineFailedWhy
+        objectWillChange.send()
+        if let url = record.url, !url.isEmpty { load(url) }
+    }
+
     private func makeWebView() {
         let config = WKWebViewConfiguration()
         // Right-click › Inspect Element, and Safari's Develop menu.
@@ -1716,6 +1749,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// never loads its own, and it ends when the site closes the window.
     func adopt(_ popup: ChromiumPage, openedBy opener: ClaudeSession) {
         chromiumPage?.close()
+        // The pane was made while the switch was off, so it holds a WebKit view the window replaces.
+        webObservers = []
+        webView = nil
+        webKitNote = nil
         makeChromiumPage(adopting: popup)
         popup.onClosedItself = { [weak self] in self?.end() }
         // A download of the popup outlives its pane, so the opener's pane says what became of it too.
@@ -1763,7 +1800,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     func reload() {
         // A file of another machine is read again.
         if let viewer = fileViewer, viewer.remote != nil { return viewer.load() }
-        if let chromiumPage { return chromiumPage.reload() }
+        if let chromiumPage {
+            if chromiumPage.targetID == nil, ChromiumEngine.cannotRun { return fallBackToWebKit() }
+            return chromiumPage.reload()
+        }
         guard let web = webView else { return }
         if appExited { return restartApp() }
         if let url = record.url.flatMap(URL.init(string:)), web.url == nil || web.url?.scheme == "about" {
