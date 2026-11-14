@@ -132,10 +132,9 @@ extension PanelAccess {
         let pane = model.addPane(record, app: app, beside: caller, in: tab, axis: place.axis, controller: controller)
         let where_ = controller.map { " This tab is controlled by \(PeerManager.shared.name(of: $0)), so the pane is in the tab for it and shows there within about 5 seconds." }
             ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
-        // The engine starts when the pane first wants it, and the page is made once the pane is on screen: until then `pane_read` has no endpoint to give.
-        let later = kind == .chromium ? " Its page is made once the pane is on screen and Chromium is up, a few seconds at most the first time: call pane_read on it again shortly for the CDP endpoint and target"
+        let later = kind == .chromium ? " It is a Chromium page, made once the pane is on screen and Chromium is up, usually a few seconds: call pane_read on it again shortly for the CDP endpoint and target"
             + " (until then it says Chromium is starting or the pane is not shown yet), and again if the user has not opened the tab yet." : ""
-        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(kind == .chromium ? "Chromium page" : Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)\(later)",
+        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)\(later)",
                         action: kind.rawValue + elsewhere)
     }
 
