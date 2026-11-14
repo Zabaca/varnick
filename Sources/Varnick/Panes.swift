@@ -283,6 +283,14 @@ final class PaneNode: ObservableObject, Identifiable {
         return children.flatMap(\.leaves)
     }
 
+    /// This leaf's width in a row `total` wide, from the share each side-by-side split above it gives it.
+    func width(in total: CGFloat) -> CGFloat {
+        guard let parent else { return total }
+        let space = parent.width(in: total)
+        guard parent.axis == .sideBySide else { return space }
+        return (space - PaneView.divider) * (parent.children.first === self ? parent.fraction : 1 - parent.fraction)
+    }
+
     func leaf(for target: ClaudeSession) -> PaneNode? {
         if session === target { return self }
         for child in children { if let found = child.leaf(for: target) { return found } }
@@ -678,7 +686,7 @@ struct TerminalLeaf: View {
                     .frame(width: 230)
                     .background(Color(nsColor: NSColor(white: 0.14, alpha: 1)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .padding(6)
-            } else if let failure = session.restartFailure ?? session.splitRefusal {
+            } else if let failure = session.restartFailure ?? session.splitRefusal ?? session.pageNote {
                 Text(failure)
                     .font(.system(size: 11.5))
                     .fixedSize(horizontal: false, vertical: true)

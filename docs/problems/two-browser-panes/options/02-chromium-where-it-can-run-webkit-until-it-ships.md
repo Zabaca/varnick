@@ -101,10 +101,12 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
 ### What a page asks of its pane (step 3)
 
 Recommended, each the user's to confirm:
-- **Dialogs** are answered as WebKit answers them today, by Varnick's handler: `alert` returns, `confirm` is false, `prompt` is empty, "leave this page?" leaves. The engine's own system alert, whose modal loop would run inside a pump, never shows. A card in the pane for them can come later.
+- **Dialogs** are answered as WebKit answers them today, by Varnick's handler: `alert` returns, `confirm` is false, `prompt` is null, "leave this page?" leaves. The engine's own system alert, whose modal loop would run inside a pump, never shows. A card in the pane for them can come later.
 - **The context menu** is shown by Varnick after the pump has returned, with the engine's own items. Inspect Element is not offered (below).
 - **New windows.** A link or `window.open` opens a Browser pane beside this one. A popup linked to its opener (a sign-in) becomes a pane beside it, linked, and closes when the page closes it. The engine never makes a window of its own.
 - **Downloads** go to the user's Downloads folder under a free name, marked with macOS's quarantine by Varnick, and the pane says where; a download that can't be saved is cancelled and the pane says why.
+
+Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to Downloads with quarantine, dialogs answered silently, Inspect Element dropped) were taken as recommended on 2026-11-13: James was shown them as the defaults and told the builders to keep going, and overrode none. Built with two additions the option didn't state: a pane's focus goes to a pane its page's window opened, and closing a pane cancels the downloads it has in flight.
 
 ### CDP (step 2)
 

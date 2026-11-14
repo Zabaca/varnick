@@ -2090,18 +2090,23 @@ final class LauncherModel: ObservableObject {
     }
 
     /// A window a Chromium page opened becomes a Browser pane beside the page's own, focused, as a new tab would be; the window goes into it as it
-    /// is, still linked to its page, which a site's sign-in needs. A tab that can't take a pane says so on the page's pane, and the window closes.
-    func openWindow(_ page: ChromiumPage, from opener: ClaudeSession) {
+    /// is, still linked to its page where it was, which a site's sign-in needs. A tab that can't take a pane, or one with no room, says so on the page's pane.
+    func openPageWindow(_ page: ChromiumPage, from opener: ClaudeSession) {
         guard let tab = tabs.first(where: { $0.contains(opener) }) else { return page.close() }
         if let reason = layoutLockReason(of: tab) {
             opener.showRefusal("A page tried to open a window, which this tab can't show: \(reason)")
+            return page.close()
+        }
+        // Each one halves the page's pane beside it, so past the minimum there is no room for another.
+        if let leaf = tab.root.leaf(for: opener), (leaf.width(in: tabProjects.paneWidth) - PaneView.divider) / 2 < PaneView.minPane.width {
+            opener.showRefusal("A page tried to open another window, but there is no room beside it: close a pane first.")
             return page.close()
         }
         var record = Self.newRecord(prompt: "", directory: opener.record.directory)
         record.url = ""
         record.chromium = true
         let session = makeSession(record, resuming: false, query: "")
-        session.adopt(page)
+        session.adopt(page, openedBy: opener)
         tab.add(session, beside: opener, .sideBySide)
         tab.focus(session)
         saveSessions()
@@ -2345,9 +2350,9 @@ final class LauncherModel: ObservableObject {
             self.sessionExited(ended, code: code, query: prompt)
         }
         session.onRecordChange = { [weak self] in self?.saveSessions() }
-        session.onOpenWindow = { [weak self] page in
+        session.onOpenPageWindow = { [weak self] page in
             guard let self, let opener = ref else { return page.close() }
-            self.openWindow(page, from: opener)
+            self.openPageWindow(page, from: opener)
         }
         session.onLabelChange = { [weak self] in
             self?.strip.refresh()
