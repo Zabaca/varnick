@@ -15,7 +15,7 @@ struct ResourcePane: Equatable, Sendable {
     let session: String?
     /// The process the pane started here: its zmx client, or the shell of one without zmx. Used only if it is still Varnick's own child.
     let client: Int32?
-    /// WebKit's process ids of the pane's web views, read again at each measure since a page that goes to another site can move.
+    /// WebKit's process ids of the pane's rendered Markdown (a file pane's only web view), read again at each measure.
     let pages: [Int32]
     /// The pane shows a Chromium page in a running engine: its memory is the helpers' row, under no pane (the engine's C API gives no process per page).
     let inChromium: Bool
@@ -65,7 +65,7 @@ enum ResourceKind: Int, CaseIterable {
         case .app: "Varnick"
         case .claude: "Claude Code"
         case .mcp: "MCP tools"
-        case .web: "Web pages"
+        case .web: "WebKit"
         case .chromium: "Chromium"
         case .phone: "Phone page server"
         case .appServer: "App servers"
@@ -84,7 +84,7 @@ enum ResourceHelper: Int, CaseIterable {
         case .phonePage: "Phone page server and port proxy"
         case .textHelper: "Text helper"
         case .webShared: "WebKit's GPU and network processes"
-        case .webPages: "Web pages in no pane"
+        case .webPages: "Rendered Markdown in no pane"
         case .chromium: "Chromium's helpers"
         case .relay: "Other machines reaching this Mac's tabs"
         case .ssh: "Links to other machines"
@@ -370,7 +370,7 @@ struct ResourceReport: Equatable {
             case .web:
                 if process.path?.contains("WebKit.GPU") == true { return "WebKit GPU" }
                 if process.path?.contains("WebKit.Networking") == true { return "WebKit network" }
-                return "Web page"
+                return "WebKit web content"
             default:
                 let name = process.executableName ?? process.name
                 return name.hasPrefix("-") ? String(name.dropFirst()) : name

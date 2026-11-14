@@ -3,7 +3,8 @@ import Foundation
 import WebKit
 
 /// The two private calls Resources makes, together, each failing soft: WebKit's process id for a web view, and macOS's "responsible
-/// process" call. Without the first the pages count together outside the tabs; without both they leave the total.
+/// process" call. WebKit runs only a file pane's rendered Markdown now (pages are Chromium's). Without the first the Markdown views count together
+/// outside the tabs; without both they leave the total.
 enum WebKitProcess {
     /// The process a web view's page runs in (WKWebView's private `_webProcessIdentifier`), or nil when WebKit has dropped it or has not
     /// started the page's process yet. Asked first, so a missing property is never read through key-value coding (that throws).

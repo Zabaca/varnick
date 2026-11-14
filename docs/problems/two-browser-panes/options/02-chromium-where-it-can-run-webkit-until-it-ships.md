@@ -73,8 +73,8 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
    *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for this Varnick's helpers; a spoken screen request about a page in the panel answers from the page's text.
 8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization (built and verified locally 2026-11-13; notarization not tried, hand check not done).
    *Checked by hand:* `make app` notarizes; on a Mac, the installed app opens a Browser pane in Chromium, a custom app and Scratch, survives a restart with them, and Gatekeeper raises nothing for the helper.
-9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check.
-   *Checked by hand:* every check of steps 3, 5 and 6 again on the installed app, and a file pane's rendered Markdown still shows.
+9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check. **Built 2026-11-13 on James's go-ahead given ahead of step 8's check** (see "Step 9, as built").
+   *Checked by hand:* every check of steps 3, 5 and 6 again on the installed app, and a file pane's rendered Markdown still shows. Since step 9 these checks are one list, ordered by what is likeliest to fail, in where-it-breaks ("By hand, the whole browser"), which absorbs the list of each of steps 1 to 8.
 
 ### The engine's start
 
@@ -158,6 +158,18 @@ Built and verified locally on 2026-11-13 (the signature, not a run); notarizatio
 
 Deletes WebKit's page view and its navigation handling, WebKit's half of the failure card, the mouse monitor's web view case (a file pane's view is found by its file pane), Resources' WebKit page process for page panes (a file pane's stays), the fallback and the switch. An ADR amending ADR 0048 is written when this option is accepted; CONTEXT.md's Browser pane becomes Chromium and its Chromium pane entry folds into it; where-it-breaks gains a Chromium section (the start, the pump, the wait, the endpoint) for the rules that today live only in the code and ADR 0048; `docs/privacy-and-security.md` says what step 2 and the downloads do.
 
+### Step 9, as built
+
+James's go-ahead, in his words of 2026-11-13: "i've already decided to remove webkit's page. so no need to wait on me". The option reserved this step for his word after step 8's hand check; he gave it ahead of that check, knowing that nothing built since step 1 has run inside Varnick and that he will test everything once, at the end. **So no step of this option had been hand-checked when step 9 landed.** The step 8 rule that step 9 must not land if the installed app fails its check is set aside by that decision; the way out below takes its place. ADR 0048 ("WebKit's page path is gone") has the mechanics and what is unverified; where-it-breaks has the rules and the one hand list.
+
+What the build decided where the option was silent:
+- **What a page pane says when Chromium can't run** (the framework isn't in this Varnick, the engine failed to start, or the user turned it off): its own note, in words, with what to do (restart Varnick after a failed start, which can't be retried in a process; use a build that has the framework; delete the off setting), never a blank pane. A session's `pane_read` and `pane_open` are told the same. Reload on such a pane asks the engine again, so it starts the engine at once after the off setting is deleted.
+- **The way out of a start that crashes Varnick at every launch** is a defaults key the user writes from a terminal outside Varnick, `chromiumOff`, which keeps the engine from starting (pages then say it is off) and works on an installed app, where the framework is sealed. It is hidden, written only by the user, and documented once, in where-it-breaks, as the first step of the hand list. The switch and its stored value are gone (the stored value is dropped at launch).
+- **The engine rule and its check** are deleted rather than reduced: with one engine nothing is left to choose.
+- **Unchanged:** the wire, the saved state (the old `chromium` mark still decodes and means nothing), the headless host and the relay, `kind: chromium` accepted as `page`, WebKit's cookie copy (it reads WebKit's own store, which still exists, and a Mac that upgrades straight to this build is copied as before), and a file pane's rendered Markdown, which stays on WebKit.
+
+**What is left, so the option stays in-progress until it is done** (the merge of step 9 does not finish it): every hand check (steps 1 to 9, one list in where-it-breaks); the notarization trial of the framework in the app, not tried; and the licence notices that must travel with the framework, which block any release that ships it (James's to resolve).
+
 ## Testing Decisions
 
 - No test target: `make build`, the `make check-*` targets, then the hand checks above, each after a restart the user makes. No agent restarts Varnick, runs the built binary past settings code, or clicks or types on the screen.
@@ -175,18 +187,18 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 
 ## Further Notes
 
-**What it leaves broken, step by step.** For the installed app, nothing: it shows pages in WebKit until step 8 and in Chromium after. For a checkout build, a Mac whose engine fails to start shows new pages in WebKit until the next restart. The headless host is unchanged throughout: it has no browser, lists no page pane, and its relay never loads the framework; a Mac viewing another Mac's tab shows its pages in its own engine, whichever that is.
+**What it leaves broken, step by step.** For the installed app, nothing: it shows pages in WebKit until step 8 and in Chromium after. Since step 9 a Mac whose engine fails to start, or whose Varnick has no framework, shows pages that say so and what to do, with no other engine behind them. The headless host is unchanged throughout: it has no browser, lists no page pane, and its relay never loads the framework; a Mac viewing another Mac's tab shows its pages in its own engine, whichever that is.
 
-**Decisions that are the user's:**
+**Decisions that are the user's** (8 below was answered by step 9 as it describes; the rest are as the steps recorded):
 1. CDP: decided, B (see CDP above); D stays a possibility.
 2. Carry WebKit's cookies over once (recommended: yes)? And clear WebKit's store at step 9, or leave it on disk (recommended: leave it)? Taken as recommended on 2026-11-13 (see Logins and the profile).
 3. New windows and popups as panes beside the page (recommended), in the default browser, or dropped as today?
 4. Downloads to the Downloads folder with quarantine (recommended), or refused as today?
 5. Dialogs answered silently as WebKit does today (recommended for now), or a card in the pane?
 6. Inspect Element: dropped (recommended), or offered by opening Chrome's DevTools on the page while an endpoint is served?
-7. The Pages in Chromium switch while WebKit stands in (recommended: on by default)? Built on by default in step 5; the user hasn't answered it separately.
-8. Delete WebKit's page path at the end (this option), or keep it as a fallback for good (option 03)?
-9. Varnick.app 143 MB larger, and 200 MB of memory from the first page until quit: acceptable?
+7. The Pages in Chromium switch while WebKit stands in (recommended: on by default)? Built on by default in step 5, and gone with step 9.
+8. Delete WebKit's page path at the end (this option), or keep it as a fallback for good (option 03)? Answered 2026-11-13: delete (see "Step 9, as built").
+9. Varnick.app 143 MB larger, and 200 MB of memory from the first page until quit: acceptable? Built so, and still the user's to accept at the end test.
 
 **Answered by the code, not the user's:** where the engine starts (between runs of the main run loop, at an event's dispatch); light and dark (the engine's startup setting); the failure card's texts and intervals (today's); the saved state (no new field, the `chromium` mark ignored); Resources (one row for the helpers: the C API gives no process per page).
 

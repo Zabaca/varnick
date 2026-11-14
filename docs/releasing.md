@@ -77,9 +77,9 @@ Both `spctl` lines must say `source=Notarized Developer ID`.
 - `ps -axo command | grep '[Z]ebkit Helper.*--type=renderer'` shows a renderer running from inside that copy's `Contents/Frameworks`.
 - The page survives quitting the app and opening it again.
 - A blank page or a helper that exits at once leaves a crash report in `~/Library/Logs/DiagnosticReports`; where-it-breaks, Signing, says what each signature suggests, and the way out
-  (`defaults write com.zabaca.varnick pagesInChromium -bool false`, then a restart, which makes every page WebKit's).
+  (the `chromiumOff` default, whose commands are in the guide's Pages section; Varnick has no other browser for a page).
 
-Don't publish a build whose Chromium failed this check: Chromium is chosen wherever the framework is there, so a Browser pane would be blank for everyone.
+Don't publish a build whose Chromium failed this check: Chromium is the only engine for a page, so a Browser pane would be blank for everyone.
 
 ## 4. Tag and publish
 

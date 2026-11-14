@@ -2,7 +2,7 @@ import Foundation
 import VarnickPeer
 
 // `make check-load`: what a page pane says when its page fails to load, when it tries again and when the card goes (`LoadFailure`, option 02 of `two-browser-panes`, step 6), as a
-// table of explicit cases with no Varnick, no WebKit and no engine. Neither Varnick nor this package has a test target; this is how `check-slots` checks the slot
+// table of explicit cases with no Varnick and no engine. Neither Varnick nor this package has a test target; this is how `check-slots` checks the slot
 // function. One `error:` line a failed case, exit 1 if there was any.
 
 var failures = 0
@@ -15,8 +15,8 @@ func expect(_ name: String, _ ok: Bool, _ detail: @autoclosure () -> String = ""
     FileHandle.standardError.write(Data("error: check-load: \(name)\(detail().isEmpty ? "" : ": " + detail())\n".utf8))
 }
 
-func card(_ address: String, proxy: Bool = false, host: String? = "Example host", note: String? = nil, other: String? = nil) -> LoadFailure.Card? {
-    LoadFailure.card(for: address, isHostProxy: proxy, hostName: host, proxyNote: note, other: other)
+func card(_ address: String, proxy: Bool = false, host: String? = "Example host", note: String? = nil) -> LoadFailure.Card? {
+    LoadFailure.card(for: address, isHostProxy: proxy, hostName: host, proxyNote: note)
 }
 
 // A local address waits for its server and tries every 1.5 s.
@@ -33,10 +33,8 @@ expect("a proxied page with no reason", card("https://host.example:4000/", proxy
 expect("a proxied page of a host with no name", card("https://other.example:4000/", proxy: true, host: nil)?.message == "the host's Phone page server isn't running, or this page's server has stopped.")
 expect("the host's reason wins over a local address", card("http://localhost:3000/", proxy: true, note: "Stopped.")?.message == "Example host: Stopped.")
 
-// Any other address: WebKit's own description with no retry; Chromium has none and shows its own error page.
-expect("a public address with WebKit's description", card("https://example.com/", other: "The server could not be found.")
-       == .init(message: "The server could not be found.", retryAfter: nil))
-expect("a public address with no description has no card", card("https://example.com/") == nil)
+// Any other address: no card, Chromium shows its own error page.
+expect("a public address has no card", card("https://example.com/") == nil)
 expect("a blank address has no card", card("") == nil)
 expect("a non-http address has no card", card("file:///tmp/x.html") == nil)
 

@@ -3,12 +3,12 @@ import CoreServices
 import Darwin
 import VarnickPeer
 
-// Chromium page panes: zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
+// Page panes: zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
 // 127.0.0.1 on demand so a session can drive the page the user sees (`pane_read` serves it and gives the address). The framework is loaded with dlopen the first time a
-// Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (pages are then WebKit's, `PageEngine`),
-// `--mcp` never maps it, and its 143 MB stays out of a Mac that never shows a Chromium pane.
+// page pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (its pages then say so, `unavailableNote`),
+// `--mcp` never maps it, and its 143 MB stays out of a Mac that never shows a page.
 
-/// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
+/// The one engine of this process: zebkit starts once per process and never again after it stops, so every page pane shares it, its profile
 /// and its CDP endpoint, when it is served (each pane is a target of its own).
 @MainActor
 enum ChromiumEngine {
@@ -18,10 +18,14 @@ enum ChromiumEngine {
         ResourceFolder.current.frameworks.appendingPathComponent("Zebkit.framework", isDirectory: true)
     }
 
-    /// A page pane gets Chromium only when the engine is there to load (`PageEngine`).
     static var isInstalled: Bool {
         FileManager.default.fileExists(atPath: frameworkURL.appendingPathComponent("Zebkit").path)
     }
+
+    /// A default the user writes to keep the engine from starting, the way out of a start that crashes every launch; read at each ask, never written by
+    /// Varnick. The guide ("Pages") has the commands.
+    nonisolated static let offKey = "chromiumOff"
+    static var isOff: Bool { UserDefaults.standard.bool(forKey: offKey) }
 
     /// Cookies, storage and cache of every Chromium pane: Varnick's own, apart from any browser of the user's.
     static var profileURL: URL { SupportFolder.url.appendingPathComponent("chromium-profile", isDirectory: true) }
@@ -50,7 +54,7 @@ enum ChromiumEngine {
         case .running(let kit): return .running(kit)
         case .failed: return .unavailable(failedNote)
         case .notStarted:
-            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't in this Varnick.") }
+            if let note = unavailableNote { return .unavailable(note) }
             waiters.append(whenSettled)
             // A start already waiting or under way takes no second request.
             RunLoopGate.whenBetweenRuns { start() }
@@ -59,7 +63,28 @@ enum ChromiumEngine {
     }
 
     /// What a pane says once the start failed: the reason is in the log, and nothing starts the engine again in this process.
-    static let failedNote = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted."
+    static let failedNote = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted. The log says why it failed."
+    /// There is no fallback: a page pane that can't have Chromium says why and what to do (its Reload asks again, `ClaudeSession.reload`), and `pane_read` and
+    /// `pane_open` tell a session the same, from here.
+    static let missingNote = "Chromium isn't in this Varnick (Zebkit.framework is missing), and pages need it. Use a build that has it: make build fetches it, and make app puts it in the app."
+    static var offNote: String {
+        "Chromium is turned off in this Varnick (the \(offKey) setting), so pages can't be shown. Delete it with defaults delete \(Bundle.main.bundleIdentifier ?? "com.zabaca.varnick") \(offKey), then press Reload."
+    }
+
+    /// What a session is told when there is no page to show or drive, from `unavailableNote`: the one text `pane_read` and `pane_open` use.
+    static var sessionNote: String? {
+        unavailableNote.map { "There is no page to show or drive, and the pane tells the user: \($0)" }
+    }
+
+    /// Why a page can't be made now or later, nil while it can: the framework isn't in this Varnick (nothing to be done short of another build), the engine failed
+    /// (final for the process), or the user turned it off. A running engine is never unavailable.
+    static var unavailableNote: String? {
+        switch state {
+        case .running: return nil
+        case .failed: return failedNote
+        case .notStarted: return !isInstalled ? missingNote : isOff ? offNote : nil
+        }
+    }
 
     private static var isStarting = false
 
@@ -71,6 +96,8 @@ enum ChromiumEngine {
         defer {
             isStarting = false
             tellWaiters()
+            // Panes showing why they had no page (the off default was deleted, and one pane's Reload started the engine) ask again.
+            ChromiumPage.askAgainWhereNoteShown()
         }
         do {
             let kit = try Zebkit(framework: frameworkURL)
@@ -84,7 +111,7 @@ enum ChromiumEngine {
                 "profileDirectory": profileURL.path, "headless": false,
                 // Chromium's log would go to stderr, which is Varnick's log, and it carries addresses.
                 "logging": ["destination": "none"],
-                // A page takes the system's light or dark, as WebKit's did.
+                // A page takes the system's light or dark.
                 "appearance": ["follow": true],
             ] as [String: Any]), encoding: .utf8)!
             let arguments = [CommandLine.arguments.first ?? "Varnick"] + ScreenReader.pageAccessibilitySwitches
@@ -112,15 +139,6 @@ enum ChromiumEngine {
         waiters = []
         for waiter in told where !ChromiumLogins.holdPage(waiter) { waiter() }
     }
-
-    /// The engine failed to start, or has stopped: it is never started again in this process.
-    static var hasFailed: Bool {
-        if case .failed = state { return true }
-        return false
-    }
-
-    /// No page can be made now or later: a pane that has none moves to WebKit at its Reload (`ClaudeSession.reload`).
-    static var cannotRun: Bool { hasFailed || !isInstalled }
 
     // MARK: CDP on demand (ADR 0048)
 
@@ -506,7 +524,7 @@ struct Zebkit {
     }
 }
 
-/// A Chromium pane's content: zebkit's page, attached as a subview of this view so it moves, hides and leaves with it as a WKWebView would, made
+/// A page pane's content: zebkit's page, attached as a subview of this view so it moves, hides and leaves with it, made
 /// the first time this view is in a window with a size. What the page asks of its pane is answered here, never by the engine's windows (ADR 0048).
 @MainActor
 final class ChromiumPage: NSView {
@@ -567,8 +585,8 @@ final class ChromiumPage: NSView {
     var onLoaded: () -> Void = {}
     var onLoadFailed: (String) -> Void = { _ in }
     var onNavigation: (String) -> Void = { _ in }
-    /// Why there is no page (the engine starting, missing or failed), shown in place of it.
-    private let note = NSTextField(labelWithString: "")
+    /// Why there is no page (the engine starting, missing, off or failed, and what to do), shown in place of it. It wraps and can be selected, for the command it may give.
+    private let note = NSTextField(wrappingLabelWithString: "")
     /// The pane's own card over the engine's error page (`ClaudeSession`'s load failure), a sibling of the engine's view. Unverified that it draws above it.
     private let card = NSView()
     private let cardLabel = NSTextField(wrappingLabelWithString: "")
@@ -706,9 +724,23 @@ final class ChromiumPage: NSView {
         note.isHidden = false
     }
 
+    /// Panes whose note says the engine can't be had, so a start that settles (from another pane's Reload) makes their pages too.
+    private static let showingUnavailable = NSHashTable<ChromiumPage>.weakObjects()
+
+    fileprivate static func askAgainWhereNoteShown() {
+        for page in showingUnavailable.allObjects {
+            showingUnavailable.remove(page)
+            page.note.isHidden = true
+            page.makePage()
+        }
+    }
+
+    /// Added to the note when the engine can't be had, for a pane that has something else to offer (an app's address).
+    var unavailableHint: String?
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        note.frame = bounds.insetBy(dx: 20, dy: max(0, bounds.height / 2 - 30))
+        note.frame = bounds.insetBy(dx: 20, dy: max(0, bounds.height / 2 - 60))
         layoutCard()
         guard let kit, let view, newSize.width >= 1, newSize.height >= 1 else { return makePage() }
         kit.setBounds(view, 0, 0, Int32(newSize.width), Int32(newSize.height))
@@ -729,7 +761,8 @@ final class ChromiumPage: NSView {
             waitingForEngine = true
             show("Starting Chromium. This page opens when it is up.")
         case .unavailable(let reason):
-            show(reason + " Reload opens this page in WebKit.")
+            show(reason + (unavailableHint.map { " " + $0 } ?? ""))
+            Self.showingUnavailable.add(self)
         case .running(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
@@ -754,7 +787,7 @@ final class ChromiumPage: NSView {
     /// queued (`later`), and what the engine waits on or a freed view needs is done at once (`now`).
     private func connect(_ view: Zebkit.View, _ kit: Zebkit) {
         let me = Unmanaged.passUnretained(self).toOpaque()
-        // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
+        // Fullscreen is denied, since what the engine's would do inside the panel is untried (ADR 0048).
         _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
         // Every stage of a navigation is answered "continue" inside its callback (an unanswered one holds the page until the engine's 30 s deadline); the pane
         // reads the main frame's stages for its card (`LoadFailure`).
@@ -812,7 +845,7 @@ final class ChromiumPage: NSView {
                 if let leave = page.onClosedItself { leave() } else { page.show("The page closed itself. Reload to open it again.") }
             }
         }, me)
-        // Answered as WebKit's page pane answers them, with no handler: alert returns, confirm is false, prompt is null, "leave this page?" leaves.
+        // Answered silently: alert returns, confirm is false, prompt is null, "leave this page?" leaves.
         // The engine's own alert would run a loop of its own inside the pump.
         kit.onDialog(view, { view, dialog, data in
             guard let view, let dialog, let data else { return }

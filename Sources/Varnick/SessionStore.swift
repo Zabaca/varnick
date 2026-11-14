@@ -27,7 +27,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var liveTranscript: Bool?
 
     /// Retired: builds before 2026-11-13 marked a pane the split picker's Chromium tile made. Still decoded, so no saved tab fails to load, and
-    /// means nothing now: which engine a page gets is decided when its pane is made (`PageEngine`), and `ClaudeSession` clears the mark, so it is never saved again.
+    /// means nothing now: every page is Chromium's (since WebKit's page path went, ADR 0048), and `ClaudeSession` clears the mark, so it is never saved again.
     var chromium: Bool?
 
     /// Custom app pane: the app's folder name. It is a web pane too (`url` is the app's server).

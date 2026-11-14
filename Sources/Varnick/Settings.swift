@@ -246,10 +246,6 @@ final class Settings: ObservableObject {
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
     static let outlineOnKey = "outlineOn"
-    /// Experimental: "Pages in Chromium", on by default and absent reads on (`PageEngine`, ADR 0048). Off, a page pane made from then on gets WebKit; a Chromium
-    /// page already open stays, and the engine with it, until Varnick restarts. Removed with WebKit's page path (option 02 of `two-browser-panes`, step 9).
-    @Published var pagesInChromium: Bool { didSet { defaults.set(pagesInChromium, forKey: Self.pagesInChromiumKey) } }
-    static let pagesInChromiumKey = "pagesInChromium"
     /// Experimental: "Answer with Varnick's own steps (Jev)", off by default and absent reads off. Off, the voice session answers Hey Varnick; on, the
     /// older pipeline does and the voice session is off. It replaced `voiceSessionOn`, never read now: ADR 0042's amendment says why.
     @Published var ownStepsOn: Bool { didSet { defaults.set(ownStepsOn, forKey: Self.ownStepsOnKey) } }
@@ -449,7 +445,9 @@ final class Settings: ObservableObject {
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
-        pagesInChromium = defaults.object(forKey: Self.pagesInChromiumKey) as? Bool ?? true
+        // The retired Pages in Chromium switch (read by builds up to 2026-11-13, when WebKit's page path went): dropped, never carried over. With no fallback there is
+        // no switch; the one way to keep the engine from starting is `ChromiumEngine.offKey`, which only the user writes.
+        defaults.removeObject(forKey: "pagesInChromium")
         // The retired Tasks switch (read by builds up to 2026-11-12): dropped, never carried over.
         defaults.removeObject(forKey: "tasksOn")
         // The retired Problems board switch (read by builds up to 2026-11-13): dropped, never carried over.
@@ -1094,13 +1092,6 @@ struct SettingsView: View {
                             .onAppear { resources.settingsTab(shown: true) }
                             .onDisappear { resources.settingsTab(shown: false) }
                             case .experimental:
-                            SettingRow(title: "Pages in Chromium",
-                                       detail: "Web pages are drawn by Chromium, with logins of their own that WebKit's are copied into once, where it can run. A session that reads any one Chromium page can list and drive every Chromium page in every tab, logged in as you are, for a while, and what it reads goes to Anthropic (docs/privacy-and-security.md, Pages in Chromium, which also says how the copy works). Off, a new page opens in WebKit, which a session can't drive; a Chromium page already open stays until Varnick restarts. Experimental.") {
-                                if !ChromiumEngine.isInstalled {
-                                    Text("Not in this Varnick").font(.system(size: 12)).foregroundStyle(.orange)
-                                }
-                                Toggle("", isOn: $settings.pagesInChromium).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
                             SettingRow(title: "Outline",
                                        detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac; your listed devices see and edit them on its Phone page, and Claude sessions' Outline tools read and edit them without asking (docs/privacy-and-security.md, Your Outline, on the Phone page). Turning it off hides it and makes both refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)

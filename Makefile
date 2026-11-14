@@ -22,9 +22,9 @@ ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
-# Chromium panes: zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary, and by `make app` in the bundle's
+# Page panes: zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary, and by `make app` in the bundle's
 # Contents/Frameworks (Sources/Varnick/Chromium.swift, ResourceFolder). 44 MB fetched, 143 MB unpacked, never committed. Varnick dlopens it the
-# first time a Chromium pane shows, so a build without it runs and its pages are WebKit's (`PageEngine`).
+# first time a page pane shows, so a build without it runs and its pages say Chromium isn't in it (`ChromiumEngine.unavailableNote`).
 ZEBKIT_VERSION := 0.4.0
 ZEBKIT_SHA256 := b94bf42c6485b6226b667fe5cdb80f341b24d1a4a1d41297039d79ccd02945c8
 ZEBKIT_PACKAGE := zebkit-$(ZEBKIT_VERSION)-aarch64-apple-darwin
@@ -105,7 +105,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-open check-messages check-cookies check-page check-engine check-load apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit sign-zebkit-locked zebkit-codesign text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-open check-messages check-cookies check-engine check-load apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit sign-zebkit-locked zebkit-codesign text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -247,15 +247,9 @@ check-open:
 check-messages:
 	@swift run --package-path Packages/VarnickPeer message-check
 
-# Which engine a page pane gets (`PageEngine`, Packages/VarnickPeer; option 02 of `two-browser-panes`, steps 5 and 6) over every combination of its three
-# facts: the framework is there, Settings > Experimental > Pages in Chromium is on, the engine hasn't failed to start. No Varnick and no engine. Built the
-# same way as check-slots.
-check-page:
-	@swift run --package-path Packages/VarnickPeer page-check
-
 # What a page pane says when its page fails to load and when it tries again (`LoadFailure`, Packages/VarnickPeer; option 02 of `two-browser-panes`, step 6):
 # the waiting text and 1.5 s of a local address, the host's reason and 3 s of a proxied page, the cases with no card, and which address the engine reports
-# is the pane's own. No Varnick, no WebKit and no engine. Built the same way as check-slots.
+# is the pane's own. No Varnick and no engine. Built the same way as check-slots.
 check-load:
 	@swift run --package-path Packages/VarnickPeer load-check
 

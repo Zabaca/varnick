@@ -302,10 +302,10 @@ if all(name in pane_described for name in pane_tools):
     if open_schema.get("required") != ["kind"] or open_properties.get("kind", {}).get("enum") != ["terminal", "claude", "app", "page", "file"]:
         fail("pane_open is %s: a required kind of terminal, claude, app, page or file (chromium is no kind of its own: a session that still sends it gets a page)" % open_schema)
     open_description = pane_described["pane_open"]["description"]
-    for phrase in ("Chromium", "WebKit", "CDP", "pane_read", "no auth", "can't be read or driven"):
+    for phrase in ("Chromium", "CDP", "pane_read", "no auth", "can't run"):
         if phrase not in open_description:
             fail("pane_open's description doesn't say %r" % phrase)
-    for phrase in ("a bridge until page itself opens Chromium", "kind is chromium", "except chromium"):
+    for phrase in ("WebKit", "a bridge until page itself opens Chromium", "kind is chromium", "except chromium"):
         if phrase in open_description:
             fail("pane_open's description still says %r" % phrase)
     for argument in ("folder", "prompt", "agent", "app", "url", "path", "place"):

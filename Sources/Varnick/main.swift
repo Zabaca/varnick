@@ -4,7 +4,6 @@ import Combine
 import VarnickPeer
 import SwiftTerm
 import SwiftUI
-import WebKit
 
 /// Borderless floating panel that can take keyboard focus without a Dock icon.
 final class LauncherPanel: NSPanel {
@@ -185,9 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if let self, event.window === self.panel { self.model.strip.mouseDown(event) }
             guard let self, event.window === self.panel,
                   var view = self.panel.contentView?.hitTest(event.locationInWindow) else { return event }
-            // A file pane's rendered Markdown is a WKWebView inside its FileViewer.
-            while !(view is LocalProcessTerminalView || view is FileViewer || view is ChromiumPage
-                    || (view is WKWebView && !(view.superview is FileViewer))),
+            // A file pane's rendered Markdown is a web view inside its FileViewer, which the walk up finds.
+            while !(view is LocalProcessTerminalView || view is FileViewer || view is ChromiumPage),
                   let up = view.superview { view = up }
             self.model.focusPane(showing: view)
             return event
