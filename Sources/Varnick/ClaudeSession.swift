@@ -153,6 +153,16 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     var tabAsksBeforeDone: () -> Bool = { false }
     /// Why a split of this pane, or a paste of an image on its host, was refused, shown over the pane for a few seconds.
     @Published private(set) var splitRefusal: String?
+    /// What became of a download of this pane's Chromium page, shown over the pane for a few seconds.
+    @Published private(set) var pageNote: String?
+
+    func showPageNote(_ message: String) {
+        pageNote = message
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            if self?.pageNote == message { self?.pageNote = nil }
+        }
+    }
 
     func showRefusal(_ message: String) {
         splitRefusal = message
@@ -1715,11 +1725,34 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         ]
     }
 
-    private func makeChromiumPage() {
-        let page = ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
+    private func makeChromiumPage(adopting popup: ChromiumPage? = nil) {
+        let page = popup ?? ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         page.onTitle = { [weak self] title in self?.webChanged(title: title) }
         page.onURL = { [weak self] text in self?.webChanged(url: URL(string: text)) }
+        page.onNote = { [weak self] note in self?.showPageNote(note) }
+        page.onPageWindow = { [weak self] opened in
+            if let self { self.onOpenPageWindow(opened) } else { opened.close() }
+        }
         chromiumPage = page
+    }
+
+    /// A window this Chromium page opened (`target=_blank`, `window.open`, a sign-in popup), to show in a pane beside this one (`LauncherModel.openPageWindow`).
+    var onOpenPageWindow: (ChromiumPage) -> Void = { $0.close() }
+
+    /// This pane shows the window `opener`'s page opened, in place of the page it made for itself: that window is loading already, so the pane
+    /// never loads its own, and it ends when the site closes the window.
+    func adopt(_ popup: ChromiumPage, openedBy opener: ClaudeSession) {
+        chromiumPage?.close()
+        makeChromiumPage(adopting: popup)
+        popup.onClosedItself = { [weak self] in self?.end() }
+        // A download of the popup outlives its pane, so the opener's pane says what became of it too.
+        popup.onNote = { [weak self, weak opener] note in
+            self?.showPageNote(note)
+            opener?.showPageNote(note)
+        }
+        started = true
+        startedAt = Date()
+        webChanged(title: popup.title, url: URL(string: popup.address))
     }
 
     private func webChanged(title new: String? = nil, url: URL? = nil) {
