@@ -71,7 +71,7 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
    *Checked by hand:* a page at a localhost port before its server starts says it is waiting and appears by itself once it runs; Scratch opens beside a Claude pane and reloads as Claude writes; an app whose server is killed shows its output and Reload runs it again; a page of another Mac's tab at that Mac's localhost loads through its proxy, says the host's reason when the host's Phone page server is stopped, and loads at once when it is back.
 7. **Resources and screen reading count Chromium.** Resources gives the engine's helpers a row of their own; a `look` at Varnick's panel over a Chromium page reads the page.
    *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for the helpers; a spoken screen request about a page in the panel answers from the page's text.
-8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization.
+8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization (built 2026-11-13; the notarization and the hand check are not yet done).
    *Checked by hand:* `make app` notarizes; on a Mac, the installed app opens a Browser pane in Chromium, a custom app and Scratch, survives a restart with them, and Gatekeeper raises nothing for the helper.
 9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check.
    *Checked by hand:* every check of steps 3, 5 and 6 again on the installed app, and a file pane's rendered Markdown still shows.
@@ -135,10 +135,13 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 
 ### The framework in Varnick.app (step 8)
 
-- Copied into the bundle's Frameworks folder, where Varnick already looks for it in a bundle (untested there).
-- Signed inside out, never with `--deep`: the helper with the hardened runtime, the secure timestamp and an entitlements file asking for JIT (V8 needs it), then the framework, then the bundle. Notarization refuses an executable without the hardened runtime (Apple's rule, from memory), and today's helper has none. Which entitlements the helper needs under the runtime is untested: as for Bun, one goes in only for a failure seen.
-- The app grows by 143 MB on disk; the disk image's compressed size is unmeasured.
-- The notices and licences carry zebkit's LGPL-2.1 and Chromium's notices (unverified what zebkit ships for them).
+Built on 2026-11-13 (ADR 0048, "Where the framework sits" and "Signed with Varnick's identity", has the evidence and what is unverified; `docs/releasing.md` and where-it-breaks, Signing, have the steps):
+
+- **Copied into the bundle's `Contents/Frameworks`** by `make app`, where `ChromiumEngine.frameworkURL` looks in a bundle (`ResourceFolder.Place.frameworks`); a checkout still has it beside the binary. zebkit has no setting for a framework or helper path: the engine finds itself with `dladdr` and the helper from the framework, and the helper's rpath leads back to the framework it sits in, so the host's place doesn't enter. The prototype recorded that helpers crash with the host elsewhere; no cause was kept, and the source says otherwise, so the first run from the bundle is the hand check.
+- **Signed inside out, never with `--deep`:** the helper with the hardened runtime, the secure timestamp and `Zebkit.entitlements` (`allow-jit` alone, as Chrome's renderer helper has it, from memory; zebkit ships one helper for every role), then the framework with the runtime, then the bundle. `make build` signs the same way minus the timestamp, so a checkout's restart tests the entitlement. Checked locally: the bundle verifies strictly and deeply, every Mach-O has the runtime and a secure timestamp, one team throughout. **Not done: notarization**, which is the user's to start (`make app CHECK_BUILD=1`, which sends the app to Apple and publishes nothing).
+- **The app grows by 144 MB on disk** (the framework; 408 MB in all) and the zip by about 58 MB (the app zips to about 134 MB); the disk image's size is unmeasured.
+- **The notices:** the package ships no licence or notice file; `THIRD_PARTY_NOTICES.md` says so, and whether Chromium's credits must travel with the app is unverified.
+- **After step 9, on this evidence:** an installed app would have a working browser if notarization accepts the app and the helpers run from `Contents/Frameworks` with the one entitlement; neither is known. If either fails, step 9 must not land, because the installed app would have no page engine at all: WebKit's fallback is what step 9 deletes.
 
 ### Step 9
 
@@ -176,4 +179,4 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 
 **Answered by the code, not the user's:** where the engine starts (between runs of the main run loop, at an event's dispatch); light and dark (the engine's startup setting); the failure card's texts and intervals (today's); the saved state (no new field, the `chromium` mark ignored); Resources (one row for the helpers: the C API gives no process per page).
 
-**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; `addCookies` reaching the persistent profile with no view in the engine yet (step 4); the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.
+**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; `addCookies` reaching the persistent profile with no view in the engine yet (step 4); the framework working from the bundle's Frameworks folder (zebkit's source says it does; the prototype's crash with the host elsewhere is unexplained); the helper's entitlements under the hardened runtime (`allow-jit` alone is built); whether the engine marks downloads with quarantine itself.
