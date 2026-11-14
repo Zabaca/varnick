@@ -299,12 +299,15 @@ pane_described = {t["name"]: t for t in listed(["--panes"], full=True)}
 if all(name in pane_described for name in pane_tools):
     open_schema = pane_described["pane_open"]["inputSchema"]
     open_properties = open_schema.get("properties", {})
-    if open_schema.get("required") != ["kind"] or open_properties.get("kind", {}).get("enum") != ["terminal", "claude", "app", "page", "chromium", "file"]:
-        fail("pane_open is %s: a required kind of terminal, claude, app, page, chromium or file" % open_schema)
+    if open_schema.get("required") != ["kind"] or open_properties.get("kind", {}).get("enum") != ["terminal", "claude", "app", "page", "file"]:
+        fail("pane_open is %s: a required kind of terminal, claude, app, page or file (chromium is no kind of its own: a session that still sends it gets a page)" % open_schema)
     open_description = pane_described["pane_open"]["description"]
-    for phrase in ("chromium", "CDP", "pane_read", "a bridge until page itself opens Chromium", "no auth"):
+    for phrase in ("Chromium", "WebKit", "CDP", "pane_read", "no auth", "can't be read or driven"):
         if phrase not in open_description:
             fail("pane_open's description doesn't say %r" % phrase)
+    for phrase in ("a bridge until page itself opens Chromium", "kind is chromium", "except chromium"):
+        if phrase in open_description:
+            fail("pane_open's description still says %r" % phrase)
     for argument in ("folder", "prompt", "agent", "app", "url", "path", "place"):
         if open_properties.get(argument, {}).get("type") != "string":
             fail("pane_open takes no string %s" % argument)

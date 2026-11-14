@@ -7,7 +7,12 @@ import VarnickPeer
 
 /// The kinds `pane_open` takes, in the order its schema lists them.
 enum OpenedPaneKind: String, CaseIterable {
-    case terminal, claude, app, page, chromium, file
+    case terminal, claude, app, page, file
+
+    /// "chromium", which a session started before pages opened in Chromium still sends, is a `page` now.
+    init?(named name: String) {
+        self.init(rawValue: name == "chromium" ? "page" : name)
+    }
 }
 
 /// Where `pane_open` puts the new pane relative to the caller's.
@@ -41,24 +46,23 @@ enum PaneMCP {
             + "`kind` is terminal (the account's login shell in `folder`, opened empty: nothing is typed into it), claude (a Claude session in `folder`, started at "
             + "once with `prompt` as its first message, or waiting if none; `agent` must be one found in the folder), app (a custom app from this session's folder, "
             + "such as Scratch, by `app`: it is told it was split from this pane, so Scratch serves this session's area), page (a Browser pane at the http or https "
-            + "`url`), chromium (a Chromium page at the http or https `url`, opened as the split picker's Chromium tile would: pane_read on it serves the CDP endpoint, on demand, and gives it with the "
-            + "target to drive it, and the reply says when to read again, since the page is made once the pane is on screen and the engine, which starts on demand, is up; opening serves nothing, and the endpoint stops \(ChromiumEngine.cdpIdleText) after the last pane_read of a Chromium pane or when the last Chromium page closes, so keep reading to keep it, and its socket closes with code 1006 when it stops; "
-            + "refused when Chromium is not available in this Varnick, and in a tab that another Mac or the phone controls; a bridge until page itself opens Chromium) "
+            + "`url`: in Chromium where it can run, and then pane_read on it serves the CDP endpoint, on demand, and gives it with the target to drive it; the page is made once the pane is on screen and the engine, which starts on demand, is up, so the reply says when to read again; "
+            + "opening serves nothing, and \(ChromiumEngine.cdpStopText); a page in WebKit can't be read or driven, and pane_read says so and why) "
             + "or file (a file pane for `path`, a file inside this session's project). The new pane takes half of this pane's place, `beside` it (the default) "
             + "or `below`; focus stays where it was, so the user keeps typing where they were, and Varnick's panel is never brought up, hidden or pinned: with the "
             + "panel hidden or the tab not on screen the pane is there when the user opens it. A new Claude pane never skips permission checks when this session "
-            + "does not. An app runs that app's code, outside Claude Code's permission checks, and a page loads in Varnick's browser with the user's cookies (a chromium page is logged in wherever the user has logged in inside a Chromium pane, "
+            + "does not. An app runs that app's code, outside Claude Code's permission checks, and a page loads in Varnick's browser with the user's cookies (a page in Chromium is logged in wherever the user has logged in inside a Chromium page, "
             + "and its CDP endpoint has no auth while it is served: any program on this Mac can drive it). It is an ordinary pane: the user can watch it, type into it and close it, it raises notices "
             + "and is on the board, and it lists these tools too. Open only what the user asked for or what the work plainly needs: a Claude session draws on the "
             + "user's Claude subscription and memory, nothing limits how many panes are opened, and each open halves a place again. Use "
-            + "pane_read and board_read to read a terminal's screen or a session's turn. In a tab that another Mac or the phone controls the pane is added for that machine (a Claude or terminal pane is labelled for it) and shows there within about 5 seconds, except chromium, which is refused there.",
+            + "pane_read and board_read to read a terminal's screen or a session's turn. In a tab that another Mac or the phone controls the pane is added for that machine (a Claude or terminal pane is labelled for it) and shows there within about 5 seconds.",
         properties: [
             "kind": ["type": "string", "enum": OpenedPaneKind.allCases.map(\.rawValue), "description": "What to open."],
             "folder": ["type": "string", "description": "For terminal and claude: the folder to start in. Defaults to this session's folder; it must be this session's project or inside it, a worktree under it included."],
             "prompt": ["type": "string", "description": "For claude: the first message. Left out, the session waits for one."],
             "agent": ["type": "string", "description": "For claude: a Claude Code agent found in the folder (the split picker lists the same)."],
             "app": ["type": "string", "description": "For app: the custom app's name or folder name, as the split picker lists it from this session's folder."],
-            "url": ["type": "string", "description": "For page and chromium: an http or https address."],
+            "url": ["type": "string", "description": "For page: an http or https address."],
             "path": ["type": "string", "description": "For file: the absolute path of a file inside this session's project."],
             "place": ["type": "string", "enum": OpenedPanePlace.allCases.map(\.rawValue), "description": "Where it goes relative to this pane. Defaults to beside."],
         ], required: ["kind"])

@@ -11,8 +11,6 @@ enum PaneDirection { case left, down, up, right }
 
 enum PaneKind: Equatable {
     case claude, terminal, web
-    /// A page in zebkit's Chromium (prototype): listed only when the engine is beside the binary (`ChromiumEngine.isInstalled`).
-    case chromium
     case app(CustomApp)
     /// A custom app of the host of another machine's tab, listed by `apps`: it runs there (ADR 0035).
     case hostApp(PeerApp)
@@ -24,7 +22,6 @@ enum PaneKind: Equatable {
         case .claude: "Claude"
         case .terminal: "Terminal"
         case .web: "Browser"
-        case .chromium: "Chromium"
         case .app(let app): app.name
         case .hostApp(let app): app.name
         }
@@ -35,7 +32,6 @@ enum PaneKind: Equatable {
         case .claude: "c"
         case .terminal: "t"
         case .web: "b"
-        case .chromium: "m"
         case .app, .hostApp: nil
         }
     }
@@ -43,7 +39,7 @@ enum PaneKind: Equatable {
         switch self {
         case .claude: "claude"
         case .terminal: "terminal"
-        case .web, .chromium: "web"
+        case .web: "web"
         case .app, .hostApp: "app"
         }
     }
@@ -52,7 +48,6 @@ enum PaneKind: Equatable {
         switch self {
         case .app(let app): app.symbol
         case .hostApp(let app): CustomApp.symbol(for: app.icon)
-        case .chromium: "globe.americas.fill"
         default: nil
         }
     }
@@ -78,11 +73,10 @@ struct PickerItem: Equatable {
         return direction == .left || direction == .up ? (i + count - 1) % count : (i + 1) % count
     }
 
-    /// The built-ins (and the Chromium tile, with the engine there), then the apps, each with its key.
-    static func items(apps: [CustomApp], chromium: Bool = false) -> [PickerItem] {
-        let builtIns = PaneKind.builtIns + (chromium ? [.chromium] : [])
-        let keys = CustomApp.assignKeys(taken: builtIns.compactMap(\.key), to: apps)
-        return builtIns.map { PickerItem(kind: $0, key: $0.key) }
+    /// The built-ins, then the apps, each with its key.
+    static func items(apps: [CustomApp]) -> [PickerItem] {
+        let keys = CustomApp.assignKeys(taken: PaneKind.builtIns.compactMap(\.key), to: apps)
+        return PaneKind.builtIns.map { PickerItem(kind: $0, key: $0.key) }
             + zip(apps, keys).map { PickerItem(kind: .app($0), key: $1) }
     }
 }

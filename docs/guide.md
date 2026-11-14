@@ -369,8 +369,8 @@ the Outline, with its zoom, filter and caret; Resources, by name only; Settings)
 board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
 shows them. Each pane gets an id such as `s1` (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
 title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
-never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or
-a custom app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
+never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a file or
+a custom app, its kind and title only, and for a page the same in WebKit (it says it can't be driven) and, in Chromium, its address and the endpoint a session drives it with (Experimental, below). **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
 your Outline's bullets: by default the tree from Home, or
 from a bullet, three levels down (`depth` 0 for all), with each bullet's id (`o1`, the same every time), text, whether it
 is done, collapsed or a mirror, its tags and its note, and which ones your view hides; with `as_shown`, the rows exactly
@@ -386,14 +386,14 @@ caret keeps its place in your text, your next key adds to the new text, and ⌘Z
 method is composing there, it waits for the composition to end.
 
 Two more tools, **opening panes**, have no switch either, and the voice session lacks them. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
-(with a first message if the session gives one), a custom app such as Scratch, a page, a Chromium page (the `chromium` kind, only while Zebkit.framework is beside Varnick, which the session can then drive; the page is made once the pane is on screen, so the reply tells it to read the pane again shortly; refused without the framework and in a tab another Mac or the phone controls) or a file beside the session's own pane,
+(with a first message if the session gives one), a custom app such as Scratch, a page (in Chromium where it can run, which the session can then read and drive: the page is made once the pane is on screen, so the reply tells it to read the pane again shortly; a page in WebKit can't be driven, and `pane_read` says so and why) or a file beside the session's own pane,
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude
 subscription, shows on the board and raises notices like any pane. **It follows your Skip permissions setting, but never skips
 permission checks when the session that opened it was started without skipping them.** `pane_close` closes a pane that session
 opened, as ⌘W would, until you first click, type in or focus it: after that it is yours. Both work in a tab another Mac or the
-phone controls, too (a Chromium page is refused there): the pane is added for that machine and shows there within about 5 seconds, and `pane_close` closes a pane there too, but not a Claude
+phone controls, too: the pane is added for that machine and shows there within about 5 seconds, and `pane_close` closes a pane there too, but not a Claude
 or terminal pane that machine has open at that moment. The reads work there as anywhere; what presses keys or
 changes the view does not (docs/agents/where-it-breaks.md, Panel access, has the list). Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
@@ -538,7 +538,13 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 
 ## Experimental
 
-Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
+Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on except **Pages in Chromium**, which is on.
+
+**Pages in Chromium** draws the Browser pane, the pages a session opens and the pages found by search in Chromium (a copy of it sits beside Varnick, with logins of its own) instead of WebKit, wherever
+it can run, so that a session can read and drive the page you are looking at: `pane_read` on it gives the session an endpoint to do that with, for as long as it keeps reading
+(what that lets it do is in [privacy and security](privacy-and-security.md#pages-in-chromium)). Chromium starts the first time a page is on screen, with no restart, and costs about 200 MB until Varnick quits.
+Off, a page you open from then on is WebKit's, which a session can't drive; a Chromium page already open stays until Varnick restarts. Where Chromium isn't in this Varnick, or failed to start, pages are WebKit's whatever the
+switch says, and some stay in WebKit for now (ADR 0048 lists them). The switch goes when WebKit's pages do.
 
 **Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
 the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts

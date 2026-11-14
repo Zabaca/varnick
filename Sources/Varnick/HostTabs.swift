@@ -270,8 +270,6 @@ extension LauncherModel {
             ask.app = app.folder
         case .app:
             return target.showRefusal("An app of this Mac runs here: open \(hostName)'s own from the split picker's tiles for its tab.")
-        case .chromium:
-            return target.showRefusal("A Chromium pane works on this Mac, not in a tab of \(hostName).")
         }
         let start = ask
         askHost(toStart: start, in: tab, beside: target, axis: axis) { [self] reply in

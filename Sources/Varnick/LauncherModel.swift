@@ -2049,7 +2049,7 @@ final class LauncherModel: ObservableObject {
     /// kind (Claude or shell) in the same folder. With ⌃ (`otherKind`), the other kind.
     func split(_ axis: SplitAxis) {
         guard let focused = activeSession else { return }
-        split(axis, kind: focused.record.isChromium ? .chromium : focused.isWeb ? .web : focused.isShell ? .terminal : .claude)   // a file or transcript pane splits as Claude
+        split(axis, kind: focused.isWeb ? .web : focused.isShell ? .terminal : .claude)   // a file or transcript pane splits as Claude
     }
 
     /// The new pane is fresh, in the focused pane's folder; a web pane starts with its
@@ -2064,9 +2064,6 @@ final class LauncherModel: ObservableObject {
         case .claude: break
         case .terminal: record.shell = true
         case .web: record.url = ""
-        case .chromium:
-            record.url = ""
-            record.chromium = true
         case .hostApp: return
         case .app(let app):
             record.app = app.folderName
@@ -2098,7 +2095,6 @@ final class LauncherModel: ObservableObject {
         }
         var record = Self.newRecord(prompt: "", directory: opener.record.directory)
         record.url = ""
-        record.chromium = true
         let session = makeSession(record, resuming: false, query: "")
         session.adopt(page, openedBy: opener)
         tab.add(session, beside: opener, .sideBySide)
@@ -2171,7 +2167,7 @@ final class LauncherModel: ObservableObject {
             pickerItems = PickerItem.items(hostApps: [])
             askHostApps(host, folder: focused.record.directory, tab: tab)
         } else {
-            pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory), chromium: ChromiumEngine.isInstalled)
+            pickerItems = PickerItem.items(apps: CustomApp.available(from: focused.record.directory))
         }
         pickerSelection = pickerItems.firstIndex { $0.kind == .terminal } ?? 0
         pendingSplit = axis

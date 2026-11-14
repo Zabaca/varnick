@@ -3,9 +3,9 @@ import CoreServices
 import Darwin
 import VarnickPeer
 
-// Chromium panes (prototype): zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
+// Chromium page panes: zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
 // 127.0.0.1 on demand so a session can drive the page the user sees (`pane_read` serves it and gives the address). The framework is loaded with dlopen the first time a
-// Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (the tile is then not listed),
+// Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (pages are then WebKit's, `PageEngine`),
 // `--mcp` never maps it, and its 133 MB stays out of a Mac that never shows a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
@@ -20,7 +20,7 @@ enum ChromiumEngine {
         return folder.appendingPathComponent("Zebkit.framework", isDirectory: true)
     }
 
-    /// The split picker lists the tile only when the engine is there to load.
+    /// A page pane gets Chromium only when the engine is there to load (`PageEngine`).
     static var isInstalled: Bool {
         FileManager.default.fileExists(atPath: frameworkURL.appendingPathComponent("Zebkit").path)
     }
@@ -86,6 +86,8 @@ enum ChromiumEngine {
                 "profileDirectory": profileURL.path, "headless": false,
                 // Chromium's log would go to stderr, which is Varnick's log, and it carries addresses.
                 "logging": ["destination": "none"],
+                // A page takes the system's light or dark, as WebKit's did.
+                "appearance": ["follow": true],
             ] as [String: Any]), encoding: .utf8)!
             var argv: [UnsafeMutablePointer<CChar>?] = [strdup(CommandLine.arguments.first ?? "Varnick"), nil]
             var error: UnsafeMutablePointer<CChar>?
@@ -116,6 +118,9 @@ enum ChromiumEngine {
         return false
     }
 
+    /// No page can be made now or later: a pane that has none moves to WebKit at its Reload (`ClaudeSession.reload`).
+    static var cannotRun: Bool { hasFailed || !isInstalled }
+
     // MARK: CDP on demand (ADR 0048)
 
     /// The port CDP is served on now, nil while it isn't. It has no password, so it is served only while a session keeps reading a Chromium pane.
@@ -136,6 +141,11 @@ enum ChromiumEngine {
     nonisolated static var cdpIdle: TimeInterval {
         let shortened = UserDefaults.standard.double(forKey: cdpIdleKey)
         return shortened > 0 ? max(1, min(shortened, 30 * 60)) : 30 * 60
+    }
+
+    /// When the endpoint stops, in the words every text a session is told uses (ADR 0048).
+    nonisolated static var cdpStopText: String {
+        "it stops \(cdpIdleText) after the last pane_read of a Chromium pane or when the last Chromium page closes, so read again to keep it, and a socket to it closes with code 1006 when it stops"
     }
 
     /// `cdpIdle` in words, for what a session is told.
@@ -401,6 +411,7 @@ struct Zebkit {
     static let beforeUnloadDialog: Int32 = 3
     static let downloadSave: Int32 = 0
     static let downloadCancel: Int32 = 1
+    static let fullscreenDeny: Int32 = 1
 
     let engineVersion: @convention(c) () -> UnsafePointer<CChar>
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
@@ -418,6 +429,8 @@ struct Zebkit {
     let focus: @convention(c) (View) -> Void
     let close: @convention(c) (View) -> Void
     let targetID: @convention(c) (View) -> UnsafeMutablePointer<CChar>?
+    let setFullscreenPolicy: @convention(c) (View, Int32) -> Bool
+    let getURL: @convention(c) (View) -> UnsafeMutablePointer<CChar>?
     let onLoad: @convention(c) (View, LoadFunc?, UnsafeMutableRawPointer?) -> Void
     let onTitle: @convention(c) (View, TitleFunc?, UnsafeMutableRawPointer?) -> Void
     let onClose: @convention(c) (View, ViewFunc?, UnsafeMutableRawPointer?) -> Void
@@ -458,6 +471,8 @@ struct Zebkit {
         focus = try symbol("zebkit_view_focus")
         close = try symbol("zebkit_view_close")
         targetID = try symbol("zebkit_view_get_target_id")
+        getURL = try symbol("zebkit_view_get_url")
+        setFullscreenPolicy = try symbol("zebkit_view_set_fullscreen_policy")
         onLoad = try symbol("zebkit_view_on_load")
         onTitle = try symbol("zebkit_view_on_title")
         onClose = try symbol("zebkit_view_on_close")
@@ -487,10 +502,33 @@ struct Zebkit {
 final class ChromiumPage: NSView {
     private var view: Zebkit.View?
 
-    /// The one place `view` is set (no `didSet`: Swift skips it inside an initializer): a page gained or lost is counted, since the last one closing stops CDP.
+    /// The one place `view` is set (no `didSet`: Swift skips it inside an initializer): a page gained or lost is counted, since the last one closing stops CDP,
+    /// and the address is watched while there is a page.
     private func holdView(_ new: Zebkit.View?) {
-        if (view == nil) != (new == nil) { ChromiumEngine.pageViewChanged(by: new == nil ? -1 : 1) }
+        if (view == nil) != (new == nil) {
+            ChromiumEngine.pageViewChanged(by: new == nil ? -1 : 1)
+            addressTimer?.invalidate()
+            addressTimer = new == nil ? nil : Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+                MainActor.assumeIsolated { if let self { self.checkAddress() } else { timer.invalidate() } }
+            }
+        }
         view = new
+    }
+    /// The address last reported by a load or seen by `checkAddress`.
+    private var seenAddress = ""
+    private var addressTimer: Timer?
+
+    /// A same-document address change (a route, a `#`) reaches no load or navigation callback, so the address is read once a second (never inside a pump),
+    /// acted on only when it changes to an http or https one. `zebkit_automation_on_event`'s "Frame.navigated" may replace this: untried (ADR 0048).
+    private func checkAddress() {
+        guard !closed, !VarnickApplication.isPumping, let kit, let view, let raw = kit.getURL(view) else { return }
+        defer { kit.free(raw) }
+        let text = String(cString: raw)
+        guard text != seenAddress else { return }
+        seenAddress = text
+        guard text != wanted, text.hasPrefix("http://") || text.hasPrefix("https://") else { return }
+        wanted = text
+        onURL(text)
     }
     private var kit: Zebkit?
     /// The page to load once the view is made, or the last one asked for.
@@ -590,6 +628,8 @@ final class ChromiumPage: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         makePage()
+        // A page shown again (its tab was left and is back) is told its bounds once more, which makes it draw (unverified: the engine's view outlives its superview).
+        if window != nil, let kit, let view, bounds.width >= 1, bounds.height >= 1 { kit.setBounds(view, 0, 0, Int32(bounds.width), Int32(bounds.height)) }
     }
 
     /// Made on the next turn of the main queue, never inside the layout pass or the view move that asked: the engine's first pump may call back
@@ -631,7 +671,7 @@ final class ChromiumPage: NSView {
             waitingForEngine = true
             show("Starting Chromium. This page opens when it is up.")
         case .unavailable(let reason):
-            show(reason)
+            show(reason + " Reload opens this page in WebKit.")
         case .running(let kit):
             let width = Int32(bounds.width), height = Int32(bounds.height)
             guard let view = kit.viewNew(url, width, height) else {
@@ -656,12 +696,15 @@ final class ChromiumPage: NSView {
     /// queued (`later`), and what the engine waits on or a freed view needs is done at once (`now`).
     private func connect(_ view: Zebkit.View, _ kit: Zebkit) {
         let me = Unmanaged.passUnretained(self).toOpaque()
+        // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
+        _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
         kit.onLoad(view, { _, event, url, data in
             guard event == Zebkit.loadCommitted, let url, let data else { return }
             let text = String(cString: url)
             ChromiumPage.later(data) { page in
                 // A reload after the page closed itself opens where it was, not where it started.
                 page.wanted = text
+                page.seenAddress = text
                 page.onURL(text)
             }
         }, me)
