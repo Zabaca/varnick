@@ -33,8 +33,7 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
   carried cookies' names and sites, never the names themselves; it is deleted when the copy stops. Whether the
   copy reaches the profile has not been seen working yet. Local storage and IndexedDB are not copied. WebKit's store is
   left where it is, on disk, and Varnick never deletes it. The copy is between two stores on this Mac, never sent anywhere
-  (a session reading a Chromium pane can use those logins, as the Chromium pane under
-  [Panel access](#anthropic-through-panel-access) says). Varnick's log holds counts only, never a cookie's name, value or
+  (a session reading a Chromium page can use those logins, as [Pages in Chromium](#pages-in-chromium) says). Varnick's log holds counts only, never a cookie's name, value or
   site. Cookies without an expiry last until Varnick quits in Chromium, as in any browser. Your Chrome's logins are not read.
 - **Pictures of the screen.** When it reads a window from a picture, the picture is never written to disk,
   logged or sent.
