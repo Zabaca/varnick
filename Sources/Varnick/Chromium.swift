@@ -6,18 +6,16 @@ import VarnickPeer
 // Chromium page panes: zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
 // 127.0.0.1 on demand so a session can drive the page the user sees (`pane_read` serves it and gives the address). The framework is loaded with dlopen the first time a
 // Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (pages are then WebKit's, `PageEngine`),
-// `--mcp` never maps it, and its 133 MB stays out of a Mac that never shows a Chromium pane.
+// `--mcp` never maps it, and its 143 MB stays out of a Mac that never shows a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
 /// and its CDP endpoint, when it is served (each pane is a target of its own).
 @MainActor
 enum ChromiumEngine {
-    /// `Zebkit.framework` beside the binary (`make build` puts it there), or in a bundle's Contents/Frameworks. Its helpers crash at start when the
-    /// host executable is anywhere else (found 2026-11-11), so this is the one place looked at.
+    /// `Zebkit.framework`: in a bundle's Contents/Frameworks, else beside the binary (`make build` puts it there); nowhere else is looked at
+    /// (ADR 0048, "Where the framework sits").
     static var frameworkURL: URL {
-        let place = ResourceFolder.current
-        let folder = place.bundle.map { $0.appendingPathComponent("Contents/Frameworks", isDirectory: true) } ?? place.folder
-        return folder.appendingPathComponent("Zebkit.framework", isDirectory: true)
+        ResourceFolder.current.frameworks.appendingPathComponent("Zebkit.framework", isDirectory: true)
     }
 
     /// A page pane gets Chromium only when the engine is there to load (`PageEngine`).
@@ -52,7 +50,7 @@ enum ChromiumEngine {
         case .running(let kit): return .running(kit)
         case .failed: return .unavailable(failedNote)
         case .notStarted:
-            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
+            guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't in this Varnick.") }
             waiters.append(whenSettled)
             // A start already waiting or under way takes no second request.
             RunLoopGate.whenBetweenRuns { start() }

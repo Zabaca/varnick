@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- What the hardened runtime lets zebkit's helper (every Chromium child process) do beyond its default; why, and what else it might need: ADR 0048, "Signed with Varnick's identity". -->
+<plist version="1.0">
+<dict>
+	<!-- V8's JIT memory in the renderers. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

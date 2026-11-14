@@ -15,6 +15,9 @@ and [0026](adr/0026-varnick-ships-on-a-disk-image-and-moves-itself-to-applicatio
   ships the Agent SDK, which `agent.js` in the app contains (ADR 0029; its licence is in `THIRD_PARTY_NOTICES.md`). Option 02 of
   `docs/problems/text-generation-ignores-the-claude-subscription/` is the way back if they don't allow it.
 - `TextHelper/check.sh` passes against the build.
+- **Chromium's notices are an open release blocker, and James's to resolve.** A release must not ship `Zebkit.framework` until `LICENSES/` carries the
+  LGPL-2.1 text, the source offer the LGPL requires and Chromium's third-party notices. The zebkit archive ships no licence or notice file (its credits
+  may be inside `zebkit.pak`, unverified). Step 8 of option 02 of `docs/problems/two-browser-panes/` has the requirement; `THIRD_PARTY_NOTICES.md` lists the framework.
 
 ## 2. Build
 
@@ -31,6 +34,24 @@ that too. Each is assessed by `spctl` before the target succeeds. It leaves, in 
 
 It ends by printing the version, build and commit. Both versions come from the commit's time in UTC, so the same commit always
 makes the same numbers: `CFBundleShortVersionString` is `2026.10.10` (no leading zeros), `CFBundleVersion` is `20261010.1558`.
+
+`Varnick.app` carries `Zebkit.framework` (Chromium) in `Contents/Frameworks`, signed as ADR [0048](adr/0048-a-chromium-pane-embeds-zebkit-and-serves-cdp-so-a-session-can-drive-the-page-the-user-sees.md)
+says. It is 143 MB unpacked; the app zips to 140.2 MB and the framework alone to 61.0 MB (as the reviewer measured on 2026-11-13); the disk image's size is unmeasured.
+
+**Notarization with the framework in the app has not been tried.** The trial, from a clean checkout of `main` with the notary credential in `Makefile.local`,
+sends the app (not the disk image) to Apple's notary service and publishes nothing, and is the user's to start:
+
+```
+make app CHECK_BUILD=1
+d=$(mktemp -d)
+ditto .build/app/Varnick.app "$d/Varnick.app"
+xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Safari;" "$d/Varnick.app"
+spctl -a -vv -t exec "$d/Varnick.app"
+```
+
+`spctl` must say `source=Notarized Developer ID`. A refusal prints `notarytool`'s log, which names the file and the reason (`Zebkit Helper` and `Zebkit` are the ones to look for).
+Then quit the checkout's Varnick (the account lock admits one), `open "$d/Varnick.app"` and make the Chromium check below. Remove `$d` afterwards. Don't use step 3's disk image
+for this: a check build writes `Varnick-check.dmg`, never notarized, and leaves any older `Varnick.dmg` where it was.
 
 ## 3. Check it like a download
 
@@ -49,6 +70,16 @@ rm -r "$d"
 ```
 
 Both `spctl` lines must say `source=Notarized Developer ID`.
+
+**The Chromium check**, on the copy the trial opened or, for a release, the app mounted above (with the checkout's Varnick quit), which no agent has run from a bundle:
+
+- A Browser pane at a script-heavy public site renders, with nothing from Gatekeeper or the keychain.
+- `ps -axo command | grep '[Z]ebkit Helper.*--type=renderer'` shows a renderer running from inside that copy's `Contents/Frameworks`.
+- The page survives quitting the app and opening it again.
+- A blank page or a helper that exits at once leaves a crash report in `~/Library/Logs/DiagnosticReports`; where-it-breaks, Signing, says what each signature suggests, and the way out
+  (`defaults write com.zabaca.varnick pagesInChromium -bool false`, then a restart, which makes every page WebKit's).
+
+Don't publish a build whose Chromium failed this check: Chromium is chosen wherever the framework is there, so a Browser pane would be blank for everyone.
 
 ## 4. Tag and publish
 
