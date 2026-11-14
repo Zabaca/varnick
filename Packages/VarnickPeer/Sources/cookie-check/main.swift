@@ -104,17 +104,42 @@ func record(attempts: Int = 1, accepted: Int = 3, carried: [(String, Int)]) -> C
     CookieCarry.Record(attempts: attempts, accepted: accepted, salt: "s", carried: carried.map { CookieCarry.Carried(digest: $0.0, expires: $0.1) })
 }
 let far = 1_900_000_000, past = 1_700_000_000
-expect("all carried cookies there confirms", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a", "b", "z"], now: now) == .confirmed(present: 2, of: 2))
-expect("one of them there confirms: the rest were logged out or refused later", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a"], now: now) == .confirmed(present: 1, of: 2))
-expect("an expired carried cookie is not looked for", CookieCarry.verdict(for: record(carried: [("a", far), ("b", past)]), chromiumDigests: ["a"], now: now) == .confirmed(present: 1, of: 1))
-expect("none there is a retry on the first attempt", CookieCarry.verdict(for: record(carried: [("a", far)]), chromiumDigests: ["z"], now: now) == .retry)
-expect("none there is a retry on the second", CookieCarry.verdict(for: record(attempts: 2, carried: [("a", far)]), chromiumDigests: [], now: now) == .retry)
-expect("none there after the last attempt is giving up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, carried: [("a", far)]), chromiumDigests: [], now: now) == .giveUp)
-expect("only session cookies taken has nothing to confirm", CookieCarry.verdict(for: record(carried: []), chromiumDigests: [], now: now) == .nothingToConfirm)
-expect("persistent cookies all expired by now has nothing to confirm", CookieCarry.verdict(for: record(carried: [("a", past)]), chromiumDigests: [], now: now) == .nothingToConfirm)
-expect("a copy Chromium took nothing of is retried", CookieCarry.verdict(for: record(accepted: 0, carried: []), chromiumDigests: [], now: now) == .retry)
-expect("a copy Chromium took nothing of, at the last attempt, is given up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, accepted: 0, carried: []), chromiumDigests: [], now: now) == .giveUp)
-expect("an expired carried cookie that is there anyway doesn't count", CookieCarry.verdict(for: record(carried: [("a", past), ("b", far)]), chromiumDigests: ["a"], now: now) == .retry)
+expect("all carried cookies there confirms", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a", "b", "z"], sentinelPresent: false, now: now) == .confirmed(present: 2, of: 2))
+expect("one of them there confirms: the rest were logged out or refused later", CookieCarry.verdict(for: record(carried: [("a", far), ("b", far)]), chromiumDigests: ["a"], sentinelPresent: false, now: now) == .confirmed(present: 1, of: 2))
+expect("an expired carried cookie is not looked for", CookieCarry.verdict(for: record(carried: [("a", far), ("b", past)]), chromiumDigests: ["a"], sentinelPresent: false, now: now) == .confirmed(present: 1, of: 1))
+expect("none there is a retry on the first attempt", CookieCarry.verdict(for: record(carried: [("a", far)]), chromiumDigests: ["z"], sentinelPresent: false, now: now) == .retry)
+expect("none there is a retry on the second", CookieCarry.verdict(for: record(attempts: 2, carried: [("a", far)]), chromiumDigests: [], sentinelPresent: false, now: now) == .retry)
+expect("none there after the last attempt is giving up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, carried: [("a", far)]), chromiumDigests: [], sentinelPresent: false, now: now) == .giveUp)
+expect("only session cookies taken has nothing to confirm", CookieCarry.verdict(for: record(carried: []), chromiumDigests: [], sentinelPresent: false, now: now) == .nothingToConfirm)
+expect("persistent cookies all expired by now has nothing to confirm", CookieCarry.verdict(for: record(carried: [("a", past)]), chromiumDigests: [], sentinelPresent: false, now: now) == .nothingToConfirm)
+expect("a copy Chromium took nothing of is retried", CookieCarry.verdict(for: record(accepted: 0, carried: []), chromiumDigests: [], sentinelPresent: false, now: now) == .retry)
+expect("a copy Chromium took nothing of, at the last attempt, is given up", CookieCarry.verdict(for: record(attempts: CookieCarry.maxAttempts, accepted: 0, carried: []), chromiumDigests: [], sentinelPresent: false, now: now) == .giveUp)
+expect("an expired carried cookie that is there anyway doesn't count", CookieCarry.verdict(for: record(carried: [("a", past), ("b", far)]), chromiumDigests: ["a"], sentinelPresent: false, now: now) == .retry)
+
+func sentinelRecord(attempts: Int = 1, accepted: Int = 3) -> CookieCarry.Record {
+    CookieCarry.Record(attempts: attempts, accepted: accepted, sentinel: true, salt: "s", carried: [])
+}
+expect("the check cookie there confirms, whatever else is gone", CookieCarry.verdict(for: sentinelRecord(), chromiumDigests: [], sentinelPresent: true, now: now) == .confirmedBySentinel)
+expect("the check cookie there confirms even when the carried cookies were all logged out of", CookieCarry.verdict(for: sentinelRecord(), chromiumDigests: ["z"], sentinelPresent: true, now: now) == .confirmedBySentinel)
+expect("the check cookie missing is a retry on the first attempt", CookieCarry.verdict(for: sentinelRecord(), chromiumDigests: [], sentinelPresent: false, now: now) == .retry)
+expect("the check cookie missing is a retry on the third attempt's predecessor", CookieCarry.verdict(for: sentinelRecord(attempts: 2), chromiumDigests: [], sentinelPresent: false, now: now) == .retry)
+expect("the check cookie missing after the third copy is giving up", CookieCarry.verdict(for: sentinelRecord(attempts: CookieCarry.maxAttempts), chromiumDigests: [], sentinelPresent: false, now: now) == .giveUp)
+expect("with the check cookie in the record, the carried digests are not used",
+       CookieCarry.verdict(for: CookieCarry.Record(attempts: 1, accepted: 1, sentinel: true, salt: "s", carried: [CookieCarry.Carried(digest: "a", expires: far)]), chromiumDigests: ["a"], sentinelPresent: false, now: now) == .retry)
+expect("without it in the record, a check cookie found by chance does not confirm",
+       CookieCarry.verdict(for: record(carried: [("a", far)]), chromiumDigests: [], sentinelPresent: true, now: now) == .retry)
+let check = CookieCarry.sentinel(now: now), removal = CookieCarry.sentinelRemoval()
+expect("the check cookie is host-only on a reserved host, at the root, persistent, not Secure, with no SameSite",
+       check.key.domain.hasSuffix(".invalid") && !check.key.domain.hasPrefix(".") && check.key.path == "/" && check.secure == false && check.sameSite == nil && check.httpOnly == false)
+expect("the check cookie lives 180 days, inside Chromium's cap", check.expires == 1_800_000_000 + 180 * 86_400)
+expect("the removal is the same key with an expiry in the past", removal.key == check.key && (removal.expires ?? Int.max) < 1_000_000_000)
+expect("the check cookie's key is the one a read of the jar finds it by",
+       CookieCarry.keys(inCookiesAnswer: #"{"cookies":[{"name":"varnick-carry-check","value":"1","domain":"varnick-carry.invalid","path":"/"}]}"#)?.contains(CookieCarry.sentinelKey) == true)
+expect("the check cookie goes last in the parameters, after the others", {
+    let entries = CookieCarry.plan(webkit: [cookie(expires: later)], chromiumHas: [], now: now).entries + [check]
+    let sent = (try? JSONSerialization.jsonObject(with: Data((CookieCarry.params(entries) ?? "").utf8))) as? [String: Any]
+    return ((sent?["cookies"] as? [[String: Any]])?.last?["name"] as? String) == "varnick-carry-check"
+}())
 
 // MARK: Whether a copy ends it
 

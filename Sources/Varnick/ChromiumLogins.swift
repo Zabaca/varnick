@@ -4,9 +4,10 @@ import VarnickPeer
 import WebKit
 
 // WebKit's logins carried into Chromium's profile (option 02 of `two-browser-panes`, step 4, ADR 0048). At an engine start, every cookie of WebKit's default
-// store is given to the engine in-process (`zebkit_automation_call` with no view, no port), except any cookie Chromium holds already. The copy is confirmed
-// at a later start, by finding the persistent cookies it carried in what Chromium reads back from disk, and only then is it done (`CookieCarry` has the rules,
-// `make check-cookies` checks them). Nothing is logged but counts, and nothing is written but Chromium's profile (and in it `recordName`) and `doneKey`.
+// store is given to the engine in-process (`zebkit_automation_call` with no view, no port), except any cookie Chromium holds already, with a check cookie of
+// Varnick's own last. The copy is confirmed at a later start, by finding that cookie in what Chromium reads back from disk, and only then is it done
+// (`CookieCarry` has the rules, `make check-cookies` checks them). Nothing is logged but counts, and nothing is written but Chromium's profile (and in it
+// `recordName`) and `doneKey`.
 
 @MainActor
 enum ChromiumLogins {
@@ -62,15 +63,17 @@ enum ChromiumLogins {
         // A copy was made at an earlier start: is it in Chromium's profile now?
         readChromium { keys in
             let digests = Set(keys.map { digest($0, salt: record.salt) })
-            switch CookieCarry.verdict(for: record, chromiumDigests: digests, now: Date()) {
+            switch CookieCarry.verdict(for: record, chromiumDigests: digests, sentinelPresent: keys.contains(CookieCarry.sentinelKey), now: Date()) {
+            case .confirmedBySentinel:
+                end("the copy is confirmed: Varnick's check cookie, written last, is in Chromium's profile", done: true, removingSentinel: true)
             case .confirmed(let present, let total):
                 finish("the copy is confirmed: \(present) of \(total) persistent cookies it carried are in Chromium's profile", done: true)
             case .nothingToConfirm:
                 finish("the copy is confirmed: nothing persistent was carried", done: true)
             case .giveUp:
-                finish("the copy never showed in Chromium's profile in \(record.attempts) starts, so it stops", done: true)
+                finish("the copy never showed in Chromium's profile after \(record.attempts) copies, so it stops", done: true)
             case .retry:
-                NSLog("Varnick: Chromium logins: the copy of start \(record.attempts) isn't in Chromium's profile, copying again")
+                NSLog("Varnick: Chromium logins: the copy of \(record.attempts) earlier start(s) isn't in Chromium's profile, copying again")
                 startCopy()
             }
         }
@@ -107,44 +110,57 @@ enum ChromiumLogins {
         let attempts = (current.record?.attempts ?? 0) + 1
         guard !cookies.isEmpty else {
             // WebKit may answer empty before it has loaded its store: that is never taken for "nothing to copy" short of the last attempt.
-            return conclude(attempts: attempts, webKitCookies: 0, planned: [], accepted: [], words: "WebKit's store read empty")
+            return conclude(attempts: attempts, webKitCookies: 0, planned: [], accepted: [], sentinelThere: false, words: "WebKit's store read empty")
         }
         readChromium { keys in
             let plan = CookieCarry.plan(webkit: cookies, chromiumHas: keys, now: Date())
             run?.webKit = nil
             let counts = "of \(cookies.count) WebKit cookies, \(plan.alreadyThere) already in Chromium, \(plan.expired) expired, \(plan.unplaceable) with no domain"
             guard !plan.entries.isEmpty else {
-                return conclude(attempts: attempts, webKitCookies: cookies.count, planned: [], accepted: [], words: "copied 0 \(counts)")
+                return conclude(attempts: attempts, webKitCookies: cookies.count, planned: [], accepted: [], sentinelThere: false, words: "copied 0 \(counts)")
             }
-            guard let params = CookieCarry.params(plan.entries) else { return finish("couldn't encode the cookies, none copied; tried again at the next start", done: false) }
-            give(params, plan.entries) { accepted, one in
+            // Persistent cookies are what a restart can lose: the check cookie goes last, to tell the next start whether they reached the disk.
+            let sentinel = plan.entries.contains { $0.expires != nil } ? CookieCarry.sentinel(now: Date()) : nil
+            give(plan.entries, sentinel) { accepted, one in
                 // What Chromium reads back at once, which says whether the write reached the jar the pages use (flushed to disk or not is for the next start).
                 readChromium { after in
                     let present = plan.entries.filter { after.contains($0.key) }.count
-                    conclude(attempts: attempts, webKitCookies: cookies.count, planned: plan.entries, accepted: accepted,
-                             words: "copied \(accepted.count)\(one ? " one by one" : "") \(counts), \(present) of \(plan.entries.count) planned are in Chromium now")
+                    let sentinelThere = sentinel.map { after.contains($0.key) } ?? false
+                    let check = sentinel == nil ? "" : sentinelThere ? ", the check cookie is in" : ", the check cookie was not accepted, so the carried cookies stand in for it"
+                    conclude(attempts: attempts, webKitCookies: cookies.count, planned: plan.entries, accepted: accepted, sentinelThere: sentinelThere,
+                             words: "copied \(accepted.count)\(one ? " one by one" : "") \(counts), \(present) of \(plan.entries.count) planned are in Chromium now\(check)")
                 }
             }
         }
     }
 
-    /// Gives Chromium the cookies in one batch; when that fails, one by one, so a cookie Chromium refuses leaves out only itself.
-    private static func give(_ params: String, _ entries: [CookieCarry.Entry], then done: @escaping @MainActor ([CookieCarry.Entry], Bool) -> Void) {
-        guard let kit = run?.kit else { return }
+    /// Gives Chromium the cookies and then the check cookie, in one batch; when that fails, one by one, the check cookie after the rest, so a cookie
+    /// Chromium refuses leaves out only itself.
+    private static func give(_ entries: [CookieCarry.Entry], _ sentinel: CookieCarry.Entry?, then done: @escaping @MainActor ([CookieCarry.Entry], Bool) -> Void) {
+        guard let kit = run?.kit, let params = CookieCarry.params(entries + (sentinel.map { [$0] } ?? [])) else {
+            return finish("couldn't encode the cookies, none copied; tried again at the next start", done: false)
+        }
         call(kit, "BrowserContext.addCookies", params) { _, error in
             guard run != nil else { return }
             if error == nil { return done(entries, false) }
             let tally = Tally()
+            let last: @MainActor () -> Void = {
+                guard let sentinel, let one = CookieCarry.params([sentinel]) else { return done(tally.accepted, true) }
+                call(kit, "BrowserContext.addCookies", one) { _, _ in
+                    guard run != nil else { return }
+                    done(tally.accepted, true)
+                }
+            }
             for entry in entries {
                 guard let one = CookieCarry.params([entry]) else { tally.answered += 1; continue }
                 call(kit, "BrowserContext.addCookies", one) { _, error in
                     guard run != nil else { return }
                     tally.answered += 1
                     if error == nil { tally.accepted.append(entry) }
-                    if tally.answered == entries.count { done(tally.accepted, true) }
+                    if tally.answered == entries.count { last() }
                 }
             }
-            if tally.answered == entries.count { done(tally.accepted, true) }
+            if tally.answered == entries.count { last() }
         }
     }
 
@@ -153,20 +169,35 @@ enum ChromiumLogins {
         var accepted: [CookieCarry.Entry] = []
     }
 
-    /// This start's copy is over: whether that ends it, and the record for the next start if not, which will look for the persistent cookies taken.
-    private static func conclude(attempts: Int, webKitCookies: Int, planned: [CookieCarry.Entry], accepted: [CookieCarry.Entry], words: String) {
+    /// This start's copy is over: whether that ends it, and the record for the next start if not.
+    private static func conclude(attempts: Int, webKitCookies: Int, planned: [CookieCarry.Entry], accepted: [CookieCarry.Entry], sentinelThere: Bool, words: String) {
         let persistent = accepted.filter { $0.expires != nil }
         var done = CookieCarry.endsAfterCopy(attempts: attempts, webKitCookies: webKitCookies, given: planned.count, accepted: accepted.count,
                                              acceptedPersistent: persistent.count)
         var note = ""
         if !done {
             let salt = UUID().uuidString
-            let record = CookieCarry.Record(attempts: attempts, accepted: accepted.count, salt: salt,
-                                            carried: persistent.map { CookieCarry.Carried(digest: digest($0.key, salt: salt), expires: $0.expires ?? 0) })
+            // The carried cookies' digests are kept only for the start that finds no check cookie to look for.
+            let carried = sentinelThere ? [] : persistent.map { CookieCarry.Carried(digest: digest($0.key, salt: salt), expires: $0.expires ?? 0) }
+            let record = CookieCarry.Record(attempts: attempts, accepted: accepted.count, sentinel: sentinelThere, salt: salt, carried: carried)
             // Without a record the copy would run at every start and bring back what the user removed: so it ends.
             if writeRecord(record) { note = "; it is looked for at the next start" } else { done = true; note = "; the record couldn't be kept, so it stops" }
         }
-        finish(words + note, done: done)
+        end(words + note, done: done, removingSentinel: done && sentinelThere)
+    }
+
+    /// Ends the attempt, taking Varnick's check cookie out of the profile first when it is there and the copy is over.
+    private static func end(_ words: String, done: Bool, removingSentinel: Bool = false) {
+        guard removingSentinel, let kit = run?.kit, let params = CookieCarry.params([CookieCarry.sentinelRemoval()]) else { return finish(words, done: done) }
+        // A cookie given an expiry in the past is deleted; the read says whether it was (it expires in 180 days if not).
+        call(kit, "BrowserContext.addCookies", params) { _, _ in
+            guard run != nil else { return }
+            call(kit, "BrowserContext.cookies", #"{"urls":[]}"#) { json, _ in
+                guard run != nil else { return }
+                let gone = json.flatMap { CookieCarry.keys(inCookiesAnswer: $0) }.map { !$0.contains(CookieCarry.sentinelKey) }
+                finish(words + (gone == true ? "; the check cookie is removed" : gone == false ? "; the check cookie is still in the profile" : "; couldn't tell whether the check cookie is removed"), done: done)
+            }
+        }
     }
 
     /// The start's attempt ends: the mark is set when it is over for good (and the record goes), the line names counts only, and the pages are let through.

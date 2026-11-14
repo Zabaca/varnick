@@ -25,10 +25,12 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
 - **The logins of your Browser panes, copied into Chromium's profile.** At Varnick's Chromium engine's first starts on this
   Mac, every cookie in the store your Browser panes use (WebKit's), HttpOnly ones too, is copied into the engine's own
   profile (`chromium-profile` in Varnick's support folder), so a site you were logged into stays logged in in a Chromium
-  pane. The copy is checked at a later start, by finding the cookies it carried in Chromium's profile, and is tried
-  again, up to three starts in all, until it shows; then it stops, and Varnick's settings hold a mark that says so. For
-  that check a small file in the profile folder keeps a count and scrambled (salted, hashed) fingerprints of the
-  carried cookies' names and sites, never the names themselves, and it is deleted when the copy stops. Whether the
+  pane. The copy is checked at a later start and tried again until it shows, at most three times; after the last
+  check Varnick stops, and its settings hold a mark that says so. For the check, Varnick writes one cookie of its own, on a made-up
+  host that is not a real site, as the last of the copy, and deletes it when the next start finds it, so it sits in the profile
+  between the copy and its confirmation (and for up to 180 days if its deletion fails). A small file in the profile
+  folder keeps a count, and, only if the engine refuses that cookie, scrambled (salted, hashed) fingerprints of the
+  carried cookies' names and sites, never the names themselves; it is deleted when the copy stops. Whether the
   copy reaches the profile has not been seen working yet. Local storage and IndexedDB are not copied. WebKit's store is
   left where it is, on disk, and Varnick never deletes it. The copy is between two stores on this Mac, never sent anywhere
   (a session reading a Chromium pane can use those logins, as the Chromium pane under

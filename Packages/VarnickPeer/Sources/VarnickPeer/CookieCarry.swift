@@ -131,8 +131,21 @@ public enum CookieCarry {
         return keys
     }
 
-    /// How many starts try the copy before it stops trying.
+    /// How many starts may copy: the first three that find the copy unconfirmed. A copy made at the third is judged at the fourth start, which gives up.
     public static let maxAttempts = 3
+
+    /// Varnick's own check cookie, on a made-up host that can't be a real site: written last in the copy, so finding it at the next start means everything
+    /// before it reached the profile, whatever the user did to their own cookies since. Host-only, path "/", not Secure, no SameSite, 180 days.
+    public static let sentinelKey = Key(name: "varnick-carry-check", domain: "varnick-carry.invalid", path: "/")
+
+    public static func sentinel(now: Date) -> Entry {
+        Entry(key: sentinelKey, value: "1", expires: Int(now.timeIntervalSince1970) + 180 * 86_400, secure: false, httpOnly: false, sameSite: nil)
+    }
+
+    /// The same cookie with an expiry in the past: giving it to Chromium deletes it.
+    public static func sentinelRemoval() -> Entry {
+        Entry(key: sentinelKey, value: "1", expires: 1, secure: false, httpOnly: false, sameSite: nil)
+    }
 
     /// One cookie a copy gave Chromium, kept as a digest (below) so the file names no site, with its expiry in Unix seconds.
     public struct Carried: Codable, Equatable, Sendable {
@@ -144,16 +157,18 @@ public enum CookieCarry {
         }
     }
 
-    /// What the last copy left, in a file in Chromium's profile folder: the starts that tried, how many cookies Chromium took, and the persistent ones as
-    /// salted digests of their keys, which the next start looks for.
+    /// What the last copy left, in a file in Chromium's profile folder: the starts that copied, how many cookies Chromium took, whether the check cookie is in
+    /// the profile, and (only when it isn't, as the fallback) the persistent cookies as salted digests of their keys.
     public struct Record: Codable, Equatable, Sendable {
         public var attempts: Int
         public var accepted: Int
+        public var sentinel: Bool
         public var salt: String
         public var carried: [Carried]
-        public init(attempts: Int, accepted: Int, salt: String, carried: [Carried]) {
+        public init(attempts: Int, accepted: Int, sentinel: Bool = false, salt: String, carried: [Carried]) {
             self.attempts = attempts
             self.accepted = accepted
+            self.sentinel = sentinel
             self.salt = salt
             self.carried = carried
         }
@@ -161,7 +176,9 @@ public enum CookieCarry {
 
     /// What a later start makes of the record, once it has read the digests of the cookies Chromium holds.
     public enum Verdict: Equatable, Sendable {
-        /// Some carried persistent cookies are there: the write reached the profile.
+        /// The check cookie, written last, is there: everything before it reached the profile.
+        case confirmedBySentinel
+        /// The fallback, when the engine wouldn't take the check cookie: some carried persistent cookies are there.
         case confirmed(present: Int, of: Int)
         /// Nothing persistent was carried, or all of it has expired: nothing could be lost.
         case nothingToConfirm
@@ -171,8 +188,12 @@ public enum CookieCarry {
         case giveUp
     }
 
-    /// A removed cookie is copied again only when none of the carried ones is left, so a logout never undoes itself, and only up to `maxAttempts` starts.
-    public static func verdict(for record: Record, chromiumDigests: Set<String>, now: Date) -> Verdict {
+    /// With the check cookie, only its absence retries, so a logout never undoes itself; without, the carried cookies stand in for it. Copies stop at `maxAttempts`.
+    public static func verdict(for record: Record, chromiumDigests: Set<String>, sentinelPresent: Bool, now: Date) -> Verdict {
+        if record.sentinel {
+            if sentinelPresent { return .confirmedBySentinel }
+            return record.attempts >= maxAttempts ? .giveUp : .retry
+        }
         let live = record.carried.filter { Date(timeIntervalSince1970: TimeInterval($0.expires)) > now }
         let present = live.filter { chromiumDigests.contains($0.digest) }.count
         if present > 0 { return .confirmed(present: present, of: live.count) }
