@@ -1,5 +1,7 @@
 # A tab lives on one host, which keeps its layout, panes and mark, and other devices view or take over the tab whole
 
+Amended 2026-11-13: a Claude pane in `tabs` no longer carries work links ([ADR 0020](0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md) is withdrawn); the protocol is unchanged (`docs/agents/where-it-breaks.md`, Problems board (removed)). The text below is as written.
+
 Amends [ADR 0007](0007-varnick-peers-reach-each-other-over-ssh.md) (sessions over SSH, one at a time), [ADR 0009](0009-a-headless-host-runs-varnicks-relay-alone.md) (the headless host's flat records) and [ADR 0011](0011-each-host-serves-the-phone-page-behind-tailscale-serve.md) (the Phone page's sessions), and replaces the last bullet of [ADR 0032](0032-a-tabs-done-mark-belongs-to-its-host-and-completed-lists-tabs.md), which kept another machine's tab to its Claude panes in this Mac's layout and refused to split it. The user works in tabs; a Claude session is one kind of pane in one. The problem and its option are in `docs/problems/work-is-tracked-by-session-not-tab/` (option 03).
 
 The rule is across machines and the protocol encodes it (version 24), so it is hard to undo:

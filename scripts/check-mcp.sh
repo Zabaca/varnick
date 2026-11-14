@@ -92,8 +92,8 @@ if not showing:
     fail("--panel lists no show")
 else:
     views = showing[0]["inputSchema"].get("properties", {}).get("view", {}).get("enum")
-    if views != ["search", "board", "problems", "outline"]:
-        fail("show's view is %s, not search, board, problems and outline" % views)
+    if views != ["search", "board", "outline"]:
+        fail("show's view is %s, not search, board and outline" % views)
 
 # The keys tool: `text` is a string and `keys` a list of strings, and nothing is required (text, keys or both).
 pressing = [t for t in listed(["--panel"], full=True) if t["name"] == "keys"]

@@ -207,7 +207,7 @@ public struct PeerPane: Codable, Equatable, Sendable {
     /// Claude: the agent it runs as, and the conversation when /clear or /resume moved it off the pane's own id.
     public var agent: String?
     public var conversation: String?
-    /// Claude: the pane's turn and how many seconds ago it began, and its work links, as in `PeerSessionStatus`.
+    /// Claude: the pane's turn and how many seconds ago it began, as in `PeerSessionStatus`.
     var turnWord: String?
     public var turnAge: Int?
     public var turn: Turn? {
@@ -221,7 +221,6 @@ public struct PeerPane: Codable, Equatable, Sendable {
         get { failureWord.map { TurnFailure(error: $0) } }
         set { failureWord = newValue?.wire }
     }
-    public var work: PeerWork?
     /// Claude: the pane's standing message, as in `PeerSessionStatus` (protocol 28).
     public var message: PeerMessage?
     /// Claude and terminal: why the pane doesn't run, when the host knows (a terminal on a Mac with Keep sessions running off).
@@ -238,12 +237,12 @@ public struct PeerPane: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, kindWord = "kind", title, folder, running, clients, control, controlName, agent, conversation, turnWord = "turn", turnAge,
-             failureWord = "failure", esc, work, message, note, url, app, port, file, proxy, proxyNote
+             failureWord = "failure", esc, message, note, url, app, port, file, proxy, proxyNote
     }
 
     public init(id: String, kind: PeerPaneKind, title: String, folder: String, running: Bool? = nil, clients: Int? = nil, control: String? = nil,
                 controlName: String? = nil, agent: String? = nil, conversation: String? = nil, turn: Turn? = nil, turnAge: Int? = nil,
-                failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil, message: PeerMessage? = nil, note: String? = nil, url: String? = nil, app: String? = nil,
+                failure: TurnFailure? = nil, esc: Bool? = nil, message: PeerMessage? = nil, note: String? = nil, url: String? = nil, app: String? = nil,
                 port: Int? = nil, file: String? = nil, proxy: String? = nil, proxyNote: String? = nil) {
         self.id = id
         self.kindWord = kind.rawValue
@@ -259,7 +258,6 @@ public struct PeerPane: Codable, Equatable, Sendable {
         self.turnAge = turnAge
         self.failureWord = failure?.wire
         self.esc = esc
-        self.work = work
         self.message = message
         self.note = note
         self.url = url
@@ -413,7 +411,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
         clients = running.isEmpty ? nil : running.compactMap(\.clients).reduce(0, +)
     }
 
-    /// What a device is told: the controller's id only when it is the device, and no work links. The host's own Phone page server
+    /// What a device is told: the controller's id only when it is the device. The host's own Phone page server
     /// (`keepingControllers`, protocol 27) is told a device's answer with the controllers' ids too: it routes a push by who controls a pane.
     public func hiding(from device: String, keepingControllers: Bool = false) -> PeerTab {
         var tab = self
@@ -421,7 +419,6 @@ public struct PeerTab: Codable, Equatable, Sendable {
         tab.panes = tab.panes.map { pane in
             var pane = pane
             if !keepingControllers, !Zmx.sameID(pane.control, device) { pane.control = nil }
-            pane.work = nil
             return pane
         }
         return tab
@@ -440,7 +437,7 @@ public struct PeerTab: Codable, Equatable, Sendable {
             guard pane.kind == .claude, pane.running == true, let session = pane.session else { return nil }
             return PeerOpenSession(session: session, title: pane.title, folder: pane.folder, agent: pane.agent, conversation: pane.conversation,
                                    control: pane.control, controlName: pane.controlName, clients: pane.clients, turn: pane.turn,
-                                   turnAge: pane.turnAge, work: pane.work, tab: tab, tabName: name)
+                                   turnAge: pane.turnAge, tab: tab, tabName: name)
         }
     }
 }

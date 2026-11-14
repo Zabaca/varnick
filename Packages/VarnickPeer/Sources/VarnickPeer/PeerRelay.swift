@@ -387,7 +387,6 @@ public enum PeerRelay {
     private static func hiding(_ status: PeerSessionStatus, from device: String) -> PeerSessionStatus {
         var status = status
         if !Zmx.sameID(status.control, device) { status.control = nil }
-        status.work = nil   // the page doesn't show work links (ADR 0020)
         status.message = nil   // a device gets a message's words in `tabs`, which the page and its worker read; nothing asks `status` for them
         return status
     }

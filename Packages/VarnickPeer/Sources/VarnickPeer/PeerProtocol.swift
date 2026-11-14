@@ -541,19 +541,16 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         get { failureWord.map { TurnFailure(error: $0) } }
         set { failureWord = newValue?.wire }
     }
-    /// The problems and options the pane worked on, from its work files on the host (ADR 0020). Nil when it linked nothing, and from a
-    /// build before protocol 18.
-    public var work: PeerWork?
     /// The pane's standing message from its file on the host (`PaneMessage`, protocol 28). The words go only to the Macs that follow the pane and
     /// the host's own page server, never in a push.
     public var message: PeerMessage?
 
     private enum CodingKeys: String, CodingKey {
-        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, work, message
+        case running, clients, control, controlName, conversation, title, turnWord = "turn", turnAge, failureWord = "failure", esc, message
     }
 
     public init(running: Bool, clients: Int? = nil, control: String? = nil, controlName: String? = nil, conversation: String? = nil,
-                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil, work: PeerWork? = nil,
+                title: String? = nil, turn: Turn? = nil, turnAge: Int? = nil, failure: TurnFailure? = nil, esc: Bool? = nil,
                 message: PeerMessage? = nil) {
         self.running = running
         self.clients = clients
@@ -565,7 +562,6 @@ public struct PeerSessionStatus: Codable, Equatable, Sendable {
         self.turnAge = turnAge
         self.failureWord = failure?.wire
         self.esc = esc
-        self.work = work
         self.message = message
     }
 
@@ -601,20 +597,17 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         set { turnWord = newValue?.rawValue }
     }
 
-    /// The pane's work links, as in `PeerSessionStatus`.
-    public var work: PeerWork?
-
     /// The tab the host keeps the session in (ADR 0032): its id, and its name (⌘⇧R) when it has one. A headless host's record is a tab
     /// under its own id unless a `resume` named another. Nil from a build before protocol 21.
     public var tab: String?
     public var tabName: String?
 
     private enum CodingKeys: String, CodingKey {
-        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, work, tab, tabName
+        case session, title, folder, agent, conversation, control, controlName, clients, turnWord = "turn", turnAge, tab, tabName
     }
 
     public init(session: String, title: String, folder: String, agent: String? = nil, conversation: String? = nil, control: String? = nil,
-                controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil, work: PeerWork? = nil,
+                controlName: String? = nil, clients: Int? = nil, turn: Turn? = nil, turnAge: Int? = nil,
                 tab: String? = nil, tabName: String? = nil) {
         self.session = session
         self.title = title
@@ -626,7 +619,6 @@ public struct PeerOpenSession: Codable, Equatable, Sendable {
         self.clients = clients
         self.turnWord = turn?.rawValue
         self.turnAge = turnAge
-        self.work = work
         self.tab = tab
         self.tabName = tabName
     }

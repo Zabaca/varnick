@@ -65,11 +65,10 @@ extension BackgroundWork {
 
 /// The session board (ADR 0010): this Mac's Claude panes and the paired Macs' open sessions in three columns
 /// by turn, and the sessions marked done. Opened by ⌘⇧B and `!kanban` through `LauncherModel.showBoard`, which shows it in place of the panel's content like Settings.
-/// Beside Sessions it has a Problems tab (`ProblemsBoard`, `!problems`) while the Problems board switch (Settings › Experimental) is on, and a
-/// Runs tab (`RunsBoard`) always. ⌘⇧B opens whichever was shown last.
+/// Beside Sessions it has a Runs tab (`RunsBoard`). ⌘⇧B opens whichever was shown last.
 @MainActor
 final class SessionBoard: ObservableObject {
-    enum Tab { case sessions, problems, runs }
+    enum Tab: CaseIterable { case sessions, runs }
 
     enum Column: CaseIterable, Identifiable {
         case running, stopped, completed
@@ -114,11 +113,7 @@ final class SessionBoard: ObservableObject {
             var background = BackgroundWork()
             /// What the pane's card says of it (Controlled on…, Lost connection).
             var note: String?
-            /// The work links (ADR 0020) the pane here keeps now and has logged; nil for a session with no pane here or none written yet.
-            var work: PaneWork?
-            /// The links an ended or Completed session's saved record keeps.
-            var archived: [WorkLink] = []
-            /// The links came from a paired Mac or the headless host (`WorkSession.foreign`).
+            /// The session comes from a paired Mac or the headless host.
             var foreign = false
 
             /// What the turn file says; nil when it isn't known.
@@ -129,15 +124,6 @@ final class SessionBoard: ObservableObject {
             var isRunning: Bool { turn?.isRunning == true }
 
             var mark: String? { turn?.mark }
-
-            /// Its claude is up on this Mac: a pane that runs here, not an ended or Completed one, a restored pane that resumes when opened,
-            /// or a paired Mac's session. Only such a session's records make an option Building.
-            var isLive: Bool {
-                switch standing {
-                case .turn, .unknown: true
-                case .resumes, .done, .ended: false
-                }
-            }
 
             /// How soon the user is needed: waiting on them mid-turn, working, background work, waiting for the next prompt, then a turn
             /// not known, a pane that resumes when opened, and the closed. A tab's card sits in the column of its lowest (`Card.lead`).
@@ -211,20 +197,6 @@ final class SessionBoard: ObservableObject {
             if case .done = closed { .completed } else { inRunningColumn ? .running : .stopped }
         }
 
-        /// Its claude is up on this Mac: a session of it is (`Line.isLive`). Only such a card's records make an option Building.
-        var isLive: Bool { closed == nil && lines.contains(where: \.isLive) }
-
-        /// This card's sessions as the Problems tab sees them: one each (a chip is a session's), in the column its own turn gives, or in
-        /// Completed on a Completed card.
-        var workSessions: [WorkSession] {
-            lines.map { line in
-                let live = closed == nil && line.isLive
-                let own: Column = column == .completed ? .completed : line.isRunning ? .running : .stopped
-                return WorkSession(id: line.id, title: line.title, column: own, isOpen: live, live: live ? line.work?.live ?? [] : [],
-                                   links: line.work?.history ?? line.archived, foreign: line.foreign)
-            }
-        }
-
         /// What the card's most urgent session says, or the mark of the turn it waits on.
         var mark: String? { closed == nil ? lead.mark : nil }
 
@@ -233,18 +205,6 @@ final class SessionBoard: ObservableObject {
 
         /// Whether any session of the tab comes from a paired Mac or the headless host.
         var foreign: Bool { lines.contains(where: \.foreign) }
-
-        /// The problem or option the tab works on, `slug/NN` or `slug`: the first its sessions, most urgent first, name, as its own record
-        /// now, else the last link it logged or kept.
-        var workText: String? {
-            for session in workSessions.sorted(by: { a, b in
-                (lines.first { $0.id == a.id }?.urgency ?? 9) < (lines.first { $0.id == b.id }?.urgency ?? 9)
-            }) {
-                guard let link = session.live.first(where: { $0.agentID == nil })?.link ?? session.links.last else { continue }
-                return link.number.map { "\(link.slug)/\(String(format: "%02d", $0))" } ?? link.slug
-            }
-            return nil
-        }
 
         /// The most urgent session's turn text; a Completed or ended card's own.
         func turnText(at now: Date) -> String {
@@ -280,30 +240,11 @@ final class SessionBoard: ObservableObject {
     /// a second press does it.
     @Published private(set) var confirming: Question?
     @Published private(set) var tab = Tab.sessions
-    let problems = ProblemsBoard()
     /// The Runs tab: every run of every automation, newest first.
     let runs = RunsBoard()
-    /// Turning the switch off while Problems shows (Settings opens over the board) puts the board back on Sessions. The publisher sends
-    /// before the value is stored, so this reads the value it is sent.
-    private var problemsSwitch: AnyCancellable?
-
-    init() {
-        problemsSwitch = Settings.shared.$problemsBoard.removeDuplicates().sink { [weak self] on in
-            if !on { self?.show(.sessions) }
-        }
-    }
-
-    /// Whether the board has a Problems tab, and the key that switches to it.
-    var hasProblems: Bool { Settings.shared.problemsBoard }
-    /// The tabs there are, in the order Tab goes through them.
-    var availableTabs: [Tab] { [.sessions] + (hasProblems ? [.problems] : []) + [.runs] }
 
     weak var model: LauncherModel? {
-        didSet {
-            problems.model = model
-            runs.model = model
-            problems.openSession = { [weak self] in self?.openSession($0) }
-        }
+        didSet { runs.model = model }
     }
     /// The board is on screen (between `appear` and `close`).
     private var appeared = false
@@ -314,18 +255,14 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Showing
 
-    /// The board is on screen (again): either tab reads every pane's turn and work log now and once a second after, and asks zmx once which
-    /// restored panes still have a session. Sessions also asks the paired Macs and highlights the pane the user was in; Problems reads its
-    /// own files (`ProblemsBoard.start`) and takes its chips and live links from the cards.
+    /// The board is on screen (again): either tab reads every pane's turn now and once a second after, and asks zmx once which
+    /// restored panes still have a session. Sessions also asks the paired Macs and highlights the pane the user was in.
     func appear() {
         appeared = true
         startTicker()
         model?.checkZmx()
         switch tab {
         case .sessions: startSessions()
-        case .problems:
-            refresh()
-            problems.start()
         case .runs:
             refresh()
         }
@@ -341,8 +278,7 @@ final class SessionBoard: ObservableObject {
         }
     }
 
-    /// The cards are read once a second while the board shows, on either tab: Problems takes its chips and live links from them. Only
-    /// Sessions asks the paired Macs.
+    /// The cards are read once a second while the board shows, on either tab. Only Sessions asks the paired Macs.
     private func startTicker() {
         guard ticker == nil else { return }
         ticker = Task { [weak self] in
@@ -371,29 +307,22 @@ final class SessionBoard: ObservableObject {
         return panel.isVisible && panel.isKeyWindow
     }
 
-    /// Tab, ⇧Tab and `!problems`. Problems reads its files only while it shows; the cards keep their tick on both tabs, and returning to
-    /// Sessions asks the paired Macs again.
-    func show(_ requested: Tab) {
-        let next = requested == .problems && !hasProblems ? Tab.sessions : requested
+    /// Tab and ⇧Tab. The cards keep their tick on both tabs, and returning to Sessions asks the paired Macs again.
+    func show(_ next: Tab) {
         guard next != tab else { return }
         tab = next
         confirming = nil
         guard appeared else { return }
         switch next {
-        case .problems:
-            problems.start()
         case .runs:
-            problems.stop()
             refresh()
         case .sessions:
-            problems.stop()
             startSessions()
         }
     }
 
     func close() {
         appeared = false
-        problems.reset()
         confirming = nil
         stopTicker()
         selection = nil
@@ -402,7 +331,7 @@ final class SessionBoard: ObservableObject {
     // MARK: Cards
 
     /// One card per tab with a Claude pane here, then each paired Mac's tabs that no tab here shows, then the ended tabs, then the
-    /// Completed ones. A tab of a Mac no longer paired is hidden. The Problems tab gets the cards' sessions' work links after each change.
+    /// Completed ones. A tab of a Mac no longer paired is hidden.
     func refresh() {
         guard let model else { return }
         var next: [Card] = []
@@ -428,10 +357,7 @@ final class SessionBoard: ObservableObject {
         next = next.filter { $0.column != .completed } + completed
         if let confirming, !next.contains(where: { $0.id == confirming.id && $0.asksBeforeDone }) { self.confirming = nil }
         let previous = cards
-        if next != cards {
-            cards = next
-            problems.sessionsChanged(next.flatMap(\.workSessions))
-        }
+        if next != cards { cards = next }
         if let selection, !next.contains(where: { $0.id == selection }) {
             self.selection = Self.neighbour(of: selection, in: previous, surviving: next)
         }
@@ -468,7 +394,6 @@ final class SessionBoard: ObservableObject {
 
     private func line(for pane: ClaudeSession) -> Card.Line {
         pane.checkTurn()
-        pane.checkWork()
         let standing: Card.Standing
         if !pane.started, !pane.isOnPeer, model?.hasZmxSession(pane) == false {
             standing = .resumes   // whatever its file says: a session killed mid-turn leaves working behind
@@ -478,7 +403,7 @@ final class SessionBoard: ObservableObject {
             standing = .unknown(lastUsed: pane.record.lastUsed)
         }
         return Card.Line(id: pane.id, title: pane.label, standing: standing, background: pane.turn?.background ?? BackgroundWork(),
-                         note: pane.awayNote, work: pane.work, foreign: pane.isOnPeer)
+                         note: pane.awayNote, foreign: pane.isOnPeer)
     }
 
     /// A paired Mac's open tab that no tab here shows. A session's turn is the Mac's reply, begun that many seconds before the reply
@@ -491,7 +416,7 @@ final class SessionBoard: ObservableObject {
                 .turn($0, since: Turn.began(ageSeconds: row.info.turnAge, before: answered))
             } ?? .unknown(lastUsed: nil)
             return Card.Line(id: row.paneID ?? tab.id, title: row.info.title, standing: standing, note: row.controlNote,
-                             work: row.info.work?.paneWork, foreign: true)
+                             foreign: true)
         }
         return Card(id: tab.id,
                     title: tab.name ?? first.info.title,
@@ -512,7 +437,7 @@ final class SessionBoard: ObservableObject {
                     hostName: titled.host.map { PeerManager.shared.name(of: $0) },
                     folder: titled.folderName,
                     lines: record.claudeRecords.map {
-                        Card.Line(id: $0.id, title: $0.listTitle, standing: closed, archived: $0.workLinks ?? [], foreign: $0.host != nil)
+                        Card.Line(id: $0.id, title: $0.listTitle, standing: closed, foreign: $0.host != nil)
                     },
                     closed: closed,
                     note: note)
@@ -520,20 +445,18 @@ final class SessionBoard: ObservableObject {
 
     // MARK: Keys
 
-    /// The keys the board takes: Tab and ⇧Tab switch tabs (with the Problems tab); the Problems tab takes the rest while it shows (`ProblemsBoard.key`). On
+    /// The keys the board takes: Tab and ⇧Tab switch tabs; the Runs tab takes the rest while it shows (`RunsBoard.key`). On
     /// Sessions, ←/→ column, ↑/↓ card, ↩ opens, D, the End session key and the Mark tab done key mark done, R and the
     /// Restart session key restart, esc cancels a question and otherwise closes. A modified ↩ is taken and does nothing; anything else goes on.
     func key(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(KeyCombo.relevant)
         if Int(event.keyCode) == kVK_Tab, flags.isSubset(of: .shift) {
-            // With one tab there is nothing to switch to, and Tab is still taken, as it was.
-            let order = availableTabs
-            if order.count > 1, let at = order.firstIndex(of: tab) {
+            let order = Tab.allCases
+            if let at = order.firstIndex(of: tab) {
                 show(order[(at + (flags.contains(.shift) ? order.count - 1 : 1)) % order.count])
             }
             return true
         }
-        if tab == .problems { return problems.key(event) }
         if tab == .runs { return runs.key(event) }
         let plain = flags.isEmpty
         switch Int(event.keyCode) {
@@ -563,17 +486,11 @@ final class SessionBoard: ObservableObject {
     /// session; allowed to show a pane here, a stopped one included (it starts in its own tab, as with `show pane:`; where-it-breaks).
     func returnRefusal() -> String? {
         if tab == .runs { return "↩ on a run opens it, which may resume a session" }
-        let card = tab == .problems ? problems.chipSelection.flatMap(card(holding:)) : selection.flatMap { id in cards.first { $0.id == id } }
-        guard let card else { return nil }
+        guard let card = selection.flatMap({ id in cards.first { $0.id == id } }) else { return nil }
         if card.column == .completed || card.isEnded || card.hasNoPane {
             return "↩ on this card would reopen a tab or open a paired Mac's, which starts sessions"
         }
         return nil
-    }
-
-    /// The card that lists this session.
-    private func card(holding session: UUID) -> Card? {
-        cards.first { $0.lines.contains { $0.id == session } }
     }
 
     /// ↩ on a card: the tab, with the pane of its most urgent session focused (`pane` names another). A Completed or ended card reopens
@@ -590,12 +507,6 @@ final class SessionBoard: ObservableObject {
         } else {
             model?.showTab(id, focusing: pane ?? card.lead.id)
         }
-    }
-
-    /// A chip of the Problems tab, which is a session's: its card's tab, with that session's pane focused.
-    func openSession(_ session: UUID) {
-        guard let card = card(holding: session) else { return }
-        open(card.id, focusing: session)
     }
 
     func doneSelected() {
@@ -662,7 +573,7 @@ final class SessionBoard: ObservableObject {
         moved(selection, lists: Column.allCases.map { column in cards.filter { $0.column == column }.map(\.id) }, direction)
     }
 
-    /// `moved` over each column's ids, left to right; the Problems tab moves the same way.
+    /// `moved` over each column's ids, left to right.
     static func moved<ID: Equatable>(_ selection: ID?, lists: [[ID]], _ direction: Direction) -> ID? {
         guard let selection, let at = lists.indices.lazy.compactMap({ c in
             lists[c].firstIndex { $0 == selection }.map { (column: c, row: $0) }
@@ -700,16 +611,15 @@ struct SessionBoardView: View {
             HStack(spacing: 14) {
                 Image(systemName: "rectangle.split.3x1").foregroundStyle(.secondary)
                 tabButton("Sessions", .sessions)
-                if board.hasProblems { tabButton("Problems", .problems) }
                 tabButton("Runs", .runs)
                 Spacer()
-                OpenHint(problems: board.problems, onProblems: board.tab == .problems)
+                KeyHint(label: "Open", keys: ["↩"])
                 if board.tab == .sessions {
                     KeyHint(label: "Restart", keys: ["R"])
                     ShortcutHint(label: "", action: .restartSession)
                     ShortcutHint(label: "Done", action: .endPane)
                 }
-                if board.availableTabs.count > 1 { KeyHint(label: "Switch", keys: ["⇥"]) }
+                KeyHint(label: "Switch", keys: ["⇥"])
                 Button(action: close) { KeyHint(label: "Close", keys: ["esc"]) }
                     .buttonStyle(.plain)
             }
@@ -731,8 +641,6 @@ struct SessionBoardView: View {
                     .padding(6)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
-            case .problems:
-                ProblemsBoardView(board: board.problems)
             case .runs:
                 RunsBoardView(board: board.runs)
             }
@@ -747,16 +655,6 @@ struct SessionBoardView: View {
                 .foregroundStyle(on ? Color.primary : Color.secondary)
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// ↩'s hint: Open, or Open session while a chip on the Problems tab is selected.
-private struct OpenHint: View {
-    @ObservedObject var problems: ProblemsBoard
-    let onProblems: Bool
-
-    var body: some View {
-        KeyHint(label: onProblems && problems.chipSelection != nil ? "Open session" : "Open", keys: ["↩"])
     }
 }
 

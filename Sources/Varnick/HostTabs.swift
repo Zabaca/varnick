@@ -20,8 +20,6 @@ extension LauncherModel {
         case .claude:
             record.agent = pane.agent
             record.conversation = pane.conversation
-            // The links it was listed with, so the ended card it becomes keeps them.
-            record.workLinks = pane.work?.paneWork.history
         case .terminal: record.shell = true
         case .web: record.url = pane.url ?? ""
         case .app:

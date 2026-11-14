@@ -77,7 +77,7 @@ Mac** or leave it off (it is off by default): then none of this happens.
   the window's visible text, not only the text near its controls: a message list's subjects and senders, an open
   mail's body, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. With Varnick's
   panel open and in front, it is read first like any window, so its session titles, folders, projects, agents,
-  Macs' names, page titles and sites, and problem titles go too. A terminal pane's text is not among them. The
+  Macs' names, page titles and sites go too. A terminal pane's text is not among them. The
   elements never hold what is typed in a field, and a password field is not read.
 - **Short lines read from a picture.** If the elements don't have the thing, or the window is a Chrome page, and Screen
   Recording is granted, a picture of that window alone is read for text on this Mac, and its short lines go too: at most 6 words and
@@ -299,8 +299,7 @@ in its transcript on this Mac: whether the panel is visible, key and pinned; wha
 the tab and panes in it (the session board's selected card, Settings or the Restart Varnick card when one is up);
 and which of those has the keyboard. They can also read **the session board** (`board_read`): for every session
 it lists, on this Mac or a paired one, the title (which can be a prompt's first line or a name you gave it), the
-folder, the Mac, the turn and how long, any background work, the card's note, the problem or option it is linked
-to, and for the Problems tab the problems' titles, projects and the sessions on them. Before it answers, the read asks each
+folder, the Mac, the turn and how long, any background work and the card's note. Before it answers, the read asks each
 paired Mac and headless host what is open on it (the same request Varnick's own panel makes, over the same link), unless
 they were asked in the last few seconds, and waits up to 5 seconds; a machine that does not answer in time is named in the reply. They can also read **the text on the screen of any terminal pane**
 (`pane_read`): another session's, a shell's, or their own. That is whatever the terminal shows at that moment, as
@@ -329,8 +328,8 @@ your undo (⌘Z), and an edit to the bullet you are typing in goes in as if type
 of lines, never a bullet's text. With Settings › Experimental › Outline off, `outline_act` is refused, even for an edit already
 under way.
 
-A session can also change what the panel shows (`show`): the search, the board, the Problems tab, the Outline, a pane's tab, or a
-`!` command (`!transcript`, `!kanban`, `!problems`, `!outline`), the same changes your keys make. It never shows, hides or pins the
+A session can also change what the panel shows (`show`): the search, the board, the Outline, a pane's tab, or a
+`!` command (`!transcript`, `!kanban`, `!outline`), the same changes your keys make. It never shows, hides or pins the
 panel, never takes the keyboard from the app you are in, never turns on Listening (`!listen` is refused), and is
 refused while Settings or a dialog of Varnick's shows and for two seconds after a key you pressed in the panel. Showing the
 Outline (`view: outline` or `!outline`) is refused while the Outline switch in Settings › Experimental is off.

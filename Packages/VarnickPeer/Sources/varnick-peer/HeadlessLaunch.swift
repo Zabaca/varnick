@@ -46,7 +46,6 @@ extension HeadlessPeerHost {
                 try FileManager.default.createDirectory(at: PaneFolder.url(for: uuid), withIntermediateDirectories: true)
                 try? FileManager.default.removeItem(at: PaneFolder.sessionFile(for: uuid))
                 PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: uuid)
-                PaneFolder.clearSubagentWork(for: uuid)
                 PaneFolder.clearMessage(for: uuid)
                 // Nothing sent to an earlier run of the pane reaches this one, and the old run's channel mark goes.
                 MessageQueue.clear(for: uuid)
@@ -71,7 +70,7 @@ extension HeadlessPeerHost {
             let agent = record.agent.flatMap { wanted in Agent.available(in: folder).contains { $0.name == wanted } ? wanted : nil }
             shellArguments = ClaudeCommand.shellArguments(ClaudeCommand.arguments(
                 skipPermissions: skips, agent: agent, resuming: conversation, sessionID: startID,
-                prompt: prompt, problems: problemsBoard,
+                prompt: prompt,
                 mcpConfig: NotifyTool.relayConfiguration(command: relay, pane: uuid, send: receivesMessages),
                 dontAsk: record.dontAsk == true, allowedTools: record.allowedTools ?? [],
                 appendSystemPrompt: openerNote(for: record, startingOn: conversation ?? freshUnder ?? record.id)?.paragraph(messages: receivesMessages),

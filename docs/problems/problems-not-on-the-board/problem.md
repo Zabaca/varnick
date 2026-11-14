@@ -7,6 +7,8 @@ evidence: The user's decisions of 2026-10-08, relayed by the coordinator. The pr
 status: closed
 ---
 
+Note, 2026-11-13: the Problems board this problem asked for was built and then removed at the user's request (experimental; it may return): see [ADR 0020](../../adr/0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md), withdrawn. The problem stays closed, since the user chose the removal, not another way to show where each problem stands; `docs/agents/where-it-breaks.md`, Problems board (removed), says what is left.
+
 ## What the user wants
 
 A Problems view on the session board that says where every problem stands, and which sessions work on each, from records that are made on purpose rather than read back from transcripts. Decided on 2026-10-08, for every option below:

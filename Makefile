@@ -97,7 +97,7 @@ BUILD_STAMP := .build/release/build-stamp
 # The last good binary, kept while a build runs so a failed one can put it back.
 GOOD_COPY := .build/release/Varnick.good
 
-.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-work check-open check-messages apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit zebkit-codesign text-helper
+.PHONY: build build-steps cutover-check check-apps check-mcp check-slots check-runs check-voice check-open check-messages apps-catalog cutover-confirm run stop install uninstall skill-link skill-unlink clean phone-page build-stamp sign-varnick sign-zmx sign-bun sign-zebkit zebkit-codesign text-helper
 
 # The metallib goes beside the binary in .build/release (the resource folder, which a bundle's Contents/Resources replaces; see
 # ResourceFolder). After swift build, which creates .build/release. Signing Varnick binds the Info.plist the linker embeds (Package.swift):
@@ -216,13 +216,6 @@ check-runs:
 # Varnick, no zmx, no claude and no network; its one file, a transcript, is written in a scratch folder. Built the same way as check-slots.
 check-voice:
 	@swift run --package-path Packages/VarnickPeer voice-check
-
-# The work-link hooks (`WorkHooks`, Packages/VarnickPeer; ADR 0020) and the `/work` script's two commands (.claude/skills/work/work.sh), run as shell
-# scripts in each of sh, bash, zsh and dash found here, on scratch pane folders and a scratch repository: a subagent's record held at its stop and given
-# back at its start, the marker, the clearing, and the confirmation's success and failure. No Varnick, no claude and no network. Built the same way as
-# check-slots; run from the checkout's root, where it finds the script.
-check-work:
-	@swift run --package-path Packages/VarnickPeer work-check $(CURDIR)/.claude/skills/work/work.sh
 
 # The pure parts of `tab_open` (`TabOpen`, `ClaudeSessionFile`, `OpenerNote`, Packages/VarnickPeer; option 01 of sessions-cant-start-sessions-in-other-projects)
 # and of the note option 04 gives the session it opens: which project a word means, a session's name picked out of sample session files by id (in a scratch

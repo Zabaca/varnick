@@ -360,13 +360,13 @@ expect("skip warning: unreadable", ClaudeTrust.skipPermissionsAccepted(file: con
 
 // MARK: The hooks
 
-let settings = ClaudeCommand.hookSettings(problems: true, voice: true)
-let plain = ClaudeCommand.hookSettings(problems: true)
+let settings = ClaudeCommand.hookSettings(voice: true)
+let plain = ClaudeCommand.hookSettings()
 expect("hooks: the voice entries are only in the voice session's settings", settings.contains(".varnick-voice-taken") && settings.contains(".varnick-voice-web")
        && !plain.contains(".varnick-voice"))
 expect("hooks: the web marker has its matcher", settings.contains("^(WebSearch|WebFetch)$") || settings.contains(#"^(WebSearch|WebFetch)$"#))
-expect("hooks: nothing changes for an ordinary session", ClaudeCommand.hookSettings(problems: false) == ClaudeCommand.hookSettings(problems: false, voice: false))
-expect("hooks: the work-link PreToolUse entry stays beside the web marker", settings.contains("PreToolUse") && settings.components(separatedBy: "\"PreToolUse\"").count == 2)
+expect("hooks: nothing changes for an ordinary session", ClaudeCommand.hookSettings() == ClaudeCommand.hookSettings(voice: false))
+expect("hooks: the web marker goes in the one PreToolUse list", settings.contains("PreToolUse") && settings.components(separatedBy: "\"PreToolUse\"").count == 2)
 
 // MARK: Voice mode on the phone (option 05 of `phone-page-is-only-a-browser-tab`, protocol 30)
 

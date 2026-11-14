@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or update Varnick's headless relay on a Linux host, from the Mac you build on.
 #
-#   scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--problems | --no-problems] [--automations | --no-automations] [--commit REV] [--uninstall]
+#   scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--automations | --no-automations] [--commit REV] [--uninstall]
 #
 #   --name NAME    the host's name in the Macs' lists, written to config.json only when there is none
 #                  (default: its hostname with hyphens as spaces, so linux-box is "linux box")
@@ -10,10 +10,6 @@
 #                  publishes 8444 to it with `tailscale serve`. Without --page, a host that has the unit keeps it, gets
 #                  its files updated and its port kept published
 #   --no-page      unpublishes 8444 and removes the unit, its files and its socket
-#   --problems     the Claude sessions this host starts get the work-link hooks (ADR 0020) the Problems board reads: the host's
-#                  own switch, which a Mac's is Settings > Experimental. Writes ~/.varnick/problems
-#   --no-problems  removes it. Neither flag keeps what the host has; a host that never had it runs without the hooks, and sessions
-#                  already running keep the hooks they started with
 #   --automations  the host fires the automations a Mac saved on it (option 01 of prompts-cant-run-on-a-schedule): a systemd user timer that starts a
 #                  `oneshot` service, `varnick-peer tick`, once a minute, with KillMode=process so a run's session outlives its tick. Linger must be on
 #                  for it to fire with nobody logged in (it warns when it is off). Once, by hand: later upgrades keep what is there
@@ -23,7 +19,7 @@
 #                  protocol and Mac command the verify uses all come from that commit (a full or short hash, or a ref such
 #                  as origin/main), and the working tree's changes are not looked at. The near half, this script, is the
 #                  working tree's. It is how a Mac upgrades a headless host to origin/main from any branch (`HeadlessUpgrade`)
-#   --uninstall    removes the relay, its link and its source, the page, the automations' timer and the problems file. KEEPS state/, config.json, zmx and any
+#   --uninstall    removes the relay, its link and its source, the page, the automations' timer. KEEPS state/, config.json, zmx and any
 #                  running session
 #
 # What it publishes and unpublishes, and when it refuses, is ADR 0011's note of 2026-10-06 (so is PAGE_PUBLISH_PORT).
@@ -60,7 +56,7 @@ report_unpublish() {
 PUBLISH_PORT=${PAGE_PUBLISH_PORT:-8444}
 case "$PUBLISH_PORT" in ''|*[!0-9]*) die "PAGE_PUBLISH_PORT must be a port number (got '$PUBLISH_PORT')" ;; esac
 
-TARGET=""; NAME=""; ACTION=install; PAGE=auto; PROBLEMS=auto; AUTOMATIONS=auto; REV=""
+TARGET=""; NAME=""; ACTION=install; PAGE=auto; AUTOMATIONS=auto; REV=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) [ $# -ge 2 ] || die "--name needs a value"; NAME=$2; shift 2 ;;
@@ -68,16 +64,14 @@ while [ $# -gt 0 ]; do
     --uninstall) ACTION=uninstall; shift ;;
     --page) [ "$PAGE" != remove ] || die "--page and --no-page together"; PAGE=on; shift ;;
     --no-page) [ "$PAGE" != on ] || die "--page and --no-page together"; PAGE=remove; shift ;;
-    --problems) [ "$PROBLEMS" != off ] || die "--problems and --no-problems together"; PROBLEMS=on; shift ;;
-    --no-problems) [ "$PROBLEMS" != on ] || die "--problems and --no-problems together"; PROBLEMS=off; shift ;;
     --automations) [ "$AUTOMATIONS" != off ] || die "--automations and --no-automations together"; AUTOMATIONS=on; shift ;;
     --no-automations) [ "$AUTOMATIONS" != on ] || die "--automations and --no-automations together"; AUTOMATIONS=off; shift ;;
-    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$TARGET" ] || die "one target only"; TARGET=$1; shift ;;
   esac
 done
-[ -n "$TARGET" ] || die "usage: scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--problems | --no-problems] [--automations | --no-automations] [--commit REV] [--uninstall]"
+[ -n "$TARGET" ] || die "usage: scripts/install-peer.sh <user@host> [--name NAME] [--page | --no-page] [--automations | --no-automations] [--commit REV] [--uninstall]"
 case "$TARGET" in *[!A-Za-z0-9._@-]*) die "the target must be user@host, with letters, digits and . _ - only (got '$TARGET')" ;; esac
 # The name goes into a JSON string on the far side and, in single quotes, onto its command line.
 case "$NAME" in *[!A-Za-z0-9\ ._-]*) die "--name takes letters, digits, spaces and . _ - only (got '$NAME')" ;; esac
@@ -86,7 +80,6 @@ case "$NAME" in *[!A-Za-z0-9\ ._-]*) die "--name takes letters, digits, spaces a
 case "$REV" in -*|*[!A-Za-z0-9._/~^-]*) die "--commit takes a commit hash or a ref (got '$REV')" ;; esac
 [ -z "$REV" ] || [ "$ACTION" = install ] || die "--uninstall takes no --commit"
 [ "$ACTION" = install ] || [ "$PAGE" = auto ] || die "--uninstall takes the page away too: leave out --page and --no-page"
-[ "$ACTION" = install ] || [ "$PROBLEMS" = auto ] || die "--uninstall takes the problems file away too: leave out --problems and --no-problems"
 [ "$ACTION" = install ] || [ "$AUTOMATIONS" = auto ] || die "--uninstall takes the automations' timer away too: leave out --automations and --no-automations"
 if [ "$ACTION" = uninstall ]; then
   log "uninstalling the relay from $TARGET"
@@ -127,10 +120,6 @@ RUN=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 if ! grep -Eq '^# supports:.* RUN( |$)' "$REMOTE_SCRIPT" || ! grep -Eq '^# supports:.* LOCK( |$)' "$REMOTE_SCRIPT"; then
   RUN=""
   warn "$COMMIT's far half predates the # supports: RUN LOCK line: using the shared incoming.tar.gz names, and it may not guard against another install at once"
-fi
-# The problems file is the far half's to write, and one from before PROBLEMS would ignore the word and say nothing: stop before shipping.
-if [ "$PROBLEMS" != auto ] && ! grep -Eq '^# supports:.* PROBLEMS( |$)' "$REMOTE_SCRIPT"; then
-  die "$COMMIT's far half predates the # supports: PROBLEMS word, so --problems and --no-problems would be ignored: ship a later commit"
 fi
 # The timer is the far half's to install, and one from before AUTOMATIONS would ignore the word and say nothing: stop before shipping.
 if [ "$AUTOMATIONS" != auto ] && ! grep -Eq '^# supports:.* AUTOMATIONS( |$)' "$REMOTE_SCRIPT"; then
@@ -173,7 +162,7 @@ fi
 
 # 2 to 9, on the host: Swift, libstdc++, build, check, swap, zmx, config, identity, build and the page.
 log "building and installing on $TARGET (a first build takes a few minutes)"
-OUT=$("${SSH[@]}" "$TARGET" "env ACTION=install COMMIT=$COMMIT RUN=$RUN NAME='$NAME' PAGE=$PAGE PROBLEMS=$PROBLEMS AUTOMATIONS=$AUTOMATIONS PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
+OUT=$("${SSH[@]}" "$TARGET" "env ACTION=install COMMIT=$COMMIT RUN=$RUN NAME='$NAME' PAGE=$PAGE AUTOMATIONS=$AUTOMATIONS PAGE_PUBLISH_PORT=$PUBLISH_PORT bash -s" <"$REMOTE_SCRIPT" | tee /dev/stderr) || true
 
 # Short-lived, removed at the rename's Cleanup (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md): the far half refuses where ~/.launchy exists.
 [ "$(printf '%s\n' "$OUT" | marker OLDROOT)" != present ] || die "$TARGET still has ~/.launchy, so it still runs Launchy's relay: that is the user's step, the headless host's cutover (docs/problems/name-taken-by-another-launcher/options/01-rename-on-one-branch-and-let-varnick-move-its-own-data.md). Nothing was changed there. An agent must stop here and report this to the user"
@@ -197,12 +186,6 @@ ID=$(printf '%s\n' "$OUT" | marker ID)
 if [ "$(printf '%s\n' "$OUT" | marker CONFIG)" = kept ] && [ -n "$NAME" ]; then
   warn "config.json already exists, so --name was ignored: edit ~/.varnick/config.json there"
 fi
-
-# The problems file, as the far half left it: what was asked, or what the host had (on, off, or unknown from an older far half).
-PROBLEMS_STATE=$(printf '%s\n' "$OUT" | marker PROBLEMS)
-# A far half from before PROBLEMS says nothing, which only matters when a flag was given (refused above, before shipping).
-[ -n "$PROBLEMS_STATE" ] || PROBLEMS_STATE=unknown
-[ "$PROBLEMS" = auto ] || [ "$PROBLEMS" = "$PROBLEMS_STATE" ] || die "the problems file on $TARGET is '$PROBLEMS_STATE', not '$PROBLEMS' (see above)"
 
 # The automations' timer, as the far half left it: what was asked, or what the host had (on, off, or unknown from an older far half). A timer that
 # isn't active, or whose service would end a run with its tick, is a failure: nothing would fire, or every run would die at its first tick.
@@ -266,7 +249,6 @@ printf '  binary:     %s bytes, static %s, runs %s\n' "$(printf '%s\n' "$OUT" | 
 printf '  zmx:        %s\n' "$(printf '%s\n' "$OUT" | marker ZMX)"
 printf '  id:         %s\n' "$ID"
 printf '  config:     %s\n' "$(printf '%s\n' "$OUT" | marker CONFIG)"
-printf '  problems:   %s (work-link hooks in new sessions)\n' "$PROBLEMS_STATE"
 printf '  automations: %s (a timer that fires what a Mac saved on this host, once a minute)\n' "$AUTOMATIONS_STATE"
 echo "Add it on each Mac: Settings > Peers > Add $TARGET"
 
