@@ -387,14 +387,14 @@ caret keeps its place in your text, your next key adds to the new text, and ⌘Z
 method is composing there, it waits for the composition to end.
 
 Two more tools, **opening panes**, have no switch either, and the voice session lacks them. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
-(with a first message if the session gives one), a custom app such as Scratch, a page or a file beside the session's own pane,
+(with a first message if the session gives one), a custom app such as Scratch, a page, a Chromium page (the `chromium` kind, only while Zebkit.framework is beside Varnick, which the session can then drive; the page is made once the pane is on screen, so the reply tells it to read the pane again shortly; refused without the framework and in a tab another Mac or the phone controls) or a file beside the session's own pane,
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude
 subscription, shows on the board and raises notices like any pane. **It follows your Skip permissions setting, but never skips
 permission checks when the session that opened it was started without skipping them.** `pane_close` closes a pane that session
 opened, as ⌘W would, until you first click, type in or focus it: after that it is yours. Both work in a tab another Mac or the
-phone controls, too: the pane is added for that machine and shows there within about 5 seconds, and `pane_close` closes a pane there too, but not a Claude
+phone controls, too (a Chromium page is refused there): the pane is added for that machine and shows there within about 5 seconds, and `pane_close` closes a pane there too, but not a Claude
 or terminal pane that machine has open at that moment. The reads work there as anywhere; what presses keys or
 changes the view does not (docs/agents/where-it-breaks.md, Panel access, has the list). Opening a pane is not risk-free: see Privacy and security for what a custom app or a page they open can do.
 
