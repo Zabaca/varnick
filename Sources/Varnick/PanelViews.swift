@@ -201,7 +201,7 @@ struct PanePanelView: PanelAccessView {
         summary: "Reads a pane: its kind and title, and for a terminal (a Claude session or a shell, this session's own included) the text "
             + "its screen shows now, trailing blanks and empty lines cut, never its scrollback. A pane that shows a card because another "
             + "Mac or a device controls its session gives the screen the card holds, with the time of the last one when it is no longer "
-            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only; a Chromium page also gives its address and its CDP endpoint and target, to read and drive it with (the page is logged in as the user is). "
+            + "live. A pane not started yet says so. A page, a file, a custom app and the live transcript give their kind and title only; a Chromium page also gives its address and its CDP endpoint and target, to read and drive it with (the page is logged in as the user is); the read serves that endpoint on demand and it stops 30 minutes after the last pane_read of a Chromium pane, so read again to keep it or to get its new port, and its socket closes with code 1006 when it stops. "
             + "The id is a pane's from panel or board_read (a card's own id is its tab's, which has no screen). The screen holds whatever is on it, a session's latest "
             + "exchange or a shell's output, secrets included, and goes to Anthropic with this session.",
         properties: ["id": ["type": "string", "description": "A pane's id from panel or board_read (s1…)."]],
@@ -233,23 +233,35 @@ struct PanePanelView: PanelAccessView {
         return header + "\nScreen now:\n" + (rows.isEmpty ? "(empty)" : rows)
     }
 
-    /// A Chromium pane (prototype): where to drive it over CDP. Its contents are read through CDP, not here.
+    /// A Chromium pane (prototype): where to drive it over CDP, which this read serves, or keeps serving. Its contents are read through CDP, not here.
     @MainActor private static func chromiumLines(_ page: ChromiumPage, url: String?) -> String {
         var lines = ["A Chromium page" + ((url ?? "").isEmpty ? ", no address yet" : " at \(url!)") + "."]
         if ChromiumEngine.hasFailed {
             lines.append("Chromium isn't running in this Varnick, and it won't start again until Varnick restarts, so there is no page to drive.")
             return lines.joined(separator: "\n")
         }
-        guard let port = ChromiumEngine.cdpPort, let target = page.targetID else {
+        // A pane with no page serves nothing: CDP is started only for a page there is to drive.
+        guard let target = page.targetID else {
             lines.append(page.problem.map { "There is no page to drive: \($0)" }
                 ?? "Not shown yet, so there is no page to drive: it is made the first time the pane is on screen.")
             return lines.joined(separator: "\n")
         }
+        let port: UInt32
+        do { port = try ChromiumEngine.serveCDP() } catch {
+            lines.append("There is no endpoint to drive the page with: \((error as? ChromiumFailure)?.reason ?? error.localizedDescription).")
+            return lines.joined(separator: "\n")
+        }
+        let idle = ChromiumEngine.cdpIdle
+        let idleText = idle >= 120 ? "\(Int(idle / 60)) minutes" : "\(Int(idle)) seconds"
         lines.append("CDP endpoint: http://127.0.0.1:\(port) (every Chromium pane of this Varnick is a target of it; /json lists them)")
         lines.append("This pane's target: \(target)")
         lines.append("Page WebSocket: ws://127.0.0.1:\(port)/devtools/page/\(target)")
         lines.append("It is the page the user sees, logged in as they are: drive only what the user asked for. Connect to this target, not a new one: "
             + "a page a client opens itself (Target.createTarget) has no pane and is not on screen.")
+        lines.append("The endpoint is served on demand and has no password while it is: it stops \(idleText) after the last pane_read of a Chromium pane, "
+            + "and when the last Chromium page closes, and a socket to it then closes with code 1006. Varnick can't see a client, so a session still driving "
+            + "must read a Chromium pane again within \(idleText) to keep it. A read after it has stopped serves it again on the same port when that is free "
+            + "(a new one otherwise, so use the port this read gives), and the page's target stays the same; reconnect to it, since the browser's own address changes.")
         return lines.joined(separator: "\n")
     }
 

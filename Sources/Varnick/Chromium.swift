@@ -4,12 +4,12 @@ import Darwin
 import VarnickPeer
 
 // Chromium panes (prototype): zebkit (Chromium 157 as a library, LGPL-2.1) drawn in the pane's own NSView, with CDP served on
-// 127.0.0.1 so a session can drive the page the user sees (`pane_read` gives the address). The framework is loaded with dlopen the first time a
+// 127.0.0.1 on demand so a session can drive the page the user sees (`pane_read` serves it and gives the address). The framework is loaded with dlopen the first time a
 // Chromium pane on screen wants it, between runs of the main run loop (`RunLoopGate`): Varnick runs without it (the tile is then not listed),
 // `--mcp` never maps it, and its 133 MB stays out of a Mac that never shows a Chromium pane.
 
 /// The one engine of this process: zebkit starts once per process and never again after it stops, so every Chromium pane shares it, its profile
-/// and its CDP endpoint (each pane is a target of its own).
+/// and its CDP endpoint, when it is served (each pane is a target of its own).
 @MainActor
 enum ChromiumEngine {
     /// `Zebkit.framework` beside the binary (`make build` puts it there), or in a bundle's Contents/Frameworks. Its helpers crash at start when the
@@ -30,7 +30,7 @@ enum ChromiumEngine {
 
     enum State {
         case notStarted
-        case running(Zebkit, cdpPort: UInt32)
+        case running(Zebkit)
         case failed(String)
     }
     private(set) static var state = State.notStarted
@@ -48,7 +48,7 @@ enum ChromiumEngine {
     /// the one place it can start (ADR 0048), and `whenSettled` is called once it has, or failed, so the page asks again.
     static func engine(whenSettled: @escaping @MainActor () -> Void) -> Availability {
         switch state {
-        case .running(let kit, _): return .running(kit)
+        case .running(let kit): return .running(kit)
         case .failed: return .unavailable(failedNote)
         case .notStarted:
             guard isInstalled else { return .unavailable("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
@@ -91,10 +91,8 @@ enum ChromiumEngine {
             var error: UnsafeMutablePointer<CChar>?
             let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(1, $0.baseAddress, settings, &error) }
             guard status == 0 else { throw ChromiumFailure("the engine didn't start: " + kit.take(error, or: "code \(status)")) }
-            let port = kit.cdpListen(nil, 0, &error)
-            guard port > 0 else { throw ChromiumFailure("CDP didn't start: " + kit.take(error, or: "no port")) }
-            state = .running(kit, cdpPort: port)
-            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, CDP on 127.0.0.1:\(port)")
+            state = .running(kit)
+            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane")
             ChromiumPump.shared.wake(afterMilliseconds: 0)
         } catch {
             let reason = (error as? ChromiumFailure)?.reason ?? error.localizedDescription
@@ -109,14 +107,76 @@ enum ChromiumEngine {
         return false
     }
 
-    static var cdpPort: UInt32? {
-        if case .running(_, let port) = state { return port }
-        return nil
+    // MARK: CDP on demand (ADR 0048)
+
+    /// The port CDP is served on now, nil while it isn't. It has no password, so it is served only while a session keeps reading a Chromium pane.
+    private(set) static var cdpPort: UInt32?
+    /// The port last served, asked for again at the next serve so an address a session saved works again when the port is free.
+    private static var lastCDPPort: UInt32 = 0
+    private static var cdpTimer: Timer?
+    /// Chromium pages that have a view in the engine: CDP stops when the last one closes.
+    private static var livePages = 0
+
+    /// How long after the last read CDP stops. The default is 30 minutes; a hidden default shortens it for a hand check.
+    static var cdpIdle: TimeInterval {
+        let set = UserDefaults.standard.double(forKey: "chromiumCDPIdleSeconds")
+        return set > 0 ? set : 30 * 60
+    }
+
+    /// Serves CDP, or keeps serving it, for a session's read of a page, and starts the idle time over. Throws when the engine isn't running or can't listen.
+    static func serveCDP() throws -> UInt32 {
+        guard case .running(let kit) = state else { throw ChromiumFailure("the engine isn't running") }
+        let port: UInt32
+        if let serving = cdpPort {
+            port = serving
+        } else {
+            var error: UnsafeMutablePointer<CChar>?
+            var listening = lastCDPPort > 0 ? kit.cdpListen(nil, lastCDPPort, &error) : 0
+            if listening == 0 {
+                // The earlier port is taken, or this is the first serve: one the system chooses.
+                _ = kit.take(error, or: "")
+                error = nil
+                listening = kit.cdpListen(nil, 0, &error)
+            }
+            guard listening > 0 else { throw ChromiumFailure("CDP didn't start: " + kit.take(error, or: "no port")) }
+            port = listening
+            cdpPort = port
+            lastCDPPort = port
+            NSLog("Varnick: Chromium CDP serving on 127.0.0.1:\(port)")
+        }
+        cdpTimer?.invalidate()
+        let timer = Timer(timeInterval: cdpIdle, repeats: false) { fired in
+            MainActor.assumeIsolated {
+                // Out of any pump, and not if a read has started the time over since.
+                ChromiumPump.shared.afterPump { if cdpTimer === fired { stopCDP("no read for \(Int(cdpIdle)) s") } }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cdpTimer = timer
+        return port
+    }
+
+    /// Stops serving, which closes every client's socket (code 1006).
+    private static func stopCDP(_ reason: String) {
+        cdpTimer?.invalidate()
+        cdpTimer = nil
+        guard case .running(let kit) = state, let port = cdpPort else { return }
+        kit.cdpStop()
+        cdpPort = nil
+        NSLog("Varnick: Chromium CDP stopped on port \(port): \(reason)")
+    }
+
+    /// A page gained or lost its view in the engine; the last one going stops CDP.
+    fileprivate static func pageViewChanged(by delta: Int) {
+        livePages = max(0, livePages + delta)
+        guard livePages == 0, cdpPort != nil else { return }
+        ChromiumPump.shared.afterPump { if livePages == 0 { stopCDP("the last Chromium page closed") } }
     }
 
     /// At quit: closes the views and ends the helpers. A SIGTERM (a restart) skips it, and the helpers end with their parent.
     static func shutdown() {
-        guard case .running(let kit, _) = state else { return }
+        guard case .running(let kit) = state else { return }
+        stopCDP("Varnick quit")
         ChromiumPage.discardReservedFiles()
         _ = kit.shutdown()
         state = .failed("the engine stopped")
@@ -194,7 +254,7 @@ final class ChromiumPump: @unchecked Sendable {
         deadline = .infinity
         lock.unlock()
         // A wakeup from before the engine runs is dropped: `start` asks for a pump once it does.
-        guard case .running(let kit, _) = ChromiumEngine.state else { return }
+        guard case .running(let kit) = ChromiumEngine.state else { return }
         let began = CFAbsoluteTimeGetCurrent()
         let pumped = VarnickApplication.pumping { kit.pump() }
         let took = CFAbsoluteTimeGetCurrent() - began
@@ -301,6 +361,7 @@ struct Zebkit {
     let pump: @convention(c) () -> Bool
     let shutdown: @convention(c) () -> Bool
     let cdpListen: @convention(c) (UnsafePointer<CChar>?, UInt32, ErrorOut) -> UInt32
+    let cdpStop: @convention(c) () -> Void
     let viewNew: @convention(c) (UnsafePointer<CChar>?, Int32, Int32) -> View?
     let attachNative: @convention(c) (View, UInt, Int32, Int32, Int32, Int32, ErrorOut) -> Bool
     let setBounds: @convention(c) (View, Int32, Int32, Int32, Int32) -> Void
@@ -338,6 +399,7 @@ struct Zebkit {
         pump = try symbol("zebkit_pump")
         shutdown = try symbol("zebkit_shutdown")
         cdpListen = try symbol("zebkit_cdp_listen")
+        cdpStop = try symbol("zebkit_cdp_stop")
         viewNew = try symbol("zebkit_view_new")
         attachNative = try symbol("zebkit_view_attach_native")
         setBounds = try symbol("zebkit_view_set_bounds")
@@ -372,7 +434,10 @@ struct Zebkit {
 /// the first time this view is in a window with a size. What the page asks of its pane is answered here, never by the engine's windows (ADR 0048).
 @MainActor
 final class ChromiumPage: NSView {
-    private var view: Zebkit.View?
+    /// The page in the engine; one gained or lost is counted, since the last one closing stops CDP.
+    private var view: Zebkit.View? {
+        didSet { if (oldValue == nil) != (view == nil) { ChromiumEngine.pageViewChanged(by: view == nil ? -1 : 1) } }
+    }
     private var kit: Zebkit?
     /// The page to load once the view is made, or the last one asked for.
     private var wanted: String?
