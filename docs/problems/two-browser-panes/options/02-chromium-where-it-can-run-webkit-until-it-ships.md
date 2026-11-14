@@ -115,11 +115,13 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 | | What | For | Against |
 |---|---|---|---|
 | A | As the prototype: CDP from the engine's start until quit, no auth | Nothing to build | Any process on the Mac can read every cookie of the profile and drive any logged-in page, all the time. Chrome stopped allowing remote debugging on its default profile in 2025 for this reason (from memory, not checked here) |
-| B | CDP on demand: served at a session's `pane_read` of a page pane, stopped 30 minutes after the last such read and when the last page pane closes | Small; the clients sessions use today keep working | No auth while it is open, and a driving session keeps it open. Unverified that the engine serves again after a stop |
+| B | CDP on demand: served at a session's `pane_read` of a page pane, stopped 30 minutes after the last such read and when the last page pane closes | Small; the clients sessions use today keep working | No auth while it is open, and a driving session keeps it open. Verified in the 2026-11-13 spike that the engine serves again after a stop, repeatedly in one run |
 | C | zebkit's Playwright endpoint instead of CDP: its address holds a random token and refuses a request with an Origin header, and only `pane_read` gives it | A real credential, from the engine itself | Sessions use Playwright's `connect`, not CDP clients. Unverified that a client sees the panes' own pages rather than a fresh browser: a spike first |
 | D | No endpoint: Varnick drives pages itself inside the engine, behind tools of its own that know the caller, as Panel access does | Nothing reachable from outside Varnick | The largest build: a new tool surface for reading and acting in pages |
 
-**Recommended:** a spike of C (a page pane open, Playwright's `connect` to the endpoint, list the contexts and pages). If it shows the panes' pages, C; else B. Never A once real logins are in the profile.
+**Chosen 2026-11-13: B.** The spike of C that this recommended was run that day (Lattice note `research/zebkit-0-4-0-automation-endpoint-and-cdp-what-a-client-can-reach`): zebkit's token endpoint cannot reach a view the host made, only its own, so C is out. B was built as step 2 (ADR 0048 has what it does, the spike's evidence and what it leaves open). **D is where this ends up** (`zebkit_automation_call` inside Varnick, no port, behind tools that know the caller), and is not built: out of scope for this step and its own work.
+
+**Recommended (before the spike):** a spike of C (a page pane open, Playwright's `connect` to the endpoint, list the contexts and pages). If it shows the panes' pages, C; else B. Never A once real logins are in the profile.
 
 ### Logins and the profile (step 4)
 
@@ -172,4 +174,4 @@ Deletes WebKit's page view and its navigation handling, WebKit's half of the fai
 
 **Answered by the code, not the user's:** where the engine starts (between runs of the main run loop, at an event's dispatch); light and dark (the engine's startup setting); the failure card's texts and intervals (today's); the saved state (no new field, the `chromium` mark ignored); Resources (one row for the helpers: the C API gives no process per page).
 
-**Unverified, to settle in the steps that need them:** the engine serving CDP again after a stop; Playwright's endpoint showing existing pages; page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.
+**Unverified, to settle in the steps that need them:** page-history address changes reaching the engine's navigation events; Chromium's view answering the Edit menu and input methods; overlays drawing above the page; Chromium's accessibility tree inside Varnick; the keychain asking after a rebuild; the framework working from the bundle's Frameworks folder; the helper's entitlements under the hardened runtime; whether the engine marks downloads with quarantine itself.

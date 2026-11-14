@@ -307,8 +307,9 @@ you would see it: a session's latest exchange, a command's output, a secret that
 echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
 controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only, except a
 **Chromium pane**: its read gives the page's address and the address of its DevTools endpoint (CDP, on 127.0.0.1 with no
-password), through which the session can read and act in that page, logged in wherever you have logged in inside a Chromium pane (its profile is Varnick's own, apart from the Browser pane's; ADR 0048). Any program on
-this Mac can reach that endpoint from the first Chromium page until Varnick quits: closing the pane does not stop it. All
+password), through which the session can read and act in that page, logged in wherever you have logged in inside a Chromium pane (its profile is Varnick's own, apart from the Browser pane's; ADR 0048). The endpoint is served
+only after such a read (opening a Chromium pane, by you or by a session, serves nothing) and stops 30 minutes after the last one or when the last Chromium page closes, but while it is served any program on
+this Mac can reach it: a session that keeps driving a page past 30 minutes without reading again is cut off. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
