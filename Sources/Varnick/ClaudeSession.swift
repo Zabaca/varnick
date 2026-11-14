@@ -151,7 +151,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     @Published var asking: SessionQuestionKind?
     /// Whether any Claude session in the pane's tab is mid-turn (`ClaudeTab.asksBeforeDone`), which is what Done in this pane asks about.
     var tabAsksBeforeDone: () -> Bool = { false }
-    /// Why a split of this pane, or a paste of an image on its host, was refused, shown over the pane for a few seconds.
+    /// Why a split of this pane, or a paste of an image on its host, was refused, or what became of a Chromium page's download, shown over the pane for a few seconds.
     @Published private(set) var splitRefusal: String?
 
     func showRefusal(_ message: String) {
@@ -1715,11 +1715,29 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         ]
     }
 
-    private func makeChromiumPage() {
-        let page = ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
+    private func makeChromiumPage(adopting popup: ChromiumPage? = nil) {
+        let page = popup ?? ChromiumPage(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         page.onTitle = { [weak self] title in self?.webChanged(title: title) }
         page.onURL = { [weak self] text in self?.webChanged(url: URL(string: text)) }
+        page.onNote = { [weak self] note in self?.showRefusal(note) }
+        page.onWindow = { [weak self] opened in
+            if let self { self.onOpenWindow(opened) } else { opened.close() }
+        }
         chromiumPage = page
+    }
+
+    /// A window this Chromium page opened (`target=_blank`, `window.open`, a sign-in popup), to show in a pane beside this one (`LauncherModel.openWindow`).
+    var onOpenWindow: (ChromiumPage) -> Void = { $0.close() }
+
+    /// This pane shows the window another page opened, in place of the page it made for itself: that window is loading already, so the pane
+    /// never loads its own, and it ends when the site closes the window.
+    func adopt(_ popup: ChromiumPage) {
+        chromiumPage?.close()
+        makeChromiumPage(adopting: popup)
+        popup.onClosedItself = { [weak self] in self?.end() }
+        started = true
+        startedAt = Date()
+        webChanged(title: popup.title, url: URL(string: popup.address))
     }
 
     private func webChanged(title new: String? = nil, url: URL? = nil) {

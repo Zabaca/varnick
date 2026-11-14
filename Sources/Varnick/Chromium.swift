@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Darwin
 import VarnickPeer
 
@@ -158,6 +159,35 @@ final class ChromiumPump: @unchecked Sendable {
         CFRunLoopTimerSetNextFireDate(timer, time)
     }
 
+    /// Work an engine callback asked for that may run a loop of its own (a menu), in order, and whether a timer for it is set.
+    @MainActor private var afterwards: [@MainActor () -> Void] = []
+    @MainActor private var afterwardsScheduled = false
+
+    /// Runs `job` once the pump now under way has returned, from a timer of its own. A block on the main queue would run inside the pump's wait,
+    /// where a menu's tracking loop holds the engine until the menu closes; and run from the pump's own timer, the loop would starve the pump,
+    /// for a timer isn't fired again inside its own callback (both measured in a harness, 2026-11-13).
+    @MainActor func afterPump(_ job: @escaping @MainActor () -> Void) {
+        afterwards.append(job)
+        guard !afterwardsScheduled else { return }
+        afterwardsScheduled = true
+        scheduleAfterwards()
+    }
+
+    @MainActor private func scheduleAfterwards() {
+        // One-shot: it is invalidated once it has fired.
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.001, 0, 0, 0) { [unowned self] _ in
+            MainActor.assumeIsolated {
+                // This timer fires in the loop of a pump's wait too: the job waits for the pump to return.
+                guard !VarnickApplication.isPumping else { return self.scheduleAfterwards() }
+                self.afterwardsScheduled = false
+                let jobs = self.afterwards
+                self.afterwards = []
+                for job in jobs { job() }
+            }
+        }
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
+    }
+
     @MainActor private func fire() {
         // Cleared whatever follows: the fire parked the timer, and a deadline left set would turn every later wakeup away.
         lock.lock()
@@ -183,6 +213,9 @@ final class VarnickApplication: NSApplication {
     nonisolated(unsafe) private static var leaveAsked = false
     /// Loops opened inside the wait that ask AppKit for events (a menu, a loop of the engine's own).
     nonisolated(unsafe) private static var nested = 0
+
+    /// Whether a pump is under way, in its wait or not: code that runs a loop of its own must not run then.
+    static var isPumping: Bool { wait != .none }
 
     /// Runs one pump, with the engine's wait inside it answered here.
     static func pumping(_ pump: () -> Bool) -> Bool {
@@ -249,8 +282,17 @@ struct Zebkit {
     typealias LoadFunc = @convention(c) (View?, Int32, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     typealias TitleFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     typealias ViewFunc = @convention(c) (View?, UnsafeMutableRawPointer?) -> Void
+    /// Gets the `zebkit_dialog`, whose fields are read at their offsets (`ChromiumPage.connect`).
+    typealias DialogFunc = @convention(c) (View?, UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void
+    typealias WindowFunc = @convention(c) (View?, View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+    typealias DownloadFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+    /// A download's progress and a context menu's request, each as JSON; a chosen menu item's id has this shape too.
+    typealias JSONFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
 
     static let loadCommitted: Int32 = 1
+    static let beforeUnloadDialog: Int32 = 3
+    static let downloadSave: Int32 = 0
+    static let downloadCancel: Int32 = 1
 
     let engineVersion: @convention(c) () -> UnsafePointer<CChar>
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
@@ -270,6 +312,15 @@ struct Zebkit {
     let onLoad: @convention(c) (View, LoadFunc?, UnsafeMutableRawPointer?) -> Void
     let onTitle: @convention(c) (View, TitleFunc?, UnsafeMutableRawPointer?) -> Void
     let onClose: @convention(c) (View, ViewFunc?, UnsafeMutableRawPointer?) -> Void
+    let onDialog: @convention(c) (View, DialogFunc?, UnsafeMutableRawPointer?) -> Void
+    let dialogRespond: @convention(c) (View, UInt64, Bool, UnsafePointer<CChar>?) -> Bool
+    let onWindowOpen: @convention(c) (View, WindowFunc?, UnsafeMutableRawPointer?) -> Void
+    let onDownload: @convention(c) (View, DownloadFunc?, UnsafeMutableRawPointer?) -> Void
+    let downloadRespond: @convention(c) (OpaquePointer, Int32, UnsafePointer<CChar>?, ErrorOut) -> Bool
+    let onDownloadProgress: @convention(c) (View, JSONFunc?, UnsafeMutableRawPointer?) -> Void
+    let cancelDownload: @convention(c) (View, UnsafePointer<CChar>) -> Bool
+    let onContextMenu: @convention(c) (View, JSONFunc?, UnsafeMutableRawPointer?) -> Void
+    let showContextMenu: @convention(c) (View, UInt64, UnsafePointer<CChar>?, JSONFunc?, UnsafeMutableRawPointer?, ErrorOut) -> Bool
 
     init(framework: URL) throws {
         let binary = framework.appendingPathComponent("Zebkit").path
@@ -298,6 +349,15 @@ struct Zebkit {
         onLoad = try symbol("zebkit_view_on_load")
         onTitle = try symbol("zebkit_view_on_title")
         onClose = try symbol("zebkit_view_on_close")
+        onDialog = try symbol("zebkit_view_on_dialog")
+        dialogRespond = try symbol("zebkit_view_dialog_respond")
+        onWindowOpen = try symbol("zebkit_view_on_window_open")
+        onDownload = try symbol("zebkit_view_on_download")
+        downloadRespond = try symbol("zebkit_download_respond")
+        onDownloadProgress = try symbol("zebkit_view_on_download_progress")
+        cancelDownload = try symbol("zebkit_view_cancel_download")
+        onContextMenu = try symbol("zebkit_view_on_context_menu")
+        showContextMenu = try symbol("zebkit_view_context_menu_show")
     }
 
     /// An error string the engine returned, freed, or `fallback` when there was none.
@@ -308,8 +368,10 @@ struct Zebkit {
     }
 }
 
+
 /// A Chromium pane's content: zebkit's page, attached as a subview of this view (on macOS `attach_native` adds the page's NSView to the one it is
 /// given), so it moves, hides and leaves with this view as a WKWebView would. The page is made the first time this view is in a window with a size.
+/// What a page asks of its pane (dialogs, the context menu, new windows, downloads) is answered here, never by the engine's own windows (ADR 0048).
 @MainActor
 final class ChromiumPage: NSView {
     private var view: Zebkit.View?
@@ -319,11 +381,22 @@ final class ChromiumPage: NSView {
     private var closed = false
     private var pageQueued = false
     private var waitingForEngine = false
+    /// Downloads this page answered that haven't ended, by the engine's id: the empty file reserved for each in Downloads.
+    private var saving: [String: URL] = [:]
+    private var showingMenu = false
     /// What the pane shows in place of the page, when it has none it can make: for `pane_read` too.
     var problem: String? { note.isHidden ? nil : note.stringValue }
     /// The committed address and the title, as the page changes them.
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
+    private(set) var title = ""
+    var address: String { wanted ?? "" }
+    /// A window this page opened (`target=_blank`, `window.open`, a sign-in popup), made into a page of its own for a pane to show.
+    var onWindow: (ChromiumPage) -> Void = { $0.close() }
+    /// Set on a page made for such a window: when the site closes it (`window.close()`), its pane goes with it.
+    var onClosedItself: (() -> Void)?
+    /// What became of a download, for the pane to say.
+    var onNote: (String) -> Void = { _ in }
     /// Why there is no page (the engine starting, missing or failed), shown in place of it.
     private let note = NSTextField(labelWithString: "")
 
@@ -337,6 +410,22 @@ final class ChromiumPage: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    /// A window the engine made for a page of `kit`'s, put in this view at once: its own window would show, outside the panel, until a pane existed
+    /// for it. It is loading already, so nothing is loaded here. Nil, with the window closed, when it can't be put in a view.
+    convenience init?(adopting view: Zebkit.View, kit: Zebkit, address: String) {
+        self.init(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
+        var error: UnsafeMutablePointer<CChar>?
+        guard kit.attachNative(view, UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()), 0, 0, 760, 520, &error) else {
+            NSLog("Varnick: Chromium couldn't put a window a page opened in a view: " + kit.take(error, or: "no reason given"))
+            kit.close(view)
+            return nil
+        }
+        self.kit = kit
+        self.view = view
+        wanted = address
+        connect(view, kit)
+    }
 
     override var isFlipped: Bool { true }
 
@@ -362,14 +451,22 @@ final class ChromiumPage: NSView {
         kit.focus(view)
     }
 
-    /// The pane closed: the page goes with it (on macOS a page outlives its superview until it is closed).
+    /// The pane closed: the page goes with it (on macOS a page outlives its superview until it is closed). Its downloads are cancelled.
     func close() {
         closed = true
         guard let kit, let view else { return }
         self.view = nil
+        for id in saving.keys { _ = id.withCString { kit.cancelDownload(view, $0) } }
+        saving.values.forEach(Self.discardIfEmpty)
+        saving = [:]
         kit.onLoad(view, nil, nil)
         kit.onTitle(view, nil, nil)
         kit.onClose(view, nil, nil)
+        kit.onDialog(view, nil, nil)
+        kit.onWindowOpen(view, nil, nil)
+        kit.onDownload(view, nil, nil)
+        kit.onDownloadProgress(view, nil, nil)
+        kit.onContextMenu(view, nil, nil)
         kit.close(view)
     }
 
@@ -433,36 +530,192 @@ final class ChromiumPage: NSView {
             note.isHidden = true
             self.kit = kit
             self.view = view
-            // Unretained: `close()` clears the callbacks before this view can go, and the session holds it until then.
-            let me = Unmanaged.passUnretained(self).toOpaque()
-            kit.onLoad(view, { _, event, url, data in
-                guard event == Zebkit.loadCommitted, let url, let data else { return }
-                let text = String(cString: url)
-                ChromiumPage.later(data) { page in
-                    // A reload after the page closed itself opens where it was, not where it started.
-                    page.wanted = text
-                    page.onURL(text)
-                }
-            }, me)
-            kit.onTitle(view, { _, title, data in
-                guard let title, let data else { return }
-                let text = String(cString: title)
-                ChromiumPage.later(data) { $0.onTitle(text) }
-            }, me)
-            // The page closed itself (window.close()): nothing is left to call.
-            kit.onClose(view, { _, data in
-                guard let data else { return }
-                ChromiumPage.later(data) { page in
-                    page.view = nil
-                    page.show("The page closed itself. Reload to open it again.")
-                }
-            }, me)
+            connect(view, kit)
             ChromiumPump.shared.wake(afterMilliseconds: 0)
         }
     }
 
+    /// Every callback of this page. Unretained: `close()` clears them before this view can go, and the session holds it until then. Each is called
+    /// by the engine, on the main thread, inside a pump: what runs a loop of its own waits for the pump to return (`ChromiumPump.afterPump`), and
+    /// anything that touches the pane is queued (`later`), except the answers the engine holds the page for (`now`).
+    private func connect(_ view: Zebkit.View, _ kit: Zebkit) {
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        kit.onLoad(view, { _, event, url, data in
+            guard event == Zebkit.loadCommitted, let url, let data else { return }
+            let text = String(cString: url)
+            ChromiumPage.later(data) { page in
+                // A reload after the page closed itself opens where it was, not where it started.
+                page.wanted = text
+                page.onURL(text)
+            }
+        }, me)
+        kit.onTitle(view, { _, title, data in
+            guard let title, let data else { return }
+            let text = String(cString: title)
+            ChromiumPage.later(data) {
+                $0.title = text
+                $0.onTitle(text)
+            }
+        }, me)
+        // The page closed itself (window.close()): nothing is left to call, and downloads it started go on without reports.
+        kit.onClose(view, { _, data in
+            guard let data else { return }
+            ChromiumPage.later(data) { page in
+                page.view = nil
+                ChromiumPage.watchForWrites(Array(page.saving.values), origin: page.wanted)
+                page.saving = [:]
+                if let leave = page.onClosedItself { leave() } else { page.show("The page closed itself. Reload to open it again.") }
+            }
+        }, me)
+        // Answered as WebKit's page pane answers them, with no handler: alert returns, confirm is false, prompt is null, "leave this page?" leaves.
+        // The engine's own alert would run a loop of its own inside the pump.
+        kit.onDialog(view, { view, dialog, data in
+            guard let view, let dialog, let data else { return }
+            // zebkit_dialog: the id at byte 0, the type at 8, and at 41 whether the engine holds the page for an answer.
+            guard dialog.load(fromByteOffset: 41, as: Bool.self) else { return }
+            let id = dialog.load(as: UInt64.self)
+            let leaves = dialog.load(fromByteOffset: 8, as: Int32.self) == Zebkit.beforeUnloadDialog
+            ChromiumPage.now(data) { _ = $0.kit?.dialogRespond(view, id, leaves, nil) }
+        }, me)
+        kit.onWindowOpen(view, { _, opened, url, data in
+            guard let opened, let data else { return }
+            let address = url.map { String(cString: $0) } ?? ""
+            ChromiumPage.now(data) { $0.windowOpened(opened, address: address) }
+        }, me)
+        kit.onDownload(view, { _, request, json, data in
+            guard let request, let json, let data else { return }
+            let asked = String(cString: json)
+            ChromiumPage.now(data) { $0.answerDownload(request, asked) }
+        }, me)
+        kit.onDownloadProgress(view, { _, json, data in
+            guard let json, let data else { return }
+            let report = String(cString: json)
+            ChromiumPage.later(data) { $0.downloadProgressed(report) }
+        }, me)
+        // With a function set the engine shows no menu of its own: the menu is shown after the pump (`showMenu`).
+        kit.onContextMenu(view, { _, json, data in
+            guard let json, let data, let id = (ChromiumPage.object(String(cString: json))?["menuId"] as? NSNumber)?.uint64Value else { return }
+            ChromiumPage.now(data) { page in
+                ChromiumPump.shared.afterPump { [weak page] in page?.showMenu(id) }
+            }
+        }, me)
+    }
+
+    /// The engine's menu for what was right-clicked, with its own items (Inspect Element isn't among them). Shown by zebkit as the system's menu,
+    /// which runs its tracking loop until the menu closes: so never inside a pump, whose wait would hold the engine until then.
+    private func showMenu(_ id: UInt64) {
+        guard !closed, !showingMenu, let kit, let view else { return }
+        showingMenu = true
+        defer { showingMenu = false }
+        var error: UnsafeMutablePointer<CChar>?
+        if !kit.showContextMenu(view, id, nil, nil, nil, &error) {
+            NSLog("Varnick: Chromium's context menu didn't show: " + kit.take(error, or: "no reason given"))
+        }
+    }
+
+    /// A window this page opened becomes a page of its own on the next turn of the main queue, never inside this pump; until then `popup` holds it.
+    private func windowOpened(_ opened: Zebkit.View, address: String) {
+        guard let kit, let popup = ChromiumPage(adopting: opened, kit: kit, address: address) else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { if self.closed { popup.close() } else { self.onWindow(popup) } }
+        }
+    }
+
+    // MARK: Downloads
+
+    /// Saved in Downloads under a free name, or cancelled, with what happened said in the pane.
+    private func answerDownload(_ request: OpaquePointer, _ json: String) {
+        guard let kit, let asked = Self.object(json), let id = asked["downloadId"] as? String else { return }
+        let name = asked["suggestedName"] as? String ?? ""
+        do {
+            let file = try Self.reserveDownload(named: name)
+            var error: UnsafeMutablePointer<CChar>?
+            guard kit.downloadRespond(request, Zebkit.downloadSave, file.path, &error) else {
+                Self.discardIfEmpty(file)
+                throw ChromiumFailure(kit.take(error, or: "the engine wouldn't save it there"))
+            }
+            saving[id] = file
+        } catch {
+            _ = kit.downloadRespond(request, Zebkit.downloadCancel, nil, nil)
+            onNote("Couldn't save \(name.isEmpty ? "the download" : name): " + ((error as? ChromiumFailure)?.reason ?? error.localizedDescription))
+        }
+    }
+
+    private func downloadProgressed(_ json: String) {
+        guard let report = Self.object(json), report["done"] as? Bool == true, let id = report["downloadId"] as? String,
+              let file = saving.removeValue(forKey: id) else { return }
+        guard report["state"] as? String == "complete" else {
+            Self.discardIfEmpty(file)
+            let reason = (report["reason"] as? String).map { $0.replacingOccurrences(of: "_", with: " ").lowercased() }
+            onNote("The download of \(file.lastPathComponent) didn't finish" + (reason.map { $0 == "none" ? "." : " (\($0))." } ?? "."))
+            return
+        }
+        do {
+            try Self.quarantine(file, from: report["url"] as? String, origin: wanted)
+            onNote("Saved \(file.lastPathComponent) in Downloads.")
+        } catch {
+            NSLog("Varnick: couldn't mark a download as downloaded: \(error.localizedDescription)")
+            onNote("Saved \(file.lastPathComponent) in Downloads, but macOS wouldn't mark it as downloaded.")
+        }
+    }
+
+    /// A free name in Downloads for what the page suggested, with no folder in it, made empty so no other download takes it: the engine replaces it.
+    private static func reserveDownload(named suggested: String) throws -> URL {
+        guard let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else { throw ChromiumFailure("there is no Downloads folder") }
+        var name = (suggested as NSString).lastPathComponent
+        while name.hasPrefix(".") { name.removeFirst() }
+        if name.isEmpty { name = "download" }
+        let stem = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
+        for n in 0..<1000 {
+            let file = folder.appendingPathComponent(n == 0 ? name : stem + " (\(n))" + (ext.isEmpty ? "" : "." + ext))
+            let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL, 0o666)
+            if descriptor >= 0 {
+                Darwin.close(descriptor)
+                return file
+            }
+            if errno != EEXIST { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        }
+        throw ChromiumFailure("every name like it is taken")
+    }
+
+    private static func discardIfEmpty(_ file: URL) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int
+        if size == 0 { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Marks the file as downloaded from the web, as a browser does, so Gatekeeper checks it when it is opened. The engine doesn't, and a mark set
+    /// on the reserved file is lost when the engine replaces it (harness, 2026-11-13), so it is set once the download is complete.
+    nonisolated private static func quarantine(_ file: URL, from source: String?, origin: String?) throws {
+        var properties: [String: Any] = [kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
+        if let source { properties[kLSQuarantineDataURLKey as String] = source }
+        if let origin { properties[kLSQuarantineOriginURLKey as String] = origin }
+        try (file as NSURL).setResourceValue(properties, forKey: .quarantinePropertiesKey)
+    }
+
+    /// Downloads whose page closed itself get no more reports: each file is marked once the engine has written it (it is empty until then),
+    /// checked every 2 s for 10 minutes.
+    private static func watchForWrites(_ files: [URL], origin: String?) {
+        guard !files.isEmpty else { return }
+        var left = files, checks = 0
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
+            checks += 1
+            left.removeAll { file in
+                guard let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int else { return true }
+                guard size > 0 else { return false }
+                try? quarantine(file, from: nil, origin: origin)
+                return true
+            }
+            if left.isEmpty || checks >= 300 { timer.invalidate() }
+        }
+    }
+
+    nonisolated private static func object(_ json: String) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
+    }
+
     /// An engine callback's work, on the next turn of the main queue rather than inside the engine's pump. `data` is the page; one closed
-    /// meanwhile has no callbacks left, and its own work is skipped.
+    /// meanwhile has no callbacks left, and its own work is skipped. Not for a loop of its own: the next turn of the main queue runs inside the
+    /// pump's wait (`ChromiumPump.afterPump`).
     nonisolated private static func later(_ data: UnsafeMutableRawPointer, _ work: @escaping @MainActor (ChromiumPage) -> Void) {
         // Held strongly by the block until it runs, so a pane closed meanwhile is still there to say it is closed.
         let page = Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue()
@@ -472,5 +725,10 @@ final class ChromiumPage: NSView {
                 work(page)
             }
         }
+    }
+
+    /// An engine callback answered on the spot, for the engine holds the page until it is: the engine's thread is the main one.
+    nonisolated private static func now(_ data: UnsafeMutableRawPointer, _ work: @MainActor (ChromiumPage) -> Void) {
+        MainActor.assumeIsolated { work(Unmanaged<ChromiumPage>.fromOpaque(data).takeUnretainedValue()) }
     }
 }

@@ -2089,6 +2089,24 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
+    /// A window a Chromium page opened becomes a Browser pane beside the page's own, focused, as a new tab would be; the window goes into it as it
+    /// is, still linked to its page, which a site's sign-in needs. A tab that can't take a pane says so on the page's pane, and the window closes.
+    func openWindow(_ page: ChromiumPage, from opener: ClaudeSession) {
+        guard let tab = tabs.first(where: { $0.contains(opener) }) else { return page.close() }
+        if let reason = layoutLockReason(of: tab) {
+            opener.showRefusal("A page tried to open a window, which this tab can't show: \(reason)")
+            return page.close()
+        }
+        var record = Self.newRecord(prompt: "", directory: opener.record.directory)
+        record.url = ""
+        record.chromium = true
+        let session = makeSession(record, resuming: false, query: "")
+        session.adopt(page)
+        tab.add(session, beside: opener, .sideBySide)
+        tab.focus(session)
+        saveSessions()
+    }
+
     // MARK: Files (⌘⇧F)
 
     func toggleFiles() {
@@ -2327,6 +2345,10 @@ final class LauncherModel: ObservableObject {
             self.sessionExited(ended, code: code, query: prompt)
         }
         session.onRecordChange = { [weak self] in self?.saveSessions() }
+        session.onOpenWindow = { [weak self] page in
+            guard let self, let opener = ref else { return page.close() }
+            self.openWindow(page, from: opener)
+        }
         session.onLabelChange = { [weak self] in
             self?.strip.refresh()
             self?.saveSessions()
