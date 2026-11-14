@@ -627,20 +627,24 @@ final class ChromiumPage: NSView {
     private func answerDownload(_ request: OpaquePointer, _ json: String) {
         guard let asked = Self.object(json), let id = asked["downloadId"] as? String else { return }
         let name = asked["suggestedName"] as? String ?? ""
+        let deadline = (asked["deadlineUnixMs"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
         nonisolated(unsafe) let token = request
         DispatchQueue.global().async {
             let made = Result { try Self.reserveDownload(named: name) }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.reserved(made, for: token, id: id, name: name) }
+                MainActor.assumeIsolated { self.reserved(made, for: token, id: id, name: name, deadline: deadline) }
             }
         }
     }
 
-    /// Saves the download at the file made for it, or cancels it with the reason said in the pane.
-    private func reserved(_ made: Result<URL, Error>, for request: OpaquePointer, id: String, name: String) {
-        // A page that has gone took its downloads with it, and the request is stale.
-        guard let kit, view != nil, !closed else {
+    /// Saves the download at the file made for it, or cancels it with the reason said in the pane. The header doesn't say the request outlives
+    /// the engine's deadline, so past it (less a margin) there is no answer, and a page that has gone took its downloads with it.
+    private func reserved(_ made: Result<URL, Error>, for request: OpaquePointer, id: String, name: String, deadline: Date?) {
+        let what = name.isEmpty ? "the download" : name
+        guard let kit, view != nil, !closed, deadline.map({ Date() < $0.addingTimeInterval(-2) }) ?? true else {
             if let file = try? made.get() { Self.discard(file) }
+            // Closed by the user, nobody is left to tell; a page that closed itself, or a wait that ran out, is said where the page's notes go.
+            if !closed { onNote(view == nil ? "Didn't save \(what): the page closed." : "Didn't save \(what): it timed out waiting for the Downloads folder.") }
             return
         }
         do {
@@ -654,7 +658,7 @@ final class ChromiumPage: NSView {
             saving[id] = file
         } catch {
             _ = kit.downloadRespond(request, Zebkit.downloadCancel, nil, nil)
-            onNote("Couldn't save \(name.isEmpty ? "the download" : name): " + ((error as? ChromiumFailure)?.reason ?? error.localizedDescription))
+            onNote("Couldn't save \(what): " + ((error as? ChromiumFailure)?.reason ?? error.localizedDescription))
         }
     }
 

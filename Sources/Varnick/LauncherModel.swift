@@ -2089,7 +2089,7 @@ final class LauncherModel: ObservableObject {
         saveSessions()
     }
 
-    /// A window a Chromium page opened becomes a Browser pane beside the page's own, focused, as a new tab would be; the window goes into it as it
+    /// A window a Chromium page opened becomes a Browser pane beside the page's own, focused only if that pane was; the window goes into it as it
     /// is, still linked to its page where it was, which a site's sign-in needs. A tab that can't take a pane, or one with no room, says so on the page's pane.
     func openPageWindow(_ page: ChromiumPage, from opener: ClaudeSession) {
         guard let tab = tabs.first(where: { $0.contains(opener) }) else { return page.close() }
@@ -2097,8 +2097,10 @@ final class LauncherModel: ObservableObject {
             opener.showRefusal("A page tried to open a window, which this tab can't show: \(reason)")
             return page.close()
         }
-        // Each one halves the page's pane beside it, so past the minimum there is no room for another.
-        if let leaf = tab.root.leaf(for: opener), (leaf.width(in: tabProjects.paneWidth) - PaneView.divider) / 2 < PaneView.minPane.width {
+        // Each one halves the page's pane beside it, so past the minimum there is no room for another. The tab's width less the column, the tree
+        // and the panes' 2 pt of padding (`ClaudePane`) is what the panes share.
+        let panes = tabProjects.paneWidth - (tabProjects.showsColumn(for: tab) ? TabProjects.columnWidth + 1 : 0) - (tab.showsFiles ? FileTreeView.width + 1 : 0) - 2
+        if let leaf = tab.root.leaf(for: opener), (leaf.width(in: panes) - PaneView.divider) / 2 < PaneView.minPane.width {
             opener.showRefusal("A page tried to open another window, but there is no room beside it: close a pane first.")
             return page.close()
         }
@@ -2108,7 +2110,8 @@ final class LauncherModel: ObservableObject {
         let session = makeSession(record, resuming: false, query: "")
         session.adopt(page, openedBy: opener)
         tab.add(session, beside: opener, .sideBySide)
-        tab.focus(session)
+        // The keyboard moves only from the page's own pane while the tab is on screen: a page a session drives must not take what the user types.
+        if tab.focused === opener, SessionBoard.panelIsVisible, activeTab === tab, showsTerminal { tab.focus(session) }
         saveSessions()
     }
 
