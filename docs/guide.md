@@ -387,7 +387,7 @@ caret keeps its place in your text, your next key adds to the new text, and ⌘Z
 method is composing there, it waits for the composition to end.
 
 Two more tools, **opening panes**, have no switch either, and the voice session lacks them. `pane_open` opens a terminal (empty: nothing is typed into it), a Claude session
-(with a first message if the session gives one), a custom app such as Scratch, a page or a file beside the session's own pane,
+(with a first message if the session gives one), a custom app such as Scratch, a page (in the Browser pane, or in Chromium when the framework is beside Varnick, where it can drive the page; the reply tells it when to read the pane again, since Chromium starts when a page first wants it) or a file beside the session's own pane,
 in its own tab on this Mac. The new pane takes half of the session's place; your keyboard stays where it was and the panel
 is not brought up, so with the panel hidden or another tab showing, the pane is there when you open it. Nothing limits how
 many panes a session opens: drag a divider or close a pane when a tab is crowded. A Claude session it opens draws on your Claude

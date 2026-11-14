@@ -309,7 +309,8 @@ echoes. Only the live screen is read, wherever you have scrolled to, and anythin
 controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only, except a
 **Chromium pane**: its read gives the page's address and the address of its DevTools endpoint (CDP, on 127.0.0.1 with no
 password), through which the session can read and act in that page, logged in as you are there (ADR 0048). Any program on
-this Mac can reach that endpoint while a Chromium pane is open. All
+this Mac can reach that endpoint while a Chromium pane is open. A session can also open a Chromium pane itself
+(`pane_open`), at an address it chooses, so it can put a page in front of that endpoint without you picking the tile. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
