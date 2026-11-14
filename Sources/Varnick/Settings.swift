@@ -1095,7 +1095,7 @@ struct SettingsView: View {
                             .onDisappear { resources.settingsTab(shown: false) }
                             case .experimental:
                             SettingRow(title: "Pages in Chromium",
-                                       detail: "Browser panes, pages a session opens and pages found by search are drawn by Chromium, with logins of their own, where it can run, and a session that reads one can read and act in it without asking while it reads (docs/privacy-and-security.md, Pages in Chromium). Off, a new page opens in WebKit, which a session can't drive; a Chromium page already open stays until Varnick restarts. Custom apps, Scratch and pages of another Mac's tab stay in WebKit for now. Experimental.") {
+                                       detail: "Browser panes, pages a session opens and pages found by search are drawn by Chromium, with logins of their own, where it can run. A session that reads any one Chromium page can list and drive every Chromium page in every tab, logged in as you are, for a while, and what it reads goes to Anthropic (docs/privacy-and-security.md, Pages in Chromium). Off, a new page opens in WebKit, which a session can't drive; a Chromium page already open stays until Varnick restarts. Experimental.") {
                                 if !ChromiumEngine.isInstalled {
                                     Text("Not in this Varnick").font(.system(size: 12)).foregroundStyle(.orange)
                                 }

@@ -126,7 +126,7 @@ extension PanelAccess {
             ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
         var later = ""
         if kind == .page, pane.chromiumPage != nil {
-            later = " It is a Chromium page, made once the pane is on screen and Chromium is up, usually a few seconds: call pane_read on it again shortly: that read serves the CDP endpoint (opening serves none) and gives it with the target, and the endpoint stops \(ChromiumEngine.cdpIdleText) after the last pane_read of a Chromium pane or when the last Chromium page closes"
+            later = " It is a Chromium page, made once the pane is on screen and Chromium is up, usually a few seconds: call pane_read on it again shortly: that read serves the CDP endpoint (opening serves none) and gives it with the target, and \(ChromiumEngine.cdpStopText)"
                 + " (until then it says Chromium is starting or the pane is not shown yet), and again if the user has not opened the tab yet."
         } else if kind == .page, let why = pane.webKitNote {
             later = " It is a WebKit page, which can't be read or driven: \(why)."

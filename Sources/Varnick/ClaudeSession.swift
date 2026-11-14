@@ -337,6 +337,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if let address, webView == nil {
             record.url = address
             makeWebView()
+            webKitNote = Self.words(.hostTab)
             if started { load(address) }
         } else if let address, loadFailed {
             // The address is back after a page failed to load: try it now, not at the next retry (at the new address if the port moved).
@@ -397,9 +398,9 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // The `chromium` mark of a record an earlier build saved means nothing now, and is not saved again.
         self.record.chromium = nil
         if record.isWeb, !record.staysOnHost {
-            let (engine, why) = Self.pageEngine(for: record)
-            if engine == .chromium { makeChromiumPage() } else { makeWebView() }
-            webKitNote = why
+            let decision = Self.pageEngine(for: record)
+            if decision.engine == .chromium { makeChromiumPage() } else { makeWebView() }
+            webKitNote = decision.reason.map(Self.words)
         }
         if let file = record.file {
             fileViewer = FileViewer(path: file, fontSize: Settings.shared.fontSize, remote: record.host.map { RemoteFile(host: $0, pane: record.id) })
@@ -1683,22 +1684,23 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // MARK: Web
 
-    /// The engine a page pane gets, asked once when the pane is made (`PageEngine`), and why when it is WebKit. Step 6 of option 02 of `two-browser-panes`
-    /// moves what stays in WebKit until it lands: a custom app's page (Scratch too), a page of another machine's tab (`proxy`, `applyHostProxy`), and a page
-    /// opened at a local address, which only WebKit's load-failure card waits on and retries (`showLoadError`). Deleting the first `if` flips all three.
-    private static func pageEngine(for record: SessionRecord) -> (PageEngine, why: String?) {
-        if record.isApp { return (.webKit, "it is a custom app's page, which stays in WebKit for now") }
-        if record.host != nil { return (.webKit, "it is a page of another Mac's tab, which stays in WebKit for now") }
-        if PeerProxyAddress.isProxiable(record.url ?? "") {
-            return (.webKit, "it was opened at a local address, which stays in WebKit for now (only WebKit's page waits for a server that isn't up yet)")
-        }
-        let (installed, on, failed) = (ChromiumEngine.isInstalled, Settings.shared.pagesInChromium, ChromiumEngine.hasFailed)
-        let engine = PageEngine.choose(frameworkPresent: installed, switchOn: on, engineFailed: failed)
-        guard engine == .webKit else { return (engine, nil) }
-        return (engine, !installed ? "Chromium isn't in this Varnick" : !on ? "Pages in Chromium (Settings › Experimental) was off when it was opened" : Self.engineFailedWhy)
+    /// The engine a page pane gets, asked once when the pane is made and again at each restore, from the address it was left at (`PageEngine`, ADR 0048).
+    private static func pageEngine(for record: SessionRecord) -> PageEngine.Decision {
+        PageEngine.choose(isApp: record.isApp, isHostTab: record.host != nil, address: record.url ?? "", frameworkPresent: ChromiumEngine.isInstalled,
+                          switchOn: Settings.shared.pagesInChromium, engineFailed: ChromiumEngine.hasFailed)
     }
 
-    private static let engineFailedWhy = "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted"
+    /// Why a page is in WebKit, for `pane_read` and `pane_open`'s reply.
+    private static func words(_ reason: PageEngine.Reason) -> String {
+        switch reason {
+        case .customApp: "it is a custom app's page"
+        case .hostTab: "it is a page of another Mac's tab"
+        case .localAddress: "it was at a local address when it was made"
+        case .noFramework: "Chromium isn't in this Varnick"
+        case .switchOff: "Pages in Chromium (Settings › Experimental) was off when it was made"
+        case .engineFailed: "Chromium didn't start in this Varnick, and it can't start again until Varnick is restarted"
+        }
+    }
 
     /// A Chromium page the engine can't make (its start failed) becomes a WebKit page at its Reload, and stays one.
     private func fallBackToWebKit() {
@@ -1707,7 +1709,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         old.removeFromSuperview()
         chromiumPage = nil
         makeWebView()
-        webKitNote = Self.engineFailedWhy
+        webKitNote = Self.words(.engineFailed)
         objectWillChange.send()
         if let url = record.url, !url.isEmpty { load(url) }
     }

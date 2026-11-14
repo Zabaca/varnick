@@ -308,7 +308,7 @@ echoes. Only the live screen is read, wherever you have scrolled to, and anythin
 controls gives the last screen the card holds. A file or a custom app gives its kind and title only, and so does a page in
 WebKit (which says it can't be driven), except a **page in Chromium**, which is where a Browser pane opens wherever Chromium can run
 ([Pages in Chromium](#pages-in-chromium)): its read gives the page's address and the address of its DevTools endpoint (CDP, on
-127.0.0.1 with no password), through which the session can read and act in that page. The endpoint is served
+127.0.0.1 with no password), which can do more than that one page (see Pages in Chromium). The endpoint is served
 only after such a read, for a limited time (ADR 0048), but while it is served any program on
 this Mac can reach it. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
@@ -450,9 +450,9 @@ cloned repository's apps appear in the picker, and picking one runs its code.
 
 ### Pages in Chromium
 
-Browser panes, the pages a session opens with `pane_open` and the pages `find_open` opens beside a session are drawn by Chromium (zebkit's engine, in a copy that sits beside Varnick) wherever it can run, and by WebKit where it can't: when the framework isn't there, Settings › Experimental › Pages in Chromium is off, or the engine failed to start. Custom apps, Scratch and the pages of another Mac's tab stay in WebKit for now. Chromium keeps its own profile, in Varnick's support folder, apart from the Browser pane's WebKit store and from any browser of yours, shared by every page in it.
+Browser panes, the pages a session opens with `pane_open` and the pages `find_open` opens beside a session are drawn by Chromium (zebkit's engine, in a copy that sits beside Varnick) wherever it can run, and by WebKit where it can't (ADR 0048 lists when). Chromium keeps its own profile, in Varnick's support folder, apart from the Browser pane's WebKit store and from any browser of yours, shared by every page in it.
 
-A session that reads a page in Chromium with `pane_read` is given the address of a DevTools endpoint (CDP) through which it can read and act in that page as you are logged in, with no further asking: what you are logged into in Varnick's Chromium is open to it, and what it reads goes to Anthropic with the session. The endpoint is served only after such a read, stops 30 minutes after the last one or when the last Chromium page closes, and has no password: any program on this Mac can use it while it is served (ADR 0048 has the rules and what they leave open). A page in WebKit can't be read or driven by a session. Turning the switch off changes only pages opened afterwards: a Chromium page already open, and the engine, stay until Varnick restarts. Varnick's log holds the port while CDP is served and when it stops, never an address or a page.
+**One endpoint serves every page in Chromium.** A session that reads any one of them with `pane_read` is given the address of a DevTools endpoint (CDP), and through it can list and drive every Chromium page of this Varnick, in every tab and project, logged in as you are, with no further asking: with Pages in Chromium on, that is every Browser pane. What it reads goes to Anthropic with the session. The endpoint is served only after such a read, stops a while after the last one or when the last Chromium page closes (ADR 0048 has the time), and has no password: any program on this Mac can use it while it is served. A page in WebKit can't be read or driven by a session. Turning the switch off changes only pages opened afterwards: a Chromium page already open, and the engine, stay until Varnick restarts. Varnick's log holds the port while CDP is served and when it stops, never an address or a page.
 
 ### Skip permissions
 

@@ -134,6 +134,11 @@ enum ChromiumEngine {
         return shortened > 0 ? max(1, min(shortened, 30 * 60)) : 30 * 60
     }
 
+    /// When the endpoint stops, in the words every text a session is told uses (ADR 0048).
+    nonisolated static var cdpStopText: String {
+        "it stops \(cdpIdleText) after the last pane_read of a Chromium pane or when the last Chromium page closes, so read again to keep it, and a socket to it closes with code 1006 when it stops"
+    }
+
     /// `cdpIdle` in words, for what a session is told.
     nonisolated static var cdpIdleText: String {
         let seconds = Int(cdpIdle.rounded())
@@ -395,6 +400,7 @@ struct Zebkit {
     static let beforeUnloadDialog: Int32 = 3
     static let downloadSave: Int32 = 0
     static let downloadCancel: Int32 = 1
+    static let fullscreenDeny: Int32 = 1
 
     let engineVersion: @convention(c) () -> UnsafePointer<CChar>
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
@@ -412,6 +418,7 @@ struct Zebkit {
     let focus: @convention(c) (View) -> Void
     let close: @convention(c) (View) -> Void
     let targetID: @convention(c) (View) -> UnsafeMutablePointer<CChar>?
+    let setFullscreenPolicy: @convention(c) (View, Int32) -> Bool
     let getURL: @convention(c) (View) -> UnsafeMutablePointer<CChar>?
     let onLoad: @convention(c) (View, LoadFunc?, UnsafeMutableRawPointer?) -> Void
     let onTitle: @convention(c) (View, TitleFunc?, UnsafeMutableRawPointer?) -> Void
@@ -452,6 +459,7 @@ struct Zebkit {
         close = try symbol("zebkit_view_close")
         targetID = try symbol("zebkit_view_get_target_id")
         getURL = try symbol("zebkit_view_get_url")
+        setFullscreenPolicy = try symbol("zebkit_view_set_fullscreen_policy")
         onLoad = try symbol("zebkit_view_on_load")
         onTitle = try symbol("zebkit_view_on_title")
         onClose = try symbol("zebkit_view_on_close")
@@ -496,9 +504,8 @@ final class ChromiumPage: NSView {
     private var seenAddress = ""
     private var addressTimer: Timer?
 
-    /// A page's own history changes (a single-page site's route, a `#`) reach no callback of the engine (hooks.h: same-document changes stay outside
-    /// its navigation events), so the address is read once a second while there is a page. It is skipped inside a pump, whose wait runs timers, and read at the next tick.
-    /// Only a change is acted on, and only to an http or https address, so a load in progress or the engine's error page never replaces the address.
+    /// A same-document address change (a route, a `#`) reaches no load or navigation callback, so the address is read once a second (never inside a pump),
+    /// acted on only when it changes to an http or https one. `zebkit_automation_on_event`'s "Frame.navigated" may replace this: untried (ADR 0048).
     private func checkAddress() {
         guard !closed, !VarnickApplication.isPumping, let kit, let view, let raw = kit.getURL(view) else { return }
         defer { kit.free(raw) }
@@ -675,6 +682,8 @@ final class ChromiumPage: NSView {
     /// queued (`later`), and what the engine waits on or a freed view needs is done at once (`now`).
     private func connect(_ view: Zebkit.View, _ kit: Zebkit) {
         let me = Unmanaged.passUnretained(self).toOpaque()
+        // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
+        _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
         kit.onLoad(view, { _, event, url, data in
             guard event == Zebkit.loadCommitted, let url, let data else { return }
             let text = String(cString: url)

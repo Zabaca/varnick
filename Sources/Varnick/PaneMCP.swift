@@ -9,11 +9,9 @@ import VarnickPeer
 enum OpenedPaneKind: String, CaseIterable {
     case terminal, claude, app, page, file
 
-    /// What a session started before pages opened in Chromium still sends for a Chromium page: now the same as `page`, which opens Chromium where it can run.
-    static let chromiumSynonym = "chromium"
-
+    /// "chromium", which a session started before pages opened in Chromium still sends, is a `page` now.
     init?(named name: String) {
-        self.init(rawValue: name == Self.chromiumSynonym ? Self.page.rawValue : name)
+        self.init(rawValue: name == "chromium" ? "page" : name)
     }
 }
 
@@ -49,8 +47,7 @@ enum PaneMCP {
             + "once with `prompt` as its first message, or waiting if none; `agent` must be one found in the folder), app (a custom app from this session's folder, "
             + "such as Scratch, by `app`: it is told it was split from this pane, so Scratch serves this session's area), page (a Browser pane at the http or https "
             + "`url`: in Chromium where it can run, and then pane_read on it serves the CDP endpoint, on demand, and gives it with the target to drive it; the page is made once the pane is on screen and the engine, which starts on demand, is up, so the reply says when to read again; "
-            + "opening serves nothing, and the endpoint stops \(ChromiumEngine.cdpIdleText) after the last pane_read of a Chromium pane or when the last Chromium page closes, so keep reading to keep it, and its socket closes with code 1006 when it stops; "
-            + "a page in WebKit can't be read or driven, and pane_read says so and why: that is a page at a local address, an app's page, a page of another Mac's tab, or any page when Chromium isn't in this Varnick, failed to start or is switched off in Settings › Experimental) "
+            + "opening serves nothing, and \(ChromiumEngine.cdpStopText); a page in WebKit can't be read or driven, and pane_read says so and why) "
             + "or file (a file pane for `path`, a file inside this session's project). The new pane takes half of this pane's place, `beside` it (the default) "
             + "or `below`; focus stays where it was, so the user keeps typing where they were, and Varnick's panel is never brought up, hidden or pinned: with the "
             + "panel hidden or the tab not on screen the pane is there when the user opens it. A new Claude pane never skips permission checks when this session "

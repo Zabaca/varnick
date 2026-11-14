@@ -544,7 +544,7 @@ Settings › **Experimental** holds a switch for each feature that is still bein
 it can run, so that a session can read and drive the page you are looking at: `pane_read` on it gives the session an endpoint to do that with, for as long as it keeps reading
 (what that lets it do is in [privacy and security](privacy-and-security.md#pages-in-chromium)). Chromium starts the first time a page is on screen, with no restart, and costs about 200 MB until Varnick quits.
 Off, a page you open from then on is WebKit's, which a session can't drive; a Chromium page already open stays until Varnick restarts. Where Chromium isn't in this Varnick, or failed to start, pages are WebKit's whatever the
-switch says, and so are custom apps, Scratch, pages at a local address and the pages of another Mac's tab for now. The switch goes when WebKit's pages do.
+switch says, and some stay in WebKit for now (ADR 0048 lists them). The switch goes when WebKit's pages do.
 
 **Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
 the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
