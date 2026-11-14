@@ -91,10 +91,9 @@ final class Resources: ObservableObject {
     func measure() {
         guard reading == nil, let model, isShown, SessionBoard.panelIsVisible else { return }
         let tabs = model.tabs.map(Self.input)
-        // The kernel reports a process's path with links resolved, so the helpers' folder is too.
         let context = ResourceContext(ownPid: getpid(), ownBinaries: Self.binaryNames,
-                                      helpersFolder: ResourceFolder.current.helpers.resolvingSymlinksInPath().path,
-                                      engineHelpersFolder: ChromiumEngine.frameworkURL.appendingPathComponent("Helpers").resolvingSymlinksInPath().path,
+                                      helpersFolder: Self.resolved(ResourceFolder.current.helpers),
+                                      engineHelpersFolder: Self.resolved(ChromiumEngine.frameworkURL.appendingPathComponent("Helpers")),
                                       sshFolder: SSHRunner.controlDirectory.path, phoneSession: PhonePage.sessionName,
                                       upgradeSession: UpgradeRunner.sessionName, installSessionPrefix: InstallerRunner.sessionPrefix)
         let loaded = loadedModels(model)
@@ -139,6 +138,19 @@ final class Resources: ObservableObject {
         return names
     }
 
+    /// The folder as the kernel reports a process's path: every link resolved, `/private` kept (`resolvingSymlinksInPath` strips it, so `/tmp` never matches).
+    private static func resolved(_ url: URL) -> String {
+        guard let real = realpath(url.path, nil) else { return url.standardizedFileURL.path }
+        defer { free(real) }
+        return String(cString: real)
+    }
+
+    /// Whether the engine runs: a Chromium page pane's memory is in the helpers' row only then.
+    private static var engineRuns: Bool {
+        if case .running = ChromiumEngine.state { return true }
+        return false
+    }
+
     /// A tab as the attribution reads it, on the main actor.
     private static func input(_ tab: ClaudeTab) -> ResourceTab {
         ResourceTab(id: tab.viewID, name: tab.name ?? tab.focused.label, kind: tab.focused.kind,
@@ -152,7 +164,8 @@ final class Resources: ObservableObject {
         let pages = [pane.webView, pane.fileViewer?.pageView].compactMap { $0 }.compactMap(WebKitProcess.pageProcess)
         return ResourcePane(id: pane.id, title: pane.label, kind: pane.kind, isApp: pane.isApp,
                             session: here && (pane.runsInZmx || pane.isApp) ? Zmx.sessionName(pane.id) : nil,
-                            client: pid > 0 ? pid : nil, pages: pages, inChromium: pane.chromiumPage != nil)
+                            client: pid > 0 ? pid : nil, pages: pages,
+                            inChromium: pane.chromiumPage != nil && engineRuns)
     }
 
     // MARK: Selection and keys

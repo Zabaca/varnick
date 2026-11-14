@@ -17,7 +17,7 @@ struct ResourcePane: Equatable, Sendable {
     let client: Int32?
     /// WebKit's process ids of the pane's web views, read again at each measure since a page that goes to another site can move.
     let pages: [Int32]
-    /// The pane shows a Chromium page: its memory is the engine's helpers', counted as one row under no pane (the engine's C API gives no process per page).
+    /// The pane shows a Chromium page in a running engine: its memory is the helpers' row, under no pane (the engine's C API gives no process per page).
     let inChromium: Bool
 }
 
@@ -85,7 +85,7 @@ enum ResourceHelper: Int, CaseIterable {
         case .textHelper: "Text helper"
         case .webShared: "WebKit's GPU and network processes"
         case .webPages: "Web pages in no pane"
-        case .chromium: "Chromium, the engine of every page"
+        case .chromium: "Chromium's helpers"
         case .relay: "Other machines reaching this Mac's tabs"
         case .ssh: "Links to other machines"
         case .builds: "Upgrade and install runs"
@@ -114,6 +114,8 @@ struct ResourcePaneRow: Equatable, Identifiable {
     let inChromium: Bool
     var processes: [ResourceProcess]
     var total: UInt64 { processes.footprint }
+    /// A Chromium page with no process of its own: shown as where its memory is, not as 0 bytes.
+    var inChromiumAlone: Bool { inChromium && processes.isEmpty }
 }
 
 struct ResourceTabRow: Equatable, Identifiable {
@@ -121,8 +123,7 @@ struct ResourceTabRow: Equatable, Identifiable {
     let name: String
     let kind: String
     var panes: [ResourcePaneRow]
-    /// The tab has a Chromium page and no process of its own: its memory is in Chromium's row, so the tab shows no figure.
-    var inChromiumAlone: Bool { count == 0 && panes.contains { $0.inChromium } }
+    var inChromiumAlone: Bool { count == 0 && panes.contains { $0.inChromiumAlone } }
     var total: UInt64 { panes.reduce(0) { $0 + $1.total } }
     var count: Int { panes.reduce(0) { $0 + $1.processes.count } }
 }
