@@ -15,6 +15,7 @@ let package = Package(
         .executable(name: "voice-check", targets: ["voice-check"]),
         .executable(name: "open-check", targets: ["open-check"]),
         .executable(name: "message-check", targets: ["message-check"]),
+        .executable(name: "cookie-check", targets: ["cookie-check"]),
     ],
     targets: [
         .target(name: "VarnickPeer", swiftSettings: [.swiftLanguageMode(.v5)]),
@@ -24,5 +25,6 @@ let package = Package(
         .executableTarget(name: "voice-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "open-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "message-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "cookie-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
