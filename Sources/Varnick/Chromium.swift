@@ -47,6 +47,11 @@ enum ChromiumEngine {
     /// The engine for a page that wants it now. Not running yet, it is started at the next dispatch between runs of the main run loop,
     /// the one place it can start (ADR 0048), and `whenSettled` is called once it has, or failed, so the page asks again.
     static func engine(whenSettled: @escaping @MainActor () -> Void) -> Availability {
+        // The first start's copy of WebKit's logins is under way: pages wait for it, so none loads before the cookies are in.
+        if ChromiumLogins.isHolding {
+            waiters.append(whenSettled)
+            return .starting
+        }
         switch state {
         case .running(let kit, _): return .running(kit)
         case .failed: return .unavailable(failedNote)
@@ -69,14 +74,14 @@ enum ChromiumEngine {
         // The engine's init may run the loop and dispatch events, the gate's among them: a start inside a start would load the engine twice.
         guard case .notStarted = state, !isStarting else { return }
         isStarting = true
+        var holding = false
         defer {
             isStarting = false
-            let told = waiters
-            waiters = []
-            for waiter in told { waiter() }
+            if !holding { tellWaiters() }
         }
         do {
             let kit = try Zebkit(framework: frameworkURL)
+            ChromiumLogins.beginReading()
             try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             // Made before the engine can call `wake`, which it does from its threads during init.
             _ = ChromiumPump.shared
@@ -96,11 +101,19 @@ enum ChromiumEngine {
             state = .running(kit, cdpPort: port)
             NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, CDP on 127.0.0.1:\(port)")
             ChromiumPump.shared.wake(afterMilliseconds: 0)
+            holding = ChromiumLogins.carry(kit) { tellWaiters() }
         } catch {
+            ChromiumLogins.abandon()
             let reason = (error as? ChromiumFailure)?.reason ?? error.localizedDescription
             NSLog("Varnick: Chromium: \(reason)")
             state = .failed(reason)
         }
+    }
+
+    private static func tellWaiters() {
+        let told = waiters
+        waiters = []
+        for waiter in told { waiter() }
     }
 
     /// The engine failed to start, or has stopped: it is never started again in this process.
@@ -285,6 +298,8 @@ struct Zebkit {
     /// Gets the `zebkit_dialog`, whose fields are read at their offsets (`ChromiumPage.connect`).
     typealias DialogFunc = @convention(c) (View?, UnsafeRawPointer?, UnsafeMutableRawPointer?) -> Void
     typealias WindowFunc = @convention(c) (View?, View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+    /// A command's result as JSON, or an error, both the engine's for the call.
+    typealias AutomationFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     typealias DownloadFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     /// A download's progress and a context menu's request, each as JSON; a chosen menu item's id has this shape too.
     typealias JSONFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
@@ -321,6 +336,8 @@ struct Zebkit {
     let cancelDownload: @convention(c) (View, UnsafePointer<CChar>) -> Bool
     let onContextMenu: @convention(c) (View, JSONFunc?, UnsafeMutableRawPointer?) -> Void
     let showContextMenu: @convention(c) (View, UInt64, UnsafePointer<CChar>?, JSONFunc?, UnsafeMutableRawPointer?, ErrorOut) -> Bool
+    /// `zebkit_automation_call`: a Playwright command run in-process; a nil view takes the engine's `BrowserContext.*` commands (`ChromiumLogins`).
+    let automationCall: @convention(c) (View?, UnsafePointer<CChar>, UnsafePointer<CChar>?, AutomationFunc?, UnsafeMutableRawPointer?) -> Void
 
     init(framework: URL) throws {
         let binary = framework.appendingPathComponent("Zebkit").path
@@ -358,6 +375,7 @@ struct Zebkit {
         cancelDownload = try symbol("zebkit_view_cancel_download")
         onContextMenu = try symbol("zebkit_view_on_context_menu")
         showContextMenu = try symbol("zebkit_view_context_menu_show")
+        automationCall = try symbol("zebkit_automation_call")
     }
 
     /// An error string the engine returned, freed, or `fallback` when there was none.
