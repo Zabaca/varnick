@@ -152,7 +152,7 @@ expect("the third form's note survives its file", (try? JSONDecoder().decode(Ope
 
 func arguments(append: String? = nil, resuming: String? = nil, prompt: String = "Say hello") -> [String] {
     ClaudeCommand.arguments(skipPermissions: false, agent: "builder", resuming: resuming, sessionID: "11111111-2222-4333-8444-555555555555",
-                            prompt: prompt, problems: false, mcpConfig: "{}", appendSystemPrompt: append)
+                            prompt: prompt, mcpConfig: "{}", appendSystemPrompt: append)
 }
 let plain = arguments()
 expect("no note adds no flag", !plain.contains("--append-system-prompt"), "\(plain)")

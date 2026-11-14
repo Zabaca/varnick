@@ -18,8 +18,8 @@ enum PanelRefusal: Error {
     case unknownID
     /// An id this session was given, of a pane or card that has since gone.
     case gone
-    /// The Problems board switch (Settings › Experimental) is off.
-    case problemsOff
+    /// A call from a session started before the Problems board was removed: `show` with `view: problems` or `!problems`, `board_read` with `tab: problems`.
+    case problemsRemoved
     /// The Outline switch (Settings › Experimental) is off.
     case outlineOff
     /// The arguments are not ones the tool takes.
@@ -51,7 +51,7 @@ enum PanelRefusal: Error {
         case .unknownTool(let name): "Unknown tool \(name)"
         case .unknownID: "No such id. Ids come from panel, board_read and outline_read (s1… for panes and cards, o1… for the Outline's rows): read one of those first"
         case .gone: "gone: read again"
-        case .problemsOff: "The Problems board is off: the user can turn it on in Settings › Experimental"
+        case .problemsRemoved: "The Problems board was removed from Varnick: there is no Problems tab to show or read. The session board has Sessions and Runs"
         case .outlineOff: "The Outline is off: the user can turn it on in Settings › Experimental"
         case .bad(let why): why
         case .outlineUnavailable(let why): why
@@ -82,7 +82,7 @@ enum PanelRefusal: Error {
         case .unknownTool: "unknown tool"
         case .unknownID: "unknown id"
         case .gone: "gone"
-        case .problemsOff: "problems off"
+        case .problemsRemoved: "problems removed"
         case .outlineOff: "outline off"
         case .bad: "bad arguments"
         case .outlineUnavailable: "outline unavailable"
@@ -367,14 +367,12 @@ final class PanelAccess {
                     if model.activeTab != nil { model.showSearch(focusing: key) } else if key { model.focusSearchField() }
                 }
             case "board": act = { model.showBoard(.sessions) }
-            case "problems":
-                guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
-                act = { model.showBoard(.problems) }
+            case "problems": throw PanelRefusal.problemsRemoved
             // The caret goes into a bullet only if the panel has the keyboard already; the file is read as showing it would.
             case "outline":
                 guard Settings.shared.outlineOn else { throw PanelRefusal.outlineOff }
                 act = { model.showOutline(focusing: key) }
-            default: throw PanelRefusal.bad("view is search, board, problems or outline")
+            default: throw PanelRefusal.bad("view is search, board or outline")
             }
         case "pane":
             let target = try self.target(value, caller: caller)
@@ -393,12 +391,13 @@ final class PanelAccess {
         default:
             let name = String(value.lowercased().drop(while: { $0 == "!" }))
             guard let command = LauncherCommand.allCases.first(where: { $0.names.contains(name) }) else {
+                if name == "problems" { throw PanelRefusal.problemsRemoved }
                 let known = LauncherCommand.available.filter { $0 != .listen }.map(\.rawValue)
                 throw PanelRefusal.bad("No such command. These are: " + known.joined(separator: ", "))
             }
             // It turns on the microphone.
             guard command != .listen else { throw PanelRefusal.bad("A session may not run !listen: it turns on the microphone") }
-            guard LauncherCommand.available.contains(command) else { throw command == .outline ? PanelRefusal.outlineOff : PanelRefusal.problemsOff }
+            guard LauncherCommand.available.contains(command) else { throw PanelRefusal.outlineOff }
             opensTab = command == .transcript
             act = { model.run(command, clearingQuery: false, focusing: key) }
         }
@@ -542,10 +541,6 @@ final class PanelAccess {
             let selected = board.selection.flatMap { id in board.cards.first { $0.id == id } }
                 .map { "selected card: \(self.id(for: $0.id, caller: caller)) \"\($0.title)\"" } ?? "no card selected"
             return ["Showing: the session board, Sessions tab (\(selected))"]
-        case .problems:
-            let selected = board.problems.selection.flatMap { id in board.problems.cards.first { $0.id == id } }
-                .map { "selected: \"\($0.title)\"" } ?? "no problem selected"
-            return ["Showing: the session board, Problems tab (\(selected))"]
         case .runs:
             return ["Showing: the session board, Runs tab"]
         }

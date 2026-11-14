@@ -1,5 +1,7 @@
 # Work links come from hooks and explicit marks, never from transcripts
 
+Withdrawn 2026-11-13, at the user's request: the Problems board was experimental and was removed (the Problems tab, `!problems`, the Settings switch, the five work-link hooks, the `work` skill and its script, the links' records, their fields in the peer replies and `work_history`'s writer). It may return, so this record stays as written. What is still in force is the repository's own planning convention (`docs/problems/`, `docs/agents/issue-tracker.md`), which never depended on the board. `docs/agents/where-it-breaks.md`, Problems board (removed), says what an old build, a saved record and a running session still carry; the protocol version did not change.
+
 Which problem or option a Claude session, or one of its subagents, works on is recorded on purpose, as files in the pane's folder beside ADR 0010's turn file, and the Problems tab on the session board reads them. A **work link** is `none` (the default, and a state of its own), a problem, or an option of a problem, with the repository's main checkout so a builder in a worktree links to the same problem as a planner in the checkout. Problem and options: `docs/problems/problems-not-on-the-board/`; this records option 01. It is built in three branches: the tab from the files and branch ties, then this (the hooks, records, chips and saved links), then the peers' replies and the search database's history.
 
 ## Decision

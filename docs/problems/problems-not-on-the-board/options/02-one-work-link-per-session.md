@@ -6,6 +6,8 @@ status: rejected
 reason: Not chosen in ADR 0020. Option 01 shipped, with links for each subagent and from paired Macs, which this option left for later, so the chips say who did what.
 ---
 
+Note, 2026-11-13: the Problems tab that this option describes was removed at the user's request (experimental; it may return): see [ADR 0020](../../adr/0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md), withdrawn. Its status is as it was when it was decided.
+
 ## Solution
 
 **The Problems tab** is option 01's: the same columns, rule, cards, evidence, Show evidence and keys, over the same projects.

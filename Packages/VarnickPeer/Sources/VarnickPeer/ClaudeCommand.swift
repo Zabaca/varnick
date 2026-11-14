@@ -10,13 +10,11 @@ public enum ClaudeCommand {
     public static let script = #"exec claude "$@""#
 
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
-    /// hook, the turn hooks of ADR 0010 and, with `problems`, the work-link hooks of ADR 0020 (`WorkHooks`): the host that runs
-    /// the session decides, from its Problems board switch (Settings › Experimental, or the relay's `--problems`). With it off
-    /// the settings are the same less the `WorkHooks` entries. The hook for a session's own message (`PaneMessage`) and the allowance for
+    /// hook and the turn hooks of ADR 0010. The hook for a session's own message (`PaneMessage`) and the allowance for
     /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
     /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. `permissionHooks: false` is for a session that gets
     /// `skipDeletePromptEntry`: it has no `PermissionRequest` entry, which would keep Claude Code's delete prompt on (`docs/agents/where-it-breaks.md`).
-    public static func hookSettings(problems: Bool, allowedTools: [String] = [], voice: Bool = false,
+    public static func hookSettings(allowedTools: [String] = [], voice: Bool = false,
                                     permissionHooks: Bool = true) -> String {
         let question = "AskUserQuestion", plan = "ExitPlanMode"
         func turn(_ turn: Turn, matcher: String? = nil) -> HookSettings.Entry {
@@ -44,14 +42,6 @@ public enum ClaudeCommand {
             hooks["PreToolUse"] = [turn(.question, matcher: question), turn(.plan, matcher: plan)]
             hooks["Notification", default: []].append(.init(matcher: "permission_prompt", command: permissionPromptCommand))
             hooks["PostToolBatch", default: []].append(.init(command: permissionClearCommand))
-        }
-        if problems {
-            // Each entry goes last in its event's list, where it stood before the switch.
-            hooks["SessionStart", default: []].append(.init(command: WorkHooks.sessionStart))
-            hooks["PreToolUse", default: []].append(.init(matcher: WorkHooks.writeMatcher, command: WorkHooks.autoLink))
-            hooks["PostToolUse", default: []].append(.init(matcher: WorkHooks.markMatcher, command: WorkHooks.mark))
-            hooks["SubagentStop", default: []].append(.init(command: WorkHooks.subagentStop))
-            hooks["SubagentStart", default: []].append(.init(command: WorkHooks.subagentStart))
         }
         if voice {
             // The voice session's two markers (option 09 of `listening-never-answers`), after every other entry of their events.
@@ -213,8 +203,7 @@ public enum ClaudeCommand {
     /// What follows `claude` in the script's arguments: the MCP config, the hooks' settings, skip permissions and agent,
     /// then `--resume <conversation>` or `--session-id <sessionID>` and the prompt after `--`. The order is
     /// part of the contract, and user text stays one argument each. `agent` is the one the host has found
-    /// to exist, since claude exits on an unknown one. `problems` is the running host's own Problems board switch, read at each start
-    /// like `mcpConfig` and not stored on the record. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
+    /// to exist, since claude exits on an unknown one. `mcpConfig` (Screen access) goes first: `--mcp-config` takes several values
     /// and stops at the next option, `--settings`. `voice` is the voice session's (`VoiceSession`): two more hook entries, read from the record at each
     /// start. `permissionHooks` is `hookSettings`'s: false only for a session that gets `skipDeletePromptEntry`, read at each start. `dontAsk` is an automation's Allowed tools only (`--permission-mode dontAsk`: anything not
     /// allowed is refused with no dialog) and `allowedTools` its rules; both are stored on the record and passed again on resume.
@@ -225,13 +214,12 @@ public enum ClaudeCommand {
     /// start until the pane moves to another conversation; Claude Code records the system prompt with the conversation at its first request and resends
     /// that record on a resume, so a later start's text matters only after a compaction.
     public static func arguments(skipPermissions: Bool, agent: String?, resuming conversation: String?,
-                                 sessionID: String, prompt: String, problems: Bool, mcpConfig: String? = nil,
+                                 sessionID: String, prompt: String, mcpConfig: String? = nil,
                                  dontAsk: Bool = false, allowedTools: [String] = [], voice: Bool = false,
                                  appendSystemPrompt: String? = nil, channelPlugin: String? = nil, permissionHooks: Bool = true) -> [String] {
         (mcpConfig.map { ["--mcp-config", $0] } ?? [])
             + (channelPlugin.map { ["--plugin-dir", $0, "--channels", SessionMessage.channelArgument] } ?? [])
-            + ["--settings", hookSettings(problems: problems, allowedTools: allowedTools, voice: voice,
-                                                       permissionHooks: permissionHooks)]
+            + ["--settings", hookSettings(allowedTools: allowedTools, voice: voice, permissionHooks: permissionHooks)]
             + (skipPermissions ? ["--dangerously-skip-permissions"] : [])
             + (dontAsk && !skipPermissions ? ["--permission-mode", "dontAsk"] : [])
             + (agent.map { ["--agent", $0] } ?? [])

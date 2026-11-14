@@ -129,11 +129,6 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var proxy: String?
     var proxyNote: String?
 
-    /// The problems and options the pane worked on, kept when it closed from its work log (ADR 0020), so ended and Completed cards keep
-    /// their chips. On a record with a `host` they are that host's last report, with `group/name` as the repository (`PeerWork`). Optional so
-    /// older saved records still load; nil when it linked nothing.
-    var workLinks: [WorkLink]?
-
     /// The /rename name of one conversation, kept with the pane. Optional so older saved records still load; a file saved
     /// when Varnick generated titles holds more keys in it (`title`, `failed`), which decoding ignores.
     var titleRecord: TitleRecord?

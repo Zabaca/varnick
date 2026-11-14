@@ -13,7 +13,6 @@ let package = Package(
         .executable(name: "slot-check", targets: ["slot-check"]),
         .executable(name: "runs-check", targets: ["runs-check"]),
         .executable(name: "voice-check", targets: ["voice-check"]),
-        .executable(name: "work-check", targets: ["work-check"]),
         .executable(name: "open-check", targets: ["open-check"]),
         .executable(name: "message-check", targets: ["message-check"]),
     ],
@@ -23,7 +22,6 @@ let package = Package(
         .executableTarget(name: "slot-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "runs-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "voice-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .executableTarget(name: "work-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "open-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "message-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]

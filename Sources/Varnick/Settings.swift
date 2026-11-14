@@ -242,10 +242,6 @@ final class Settings: ObservableObject {
     /// when it changes.
     @Published var servePhonePage: Bool { didSet { defaults.set(servePhonePage, forKey: Self.servePhonePageKey) } }
     static let servePhonePageKey = "servePhonePage"
-    /// Experimental (Settings › Experimental): the board's Problems tab, `!problems`, and the work-link hooks (ADR 0020) in the Claude
-    /// sessions this Mac starts. Off by default, for every install. The work links already recorded are kept either way.
-    @Published var problemsBoard: Bool { didSet { defaults.set(problemsBoard, forKey: Self.problemsBoardKey) } }
-    static let problemsBoardKey = "problemsBoard"
     /// Experimental (Settings › Experimental): the Outline, its shortcut and `!outline` (`!wf`), and Panel access's Outline tools. Off by
     /// default, for every install; the file (ADR 0030) is never touched by the switch, so turning it on shows the same Outline.
     @Published var outlineOn: Bool { didSet { defaults.set(outlineOn, forKey: Self.outlineOnKey) } }
@@ -448,10 +444,11 @@ final class Settings: ObservableObject {
         messagesBetweenMacs = defaults.bool(forKey: Self.messagesMacsKey)
         keepSessionsRunning = defaults.bool(forKey: Self.keepSessionsRunningKey)
         servePhonePage = defaults.bool(forKey: Self.servePhonePageKey)
-        problemsBoard = defaults.bool(forKey: Self.problemsBoardKey)
         outlineOn = defaults.bool(forKey: Self.outlineOnKey)
         // The retired Tasks switch (read by builds up to 2026-11-12): dropped, never carried over.
         defaults.removeObject(forKey: "tasksOn")
+        // The retired Problems board switch (read by builds up to 2026-11-13): dropped, never carried over.
+        defaults.removeObject(forKey: "problemsBoard")
         ownStepsOn = defaults.bool(forKey: Self.ownStepsOnKey)
         // The retired voice session switch (read by builds up to 2026-10-17): dropped, never carried over.
         defaults.removeObject(forKey: "voiceSessionOn")
@@ -1092,10 +1089,6 @@ struct SettingsView: View {
                             .onAppear { resources.settingsTab(shown: true) }
                             .onDisappear { resources.settingsTab(shown: false) }
                             case .experimental:
-                            SettingRow(title: "Problems board",
-                                       detail: "The Problems tab and work links, for projects that plan work in docs/problems. Experimental.") {
-                                Toggle("", isOn: $settings.problemsBoard).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            }
                             SettingRow(title: "Outline",
                                        detail: "Your bullets, shown by \(settings.combo(.outline)?.label ?? "its shortcut") or !outline, kept on this Mac; your listed devices see and edit them on its Phone page, and Claude sessions' Outline tools read and edit them without asking (docs/privacy-and-security.md, Your Outline, on the Phone page). Turning it off hides it and makes both refuse; your outline file is left as it is and is there again when you turn it back on. Experimental.") {
                                 Toggle("", isOn: $settings.outlineOn).labelsHidden().toggleStyle(.switch).controlSize(.small)

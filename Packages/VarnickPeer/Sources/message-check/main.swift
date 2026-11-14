@@ -85,7 +85,7 @@ expect("the folder is under the support folder", ChannelPlugin.folder.path == sc
 
 func arguments(channel: String? = nil, resuming: String? = nil, prompt: String = "Say hello") -> [String] {
     ClaudeCommand.arguments(skipPermissions: false, agent: nil, resuming: resuming, sessionID: "11111111-2222-4333-8444-555555555555",
-                            prompt: prompt, problems: false, mcpConfig: "{}", channelPlugin: channel)
+                            prompt: prompt, mcpConfig: "{}", channelPlugin: channel)
 }
 let without = arguments()
 expect("no channel adds neither flag", !without.contains("--plugin-dir") && !without.contains("--channels"), "\(without)")

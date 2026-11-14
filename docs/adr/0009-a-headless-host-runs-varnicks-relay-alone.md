@@ -1,5 +1,7 @@
 # A headless host runs Varnick's relay alone, and an installer builds it there
 
+Amended 2026-11-13: the installer's `--problems` and `--no-problems` and the `problems` file in the install root are gone with the Problems board ([ADR 0020](0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md)); the next install removes a `problems` file left by an earlier one. The text below is as written.
+
 A machine with no Varnick app, the always-on Ryzen, is a peer like a Mac. Its relay, a Linux build of the one the Macs run (`varnick-peer`, from `Packages/VarnickPeer`), is all of Varnick there: it answers every request itself from zmx and a state folder it owns, started per SSH request with nothing resident. The protocol and its checks live once in that Foundation-only package, which the app and the Linux relay both build; hosts differ at one seam, `PeerHost`, with a Mac adapter in the app and a headless one in the relay. A Mac adds it by address and starts sessions there with `^linux`, always in control of them. (A Device can be in control there too: ADR 0011.) Its hello says `headless` (optional, protocol 11), so a Mac's row reads "relay only" where a Mac peer's reads "Varnick running". The problem and its options are in `docs/problems/sessions-hosted-only-on-macs/`; this records option 01. It amends ADR 0007's "the host's Varnick runs each session": on Linux, claude signs in from its credentials file, which is why ADR 0007 had the app start claude, so a headless host's relay starts sessions itself from an SSH login.
 
 ## Considered Options

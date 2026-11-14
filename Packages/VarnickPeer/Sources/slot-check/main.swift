@@ -178,7 +178,7 @@ for cadence in presets {
 
 func arguments(skip: Bool = false, dontAsk: Bool = false, tools: [String] = []) -> [String] {
     ClaudeCommand.arguments(skipPermissions: skip, agent: "reviewer", resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
-                            prompt: "Say hello", problems: false, mcpConfig: "{}", dontAsk: dontAsk, allowedTools: tools)
+                            prompt: "Say hello", mcpConfig: "{}", dontAsk: dontAsk, allowedTools: tools)
 }
 func allowed(_ arguments: [String]) -> [String] {
     guard let at = arguments.firstIndex(of: "--settings"), let data = arguments[at + 1].data(using: .utf8),
@@ -207,18 +207,17 @@ func commands(_ entries: [[String: Any]]?, matching matcher: String? = nil) -> [
     (entries ?? []).filter { matcher == nil || $0["matcher"] as? String == matcher }
         .flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
 }
-func without(_ permissionHooks: Bool, problems: Bool = false) -> [String: [[String: Any]]] {
+func without(_ permissionHooks: Bool) -> [String: [[String: Any]]] {
     hooks(ClaudeCommand.arguments(skipPermissions: true, agent: nil, resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
-                                  prompt: "", problems: problems, permissionHooks: permissionHooks))
+                                  prompt: "", permissionHooks: permissionHooks))
 }
-let usual = without(true), bare = without(false), bareWithWork = without(false, problems: true)
+let usual = without(true), bare = without(false)
 expect("by default the PermissionRequest entries are there, for a question, a plan and the rest", usual["PermissionRequest"]?.count == 3 && usual["PreToolUse"] == nil, "\(usual.keys.sorted())")
-expect("with no permission hooks there is no PermissionRequest at all", bare["PermissionRequest"] == nil && bareWithWork["PermissionRequest"] == nil, "\(bare.keys.sorted())")
+expect("with no permission hooks there is no PermissionRequest at all", bare["PermissionRequest"] == nil, "\(bare.keys.sorted())")
 expect("a question and a plan are marked from PreToolUse instead", matchers(bare["PreToolUse"]) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bare["PreToolUse"]))")
 expect("the same marks are written: each PreToolUse entry runs the command its PermissionRequest one ran",
        commands(bare["PreToolUse"]) == Array(commands(usual["PermissionRequest"]).dropFirst()))
 expect("they still clear on PostToolUse", matchers(bare["PostToolUse"]).contains("AskUserQuestion|ExitPlanMode") && matchers(usual["PostToolUse"]) == matchers(bare["PostToolUse"]))
-expect("the work-link PreToolUse entry comes after them", matchers(bareWithWork["PreToolUse"]).count == 3 && matchers(bareWithWork["PreToolUse"]).prefix(2) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bareWithWork["PreToolUse"]))")
 expect("a permission dialog is marked from its notification, beside the idle one", matchers(bare["Notification"]) == ["idle_prompt", "permission_prompt"] && matchers(usual["Notification"]) == ["idle_prompt"], "\(matchers(bare["Notification"]))")
 expect("PostToolBatch has the answered entry first, then the clear", commands(bare["PostToolBatch"]).count == 2 && commands(bare["PostToolBatch"]).first == commands(usual["PostToolBatch"]).first)
 expect("every other event is the same", Set(usual.keys).subtracting(["PermissionRequest"]) == Set(bare.keys).subtracting(["PreToolUse"])

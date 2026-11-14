@@ -64,7 +64,7 @@ To build it yourself instead, see [`building.md`](building.md).
 - **Tabs that don't fit** is Shrink (below).
 - **The projects column is hidden** (⌘⇧P shows it; below).
 - **Keep sessions running** is off (below), and so are Listening, Point at the screen, Screen access, the
-  Phone page, the Problems board and the Outline (Experimental, below); Automations are always on (below).
+  Phone page and the Outline (Experimental, below); Automations are always on (below).
 - **`make install` leaves a skill link it didn't make alone** (see [`building.md`](building.md)).
 
 A Mac that ran an earlier Varnick keeps what it stored. One that has Varnick's sessions file but never
@@ -367,7 +367,7 @@ whether the panel is visible, key and pinned, what it shows (the search and its 
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
 the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session
 board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
-shows them, or with `tab: problems` the Problems tab's, while that switch is on. Each pane gets an id such as `s1`
+shows them. Each pane gets an id such as `s1`
 (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
 title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
 never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or
@@ -452,8 +452,8 @@ behind the app in front. With `place`, the result opens beside the session's own
 never sent to TypeSafe or judged for relevance, so a page your `?` search would lift can sit lower here.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
-board, problems (the Problems tab, while that switch is on) or outline, `pane` an id from `panel` or `board_read` (shows
-that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `problems`, `outline`, `resources`).
+board or outline, `pane` an id from `panel` or `board_read` (shows
+that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `outline`, `resources`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
 It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
 Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,
@@ -541,16 +541,6 @@ hours, daily, weekdays, or weekly at a time, in this Mac's time zone. **Run now*
 ## Experimental
 
 Settings › **Experimental** holds a switch for each feature that is still being tried, all off until you turn them on.
-
-**Problems board** is for a project that plans its work in `docs/problems/` the way Varnick's own repository
-does (problems, options, the `/work` skill and the planner and builder agents, which live in that
-repository's `.claude/`). On, the session board has a Problems tab beside Sessions (`!problems`, and Tab switches
-between them) that reads your projects and Home (a `docs/problems/` in Home shows too, its cards marked Home), and each Claude session Varnick starts on this Mac carries the hooks that link it to the problem
-or option it works on. Off, the board shows Sessions only, `!problems` is not listed, and sessions started
-after that get none of those hooks; sessions already running keep the hooks they started with. Links already
-recorded are kept, so turning it on again shows them. Each Mac decides for the sessions it starts, whoever asks
-for them, and a headless host decides with `scripts/install-peer.sh <user@host> --problems` or `--no-problems` (a host
-that has neither runs without). `Varnick --problems` prints the board's columns whatever the switch says.
 
 **Outline** is your bullets, kept in a file on this Mac and shown, and editable, on that Mac's Phone page. On, ⌘⇧Y (or `!outline`, also found as `!wf`) shows it in place of
 the panel's content. Off, which is how it starts, ⌘⇧Y goes to the pane as any unbound key does, `!outline` is not listed, Settings › Shortcuts
