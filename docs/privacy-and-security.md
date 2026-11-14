@@ -307,8 +307,8 @@ you would see it: a session's latest exchange, a command's output, a secret that
 echoes. Only the live screen is read, wherever you have scrolled to, and anything that scrolled off it is not read, and a pane showing a card of a session another Mac
 controls gives the last screen the card holds. A page, a file or a custom app gives its kind and title only, except a
 **Chromium pane**: its read gives the page's address and the address of its DevTools endpoint (CDP, on 127.0.0.1 with no
-password), through which the session can read and act in that page, logged in as you are there (ADR 0048). Any program on
-this Mac can reach that endpoint while a Chromium pane is open. All
+password), through which the session can read and act in that page, logged in wherever you have logged in inside a Chromium pane (its profile is Varnick's own, apart from the Browser pane's; ADR 0048). Any program on
+this Mac can reach that endpoint from the first Chromium page until Varnick quits: closing the pane does not stop it. All
 of it goes to Anthropic with the session. The search field's mode (the session list, a prompt, a `?` search or a `!`
 command list) and whether it is empty are read, never what is typed in it. Nothing on this path goes to TypeSafe.
 It reads no window through Accessibility and needs no permission. Varnick's log holds the tool, the outcome's kind, a count of lines and the time, never a name, a title or a screen's
@@ -355,10 +355,10 @@ panel is up (as Return would), and open a page in your default browser, which lo
 or in a Browser pane beside the session. It opens only a page that is in your history or bookmarks. Varnick's log holds the tool, the outcome's kind,
 counts and the time, never a query, a name, an address or a conversation id.
 
-Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page
+Those sessions (not the voice session) can also open a terminal, a Claude session, a custom app, a page, a Chromium page
 or a file beside their own pane, in their own tab on this Mac, close the panes they opened until you first use one, and mark Done a tab they opened with `tab_open`, on this Mac or another of your machines, until you first use that. They read
 nothing more than the tools above let them, but opening a pane is not free of risk: a custom app they open runs that app's code
-outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, and a Claude session
+outside Claude Code's permission checks, a page they open loads in Varnick's browser with your cookies for that site, a Chromium page they open at an address they choose is logged in wherever you have logged in inside a Chromium pane and can be driven by any program on this Mac (see the Chromium pane above), and a Claude session
 they open draws on your Claude subscription. Whether it skips permission checks is in the guide (Panel access); the limits are in
 docs/agents/where-it-breaks.md (Panel access). Varnick's log holds the tool, the kind of pane, the outcome and the time, never a prompt,
 an address or a path.
