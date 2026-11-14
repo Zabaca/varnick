@@ -69,8 +69,8 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
    *Checked by hand:* the cases of story 1, 2 and 6; a single-page site's route change shows in the address bar and survives a restart; a dark Mac shows a site's dark theme; switching tabs hides the page and showing it again redraws it; the strip's lists, the split picker and a pane drag's veil draw above the page; a click on the page focuses its pane, and ⌘⇧H/J/K/L, ⌘W and ⌘L work with the page holding the keyboard; with the switch off, a new page opens in WebKit and an open Chromium page stays.
 6. **Apps, Scratch and proxied pages in Chromium,** with the load failure and its retries.
    *Checked by hand:* a page at a localhost port before its server starts says it is waiting and appears by itself once it runs; Scratch opens beside a Claude pane and reloads as Claude writes; an app whose server is killed shows its output and Reload runs it again; a page of another Mac's tab at that Mac's localhost loads through its proxy, says the host's reason when the host's Phone page server is stopped, and loads at once when it is back.
-7. **Resources and screen reading count Chromium.** Resources gives the engine's helpers a row of their own; a `look` at Varnick's panel over a Chromium page reads the page.
-   *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for the helpers; a spoken screen request about a page in the panel answers from the page's text.
+7. **Resources and screen reading count Chromium.** Resources gives the engine's helpers a row of their own; a spoken screen request with Varnick's panel in front over a Chromium page reads the page (a session's `look` never reads Varnick's own windows).
+   *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for this Varnick's helpers; a spoken screen request about a page in the panel answers from the page's text.
 8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization.
    *Checked by hand:* `make app` notarizes; on a Mac, the installed app opens a Browser pane in Chromium, a custom app and Scratch, survives a restart with them, and Gatekeeper raises nothing for the helper.
 9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check.
@@ -102,9 +102,9 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
 ### Step 6, as built
 
 Where step 6 decided what the option left open or differs from its text (ADR 0048, "Apps, Scratch, proxied pages and the failure card", has the mechanics and what is unverified):
-- **Chromium's own error page can't be turned off, and the failure card covers it only for the two addresses that have a text to give**: a local address and a page through the port proxy of the pane's host. Any other address that fails shows Chromium's page, since the engine's failed event carries no reason and a card could say less; WebKit's card for such an address (the system's description, no retry) stays while WebKit exists. So the carry-over above ("today's texts and intervals") holds for those two, and a public page's failure text changes to the engine's.
+- **Chromium's own error page can't be turned off, and the failure card covers it only for the two addresses that have a text to give**: a local address and a page through the port proxy of the pane's host. Any other address that fails shows Chromium's page (the lead's decision of 2026-11-13, for the user to confirm at the end test), since a code is not words and the page has them; WebKit's card for such an address (the system's description, no retry) stays while WebKit exists. So the carry-over above ("today's texts and intervals") holds for those two, and a public page's failure text changes to the engine's.
 - **The card is a view of the pane's own inside `ChromiumPage`, not a SwiftUI overlay**: it is moved above the engine's view when it shows, which is the thing the hand check has to see.
-- **A load the engine reports as failed is told from one a newer load stopped by its address** (the event says only "failed or stopped"), and from a file's download by the page having answered one.
+- **A failure is read from the engine's navigation result** (main frame, not Chromium's abort code, the latest navigation), not from its load events, which say only "failed or stopped"; ADR 0048 has the rule, the event order it assumes and the checks.
 - **`PageEngine.choose` no longer reads the app, the host tab or the address:** it is the three facts, and `pane_open`'s `app` kind says whether its page is drivable as `page` does.
 
 ### What a page asks of its pane (step 3)
@@ -140,6 +140,10 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 - **Chrome's logins** (the prototype that copies one site's cookies from Chrome) are not part of this option.
 - **One profile** for every page and app pane, as WebKit's store is today: a session's `pane_open` `page` loads with the user's cookies, and whatever step 2 opens reaches every site's cookies. zebkit's contexts are in memory only, so nothing persistent per tab or project exists; out of scope.
 - **Cookie keys.** The engine's default keeps the cookie key in the macOS keychain, which may ask after an ad hoc rebuild (unverified; the hand check). Its file storage avoids the keychain but keeps the key beside the cookies.
+
+### Resources and screen reading (step 7)
+
+Built as ADR 0048's step-7 bullet says: the helpers are one row, "Chromium's helpers", and the engine starts with its page accessibility on only when Accessibility is granted and Point at the screen is on. Whether the page then shows in Varnick's own tree is unverified and is the first by-hand check.
 
 ### The framework in Varnick.app (step 8)
 

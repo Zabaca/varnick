@@ -90,7 +90,7 @@ Mac** or leave it off (it is off by default): then none of this happens.
   the window's visible text, not only the text near its controls: a message list's subjects and senders, an open
   mail's body, a page's text in Safari, a file's name in a tab, the account's name in a sidebar. With Varnick's
   panel open and in front, it is read first like any window, so its session titles, folders, projects, agents,
-  Macs' names, page titles and sites go too. A terminal pane's text is not among them. The
+  Macs' names, page titles and sites go too, and so does the text of a page in a Browser pane ([Pages in Chromium](#pages-in-chromium) says when Chromium's is readable). A terminal pane's text is not among them. The
   elements never hold what is typed in a field, and a password field is not read.
 - **Short lines read from a picture.** If the elements don't have the thing, or the window is a Chrome page, and Screen
   Recording is granted, a picture of that window alone is read for text on this Mac, and its short lines go too: at most 6 words and
@@ -466,6 +466,8 @@ cloned repository's apps appear in the picker, and picking one runs its code.
 Browser panes, custom apps and Scratch, the pages of another Mac's tab, the pages a session opens with `pane_open` and the pages `find_open` opens beside a session are drawn by Chromium (zebkit's engine, in a copy that sits beside Varnick) wherever it can run, and by WebKit where it can't (ADR 0048 lists when). Chromium keeps its own profile, in Varnick's support folder, apart from the Browser pane's WebKit store and from any browser of yours, shared by every page in it; WebKit's cookies are copied into it once, at the engine's first starts (the first item under What stays on your Mac says how).
 
 **One endpoint serves every page in Chromium.** A session that reads any one of them with `pane_read` is given the address of a DevTools endpoint (CDP), and through it can list and drive every Chromium page of this Varnick, in every tab and project, logged in as you are, with no further asking: with Pages in Chromium on, that is every Browser pane, every custom app's and Scratch's page, and every page of another Mac's tab shown here. What it reads goes to Anthropic with the session. The endpoint is served only after such a read, stops a while after the last one or when the last Chromium page closes (ADR 0048 has the time), and has no password: any program on this Mac can use it while it is served. A page in WebKit can't be read or driven by a session. Turning the switch off changes only pages opened afterwards: a Chromium page already open, and the engine, stay until Varnick restarts. Varnick's log holds the port while CDP is served and when it stops, never an address or a page.
+
+**The page's accessibility tree is on only while Point at the screen can read it.** Chromium builds a page's accessibility tree only when asked, and can be asked only when it starts, so the engine starts with it on only if Varnick already has Accessibility and Point at the screen is on (a little more memory and work for every page; a change made later applies from the next restart). Anything that holds Accessibility can then read a page in Varnick's panel as it reads any window, as it always could a page in WebKit: an app you granted, VoiceOver, and every pane's commands, which run under Varnick's own grant ([Screen permissions reach every pane](#screen-permissions-reach-every-pane)). The tree opens no port.
 
 ### Skip permissions
 

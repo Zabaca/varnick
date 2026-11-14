@@ -26,15 +26,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     @Published var editingAddress = false
     private var webObservers: [NSKeyValueObservation] = []
     private var retry: DispatchWorkItem?
-    /// The page last asked for failed to load and hasn't loaded since: a proxied address that returns tries again at once. In Chromium only while its
-    /// card is up (an address that gets no card leaves Chromium's own error page).
+    /// The page last asked for failed to load and hasn't loaded since: a proxied address that returns tries again at once. In Chromium, while its card is up.
     private var loadFailed = false
-    /// When the card of a Chromium page came up, and when the page last answered a download.
-    private var failedAt = Date.distantPast
-    private var lastDownload = Date.distantPast
-    /// A finish within this long of a failure is the engine's error page finishing, not the page. A load a download ended is no failure for this long.
-    private static let errorPageSettle: TimeInterval = 0.5
-    private static let downloadGrace: TimeInterval = 3
+    /// A Chromium page: whether its card is up, from the engine's events (`LoadFailure.Watch`).
+    private var loadWatch = LoadFailure.Watch()
     /// Terminal title Claude Code sets (it names the conversation once it has a topic).
     @Published private(set) var title = ""
     @Published private(set) var started = false
@@ -348,7 +343,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         } else if let address, loadFailed {
             // The address is back after a page failed to load: try it now, not at the next retry (at the new address if the port moved).
             retry?.cancel()
-            loadFailed = false
             let wanted = record.url.flatMap(URL.init(string:))
             if let wanted, wanted.port == URL(string: address)?.port { tryAgain(at: wanted) } else { load(address) }
         }
@@ -1685,7 +1679,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
 
     // MARK: Web
 
-    /// The engine a page pane gets, asked once when the pane is made and again at each restore, from the address it was left at (`PageEngine`, ADR 0048).
+    /// The engine a page pane gets, asked once when the pane is made and again at each restore (`PageEngine`, ADR 0048).
     private static func pageEngine() -> PageEngine.Decision {
         PageEngine.choose(frameworkPresent: ChromiumEngine.isInstalled, switchOn: Settings.shared.pagesInChromium, engineFailed: ChromiumEngine.hasFailed)
     }
@@ -1712,6 +1706,8 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         old.close()
         old.removeFromSuperview()
         chromiumPage = nil
+        loadFailed = false
+        loadWatch.reset()
         makeWebView()
         webKitNote = Self.words(.engineFailed)
         objectWillChange.send()
@@ -1742,9 +1738,12 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         page.onTitle = { [weak self] title in self?.webChanged(title: title) }
         page.onURL = { [weak self] text in self?.webChanged(url: URL(string: text)) }
         page.onNote = { [weak self] note in self?.showPageNote(note) }
-        page.onLoaded = { [weak self] in self?.chromiumPageLoaded() }
-        page.onLoadFailed = { [weak self] address in self?.chromiumLoadFailed(address) }
-        page.onDownloadStarted = { [weak self] in self?.chromiumDownloadStarted() }
+        page.onLoaded = { [weak self] in self?.chromiumEvent(.loaded) }
+        page.onLoadFailed = { [weak self] address in self?.chromiumEvent(.loadFailed(address)) }
+        page.onNavigation = { [weak self] json in
+            Self.logNavigationShape(json)
+            if let stage = LoadFailure.stage(fromJSON: json) { self?.chromiumEvent(.stage(stage)) }
+        }
         page.onPageWindow = { [weak self] opened in
             if let self { self.onOpenPageWindow(opened) } else { opened.close() }
         }
@@ -1787,6 +1786,10 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let text = input.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty, let url = Self.url(from: text) else { return }
         retry?.cancel()
+        // Another address: a card for the one before goes at once, and what is asked for next is judged afresh.
+        loadFailed = false
+        loadWatch.reset()
+        chromiumPage?.hideCard()
         record.url = url.absoluteString
         if editingAddress { editingAddress = false }
         webView?.load(URLRequest(url: url))
@@ -1883,41 +1886,43 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     private func tryAgain(at url: URL) {
         webView?.load(URLRequest(url: url))
         guard let page = chromiumPage else { return }
+        _ = loadWatch.handle(.requested, target: url.absoluteString)
         ChromiumPump.shared.afterPump { [weak page] in page?.load(url.absoluteString) }
     }
 
-    // MARK: Chromium's load events (ADR 0048)
+    // MARK: Chromium's card (`LoadFailure.Watch`, ADR 0048)
 
-    /// The engine said a load failed or was stopped (`ChromiumPage.onLoadFailed`). It doesn't say which, or why, so: an address that isn't the pane's is a load a
-    /// newer one stopped, or a frame; a load a download ended is not one either (the file's navigation reports a failure). Of the rest, only a local address
-    /// and a page through a host's proxy get a card, over Chromium's own error page, and retry; any other address keeps the engine's page, which says why.
-    private func chromiumLoadFailed(_ address: String) {
-        guard let page = chromiumPage, let target = record.url.flatMap(URL.init(string:)), LoadFailure.isSame(address, as: target.absoluteString),
-              Date().timeIntervalSince(lastDownload) > Self.downloadGrace else { return }
-        // An address with no card of its own (the user typed a public one) takes down the card of the one before, which Chromium's page then shows.
-        guard let card = failureCard(for: target, other: nil) else { return loadFailed ? dismissFailure() : () }
-        loadFailed = true
-        failedAt = Date()
-        page.showCard(card.message)
-        retry?.cancel()
-        scheduleRetry(of: target, after: card.retryAfter)
+    /// What the engine's events say of the page's load. A card only for a local address or a host's proxy, over Chromium's own error page; any other address
+    /// keeps the engine's page, which says why.
+    private func chromiumEvent(_ event: LoadFailure.Event) {
+        guard let page = chromiumPage, let address = record.url else { return }
+        switch loadWatch.handle(event, target: address) {
+        case .none:
+            break
+        case .dismiss:
+            dismissFailure()
+        case .showCard:
+            guard let target = URL(string: address), let card = failureCard(for: target, other: nil) else { return dismissFailure() }
+            loadFailed = true
+            page.showCard(card.message)
+            retry?.cancel()
+            scheduleRetry(of: target, after: card.retryAfter)
+        }
     }
 
-    /// A document committed or finished loading: the failure is over. Not within a moment of the card coming up, when it may be the engine's error page.
-    private func chromiumPageLoaded() {
-        guard loadFailed, Date().timeIntervalSince(failedAt) > Self.errorPageSettle else { return }
-        dismissFailure()
-    }
+    private static var loggedPhases: Set<String> = []
 
-    /// The page answered a download: the failure card that came with it, if it just did, goes and its retries stop (they would download it again).
-    private func chromiumDownloadStarted() {
-        lastDownload = Date()
-        guard loadFailed, Date().timeIntervalSince(failedAt) < Self.downloadGrace else { return }
-        dismissFailure()
+    /// The first navigation event of each phase is logged by its field names, phase and codes, never an address, so the format `LoadFailure.stage` guesses can be read.
+    private static func logNavigationShape(_ json: String) {
+        guard loggedPhases.count < 12, let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else { return }
+        let phase = (object["phase"] as? String) ?? "none"
+        guard loggedPhases.insert(phase).inserted else { return }
+        NSLog("Varnick: Chromium navigation phase \(phase): keys \(object.keys.sorted().joined(separator: ",")), mainFrame \(object["mainFrame"] ?? "none"), netError \(object["netError"] ?? "none")")
     }
 
     private func dismissFailure() {
         loadFailed = false
+        loadWatch.reset()
         retry?.cancel()
         chromiumPage?.hideCard()
     }

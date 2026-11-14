@@ -18,6 +18,7 @@ let package = Package(
         .executable(name: "page-check", targets: ["page-check"]),
         .executable(name: "cookie-check", targets: ["cookie-check"]),
         .executable(name: "load-check", targets: ["load-check"]),
+        .executable(name: "engine-check", targets: ["engine-check"]),
     ],
     targets: [
         .target(name: "VarnickPeer", swiftSettings: [.swiftLanguageMode(.v5)]),
@@ -30,5 +31,6 @@ let package = Package(
         .executableTarget(name: "page-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "cookie-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "load-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "engine-check", dependencies: ["VarnickPeer"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

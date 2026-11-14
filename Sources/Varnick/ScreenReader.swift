@@ -51,6 +51,10 @@ enum ScreenReader {
 
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Chromium's switch for a page's accessibility tree, given at its start only while Point at the screen can read the panel (ADR 0048).
+    @MainActor
+    static var pageAccessibilitySwitches: [String] { isTrusted && Settings.shared.pointAtScreen ? ["--force-renderer-accessibility"] : [] }
+
     /// How long a repeated Grant press waits, after the prompt and the pane, before it decides the list still lacks Varnick.
     static let grantWait: Duration = .seconds(1)
 

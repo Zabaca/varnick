@@ -81,7 +81,7 @@ enum ChromiumEngine {
             // Made before the engine can call `wake`, which it does from its threads during init.
             _ = ChromiumPump.shared
             _ = kit.setWakeup(wake, nil)
-            // Chromium's own switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path alone.
+            // Chromium's switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path and `ScreenReader.pageAccessibilitySwitches`.
             let settings = try String(data: JSONSerialization.data(withJSONObject: [
                 "profileDirectory": profileURL.path, "headless": false,
                 // Chromium's log would go to stderr, which is Varnick's log, and it carries addresses.
@@ -89,12 +89,13 @@ enum ChromiumEngine {
                 // A page takes the system's light or dark, as WebKit's did.
                 "appearance": ["follow": true],
             ] as [String: Any]), encoding: .utf8)!
-            var argv: [UnsafeMutablePointer<CChar>?] = [strdup(CommandLine.arguments.first ?? "Varnick"), nil]
+            let arguments = [CommandLine.arguments.first ?? "Varnick"] + ScreenReader.pageAccessibilitySwitches
+            var argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
             var error: UnsafeMutablePointer<CChar>?
-            let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(1, $0.baseAddress, settings, &error) }
+            let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(Int32(arguments.count), $0.baseAddress, settings, &error) }
             guard status == 0 else { throw ChromiumFailure("the engine didn't start: " + kit.take(error, or: "code \(status)")) }
             state = .running(kit)
-            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane")
+            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane" + (arguments.count > 1 ? ", page accessibility asked for" : ""))
             ChromiumPump.shared.wake(afterMilliseconds: 0)
             // Must stay the last statement of the `do`: it sets the page hold, and `abandon()` below releases nothing, so a line that throws after it would
             // strand every held page.
@@ -406,6 +407,8 @@ struct Zebkit {
     /// A command's result as JSON, or an error, both the engine's for the call.
     typealias AutomationFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     typealias DownloadFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+    /// A navigation stage: the view, the request to answer, its JSON (borrowed) and the data.
+    typealias NavigationFunc = @convention(c) (View?, OpaquePointer?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
     /// A download's progress and a context menu's request, each as JSON; a chosen menu item's id has this shape too.
     typealias JSONFunc = @convention(c) (View?, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
 
@@ -416,6 +419,7 @@ struct Zebkit {
     static let downloadSave: Int32 = 0
     static let downloadCancel: Int32 = 1
     static let fullscreenDeny: Int32 = 1
+    static let navigationContinue: Int32 = 0
 
     let engineVersion: @convention(c) () -> UnsafePointer<CChar>
     let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
@@ -448,6 +452,9 @@ struct Zebkit {
     let onContextMenu: @convention(c) (View, JSONFunc?, UnsafeMutableRawPointer?) -> Void
     let showContextMenu: @convention(c) (View, UInt64, UnsafePointer<CChar>?, JSONFunc?, UnsafeMutableRawPointer?, ErrorOut) -> Bool
     /// `zebkit_automation_call`: a Playwright command run in-process; a nil view takes the engine's `BrowserContext.*` commands (`ChromiumLogins`).
+    let onNavigation: @convention(c) (View, NavigationFunc?, UnsafeMutableRawPointer?) -> Void
+    let navigationRespond: @convention(c) (OpaquePointer, Int32, UnsafePointer<CChar>?, ErrorOut) -> Bool
+    let setNavigationTimeout: @convention(c) (View, UInt32) -> Bool
     let automationCall: @convention(c) (View?, UnsafePointer<CChar>, UnsafePointer<CChar>?, AutomationFunc?, UnsafeMutableRawPointer?) -> Void
 
     init(framework: URL) throws {
@@ -489,6 +496,9 @@ struct Zebkit {
         cancelDownload = try symbol("zebkit_view_cancel_download")
         onContextMenu = try symbol("zebkit_view_on_context_menu")
         showContextMenu = try symbol("zebkit_view_context_menu_show")
+        onNavigation = try symbol("zebkit_view_on_navigation")
+        navigationRespond = try symbol("zebkit_navigation_respond")
+        setNavigationTimeout = try symbol("zebkit_view_set_navigation_timeout")
         automationCall = try symbol("zebkit_automation_call")
     }
 
@@ -556,16 +566,14 @@ final class ChromiumPage: NSView {
     var onClosedItself: (() -> Void)?
     /// What became of a download, for the pane to say.
     var onNote: (String) -> Void = { _ in }
-    /// A document committed or finished loading, for an address that loaded (the pane's card, if it shows one, goes).
+    /// What the pane needs of the load events for its card (`LoadFailure.Watch`): a document of an http or https address committed or finished, a load
+    /// failed or stopped (with its address), and a main-frame navigation stage (its JSON).
     var onLoaded: () -> Void = {}
-    /// The engine reported a load failed or stopped, with the address: the pane decides which (`ClaudeSession.chromiumLoadFailed`).
     var onLoadFailed: (String) -> Void = { _ in }
-    /// The page answered a download: a navigation to a file reports a failed load too (ADR 0048), which is no failure.
-    var onDownloadStarted: () -> Void = {}
+    var onNavigation: (String) -> Void = { _ in }
     /// Why there is no page (the engine starting, missing or failed), shown in place of it.
     private let note = NSTextField(labelWithString: "")
-    /// The pane's own card over the page (`ClaudeSession`'s load failure): the engine's own error page is under it. It is a sibling of the engine's view,
-    /// moved above it each time it shows; whether that draws above the engine's view is unverified.
+    /// The pane's own card over the engine's error page (`ClaudeSession`'s load failure), a sibling of the engine's view. Unverified that it draws above it.
     private let card = NSView()
     private let cardLabel = NSTextField(wrappingLabelWithString: "")
     /// What the card says now, nil while it is hidden.
@@ -615,6 +623,8 @@ final class ChromiumPage: NSView {
         return String(cString: id)
     }
 
+    fileprivate func owns(_ other: Zebkit.View?) -> Bool { other != nil && other == view }
+
     /// The page exists and hasn't closed: a retry that finds it gone (the site closed it) stops rather than making it again.
     var isOpen: Bool { view != nil && !closed }
 
@@ -622,11 +632,17 @@ final class ChromiumPage: NSView {
         cardLabel.stringValue = message
         card.isHidden = false
         layoutCard()
-        // After the engine's view, which was added last: a later sibling draws above an earlier one.
         addSubview(card, positioned: .above, relativeTo: nil)
     }
 
-    func hideCard() { card.isHidden = true }
+    func hideCard() {
+        card.isHidden = true
+        // The keyboard was kept from the page while the card was up (`acceptsFirstResponder`): the pane has it still, so the page gets it back.
+        if window?.firstResponder === self { ChromiumPump.shared.afterPump { [weak self] in self?.focusPage() } }
+    }
+
+    /// While the card is up the pane takes focus itself, so keys don't reach the page under it.
+    override var acceptsFirstResponder: Bool { !card.isHidden }
 
     private func layoutCard() {
         card.frame = bounds
@@ -644,7 +660,7 @@ final class ChromiumPage: NSView {
     }
 
     func focusPage() {
-        guard let kit, let view else { window?.makeFirstResponder(self); return }
+        guard let kit, let view, card.isHidden else { window?.makeFirstResponder(self); return }
         kit.focus(view)
     }
 
@@ -664,6 +680,7 @@ final class ChromiumPage: NSView {
         kit.onDownload(view, nil, nil)
         kit.onDownloadProgress(view, nil, nil)
         kit.onContextMenu(view, nil, nil)
+        kit.onNavigation(view, nil, nil)
         kit.close(view)
     }
 
@@ -741,6 +758,18 @@ final class ChromiumPage: NSView {
         let me = Unmanaged.passUnretained(self).toOpaque()
         // WebKit's element fullscreen was off, so a video's fullscreen button did nothing; Chromium's inside the panel is untried (ADR 0048).
         _ = kit.setFullscreenPolicy(view, Zebkit.fullscreenDeny)
+        // Every stage of a main-frame navigation is answered at once with "continue" (an unanswered one holds the page until the engine's deadline, which is
+        // cut to a quarter second in case an answer inside the callback turns out not to count); the pane reads the stage for its card (`LoadFailure`).
+        _ = kit.setNavigationTimeout(view, 250)
+        kit.onNavigation(view, { view, request, json, data in
+            guard let data else { return }
+            if let request { ChromiumPage.now(data) { page in _ = page.kit?.navigationRespond(request, Zebkit.navigationContinue, nil, nil) } }
+            guard let json else { return }
+            let text = String(cString: json)
+            // A popup is decided for by its opener's handler until it has its own, with the popup as the view: only the page's own view is its stages.
+            nonisolated(unsafe) let from = view
+            ChromiumPage.later(data) { page in if page.owns(from) { page.onNavigation(text) } }
+        }, me)
         // Committed moves the address; committed and finished both say a page loaded, failed that a load did not (a failed load of the engine's own error
         // page is told by what its address is: only an http or https one is a page of the site, as with `checkAddress`).
         kit.onLoad(view, { _, event, url, data in
@@ -846,8 +875,6 @@ final class ChromiumPage: NSView {
     /// holds the download for its answer (30 s), given by `reserved`.
     private func answerDownload(_ request: OpaquePointer, _ json: String) {
         guard let asked = Self.object(json), let id = asked["downloadId"] as? String else { return }
-        // Queued like the notes: this runs inside a pump, and the pane's work waits for it to return.
-        DispatchQueue.main.async { MainActor.assumeIsolated { if !self.closed { self.onDownloadStarted() } } }
         let name = asked["suggestedName"] as? String ?? ""
         let deadline = (asked["deadlineUnixMs"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
         nonisolated(unsafe) let token = request
