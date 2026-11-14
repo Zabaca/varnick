@@ -37,7 +37,7 @@ An accepted option is the spec: when work starts, its tickets go under `.scratch
 An option's status says where it stands, so it is kept true:
 
 - `proposed`, `accepted`, `rejected`, `abandoned`: the user's choice; the planner writes it. An option the user decides against, built or not, is set `rejected` or `abandoned` with the user's reason, and its branch is deleted.
-- `in-progress`: set by hand when work starts that no branch shows yet, and by a merge that leaves part of the option unbuilt (below).
+- `in-progress`: set when work on the option starts (by the planner or whoever starts it), and by a merge that leaves part of the option unbuilt (below).
 - `shipped`: set by the merge that finishes the option.
 
 **The merge sets the status.** Every merge of a branch that builds an option sets that option's status in the merge commit itself: `git merge --no-ff --no-commit <branch>`, edit the option's `status`, then `git commit` with the merge message. It is `shipped` when nothing of the option is left; else `in-progress`, with what is left named in the merge message. A built option is never left `accepted`.

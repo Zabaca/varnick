@@ -108,7 +108,8 @@ struct BoardPanelView: PanelAccessView {
             // The paired machines' tab lists first, so a session opened on one a moment ago is on the board though nobody is at this Mac.
             let unreached = await model.bringPeerListsUpToDate()
             return sessions(caller: caller) + (PeerListRefresh.note(unreached: unreached).map { "\n" + $0 } ?? "")
-        // A session started before the Problems board was removed still lists its `tab` argument.
+        // A session started before the Problems board was removed still lists `tab`: `sessions` is still accepted, though the error below says
+        // board_read takes no tab.
         case "problems": throw PanelRefusal.problemsRemoved
         default: throw PanelRefusal.bad("board_read takes no tab: it reads the Sessions tab")
         }

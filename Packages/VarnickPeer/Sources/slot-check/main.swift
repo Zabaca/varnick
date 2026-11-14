@@ -207,11 +207,11 @@ func commands(_ entries: [[String: Any]]?, matching matcher: String? = nil) -> [
     (entries ?? []).filter { matcher == nil || $0["matcher"] as? String == matcher }
         .flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
 }
-func without(_ permissionHooks: Bool) -> [String: [[String: Any]]] {
+func settings(permissionHooks: Bool) -> [String: [[String: Any]]] {
     hooks(ClaudeCommand.arguments(skipPermissions: true, agent: nil, resuming: nil, sessionID: "11111111-2222-4333-8444-555555555555",
                                   prompt: "", permissionHooks: permissionHooks))
 }
-let usual = without(true), bare = without(false)
+let usual = settings(permissionHooks: true), bare = settings(permissionHooks: false)
 expect("by default the PermissionRequest entries are there, for a question, a plan and the rest", usual["PermissionRequest"]?.count == 3 && usual["PreToolUse"] == nil, "\(usual.keys.sorted())")
 expect("with no permission hooks there is no PermissionRequest at all", bare["PermissionRequest"] == nil, "\(bare.keys.sorted())")
 expect("a question and a plan are marked from PreToolUse instead", matchers(bare["PreToolUse"]) == ["AskUserQuestion", "ExitPlanMode"], "\(matchers(bare["PreToolUse"]))")

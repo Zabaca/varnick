@@ -16,7 +16,7 @@
 # PAGE_PUBLISH_PORT are ADR 0011's note of 2026-10-06.
 #
 # What this far half supports, which the near half reads rather than guessing from a function name: RUN (per-run tarball names), LOCK
-# (the install lock), PROBLEMS (the retired problems file: an older near half still asks for it by this word, and is answered with no PROBLEMS marker), AUTOMATIONS
+# (the install lock), PROBLEMS (the retired problems file: an older near half still asks for it by this word, and is answered PROBLEMS=off), AUTOMATIONS
 # (the timer). Add a word when a feature the near half adapts to arrives; never remove one.
 # supports: RUN LOCK PROBLEMS AUTOMATIONS
 #
@@ -587,7 +587,9 @@ main() {
   printf '%s\n' "$COMMIT" >"$ROOT/build.new" && mv -f "$ROOT/build.new" "$ROOT/build"
   echo "BUILD=$COMMIT"
   # The problems file of an earlier install (the Problems board's switch, removed 2026-11-13; nothing reads it now): Varnick's own file, removed.
+  # An older near half still reads the marker: off is what is true, so its --no-problems passes and its --problems fails by saying so.
   rm -f "$ROOT/problems" "$ROOT/problems.new"
+  echo "PROBLEMS=off"
   # The automations' timer, after the relay it runs: installed, kept up to date where it is installed, or removed.
   case "${AUTOMATIONS:-auto}" in
     off) automations_remove ;;

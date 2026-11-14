@@ -39,7 +39,7 @@ Every Workflow run recorded for this project, Oct 3 23:20 to Oct 4 13:20 (local 
 
 **It isn't gated.** A Workflow agent can't ask the user anything, so every decision ended one run and began another: accepting options, whether Claude panes get `LAUNCHY_PROJECT`, layout choices, hand tests and merge go-aheads (11 branches merged to main on Oct 3–4). What was decided between runs lives in the lead's context.
 
-**It isn't linked.** Since 2026-10-09 most of this is recorded: a builder ties its branch to its option, hooks and `/work` link sessions and subagents to what they work on, the merge that finishes an option sets `shipped`, and the Problems tab reads these links rather than guessing them from shared words (ADR 0020). What is left:
+**It isn't linked.** (Note, 2026-11-13: the work links and the Problems tab below were removed at the user's request, experimental, and may return: ADR 0020, withdrawn. The merge setting the status stays.) Since 2026-10-09 most of this was recorded: a builder ties its branch to its option, hooks and `/work` link sessions and subagents to what they work on, the merge that finishes an option sets `shipped`, and the Problems tab reads these links rather than guessing them from shared words (ADR 0020). What is left:
 
 - Builders keep tickets and specs in their worktree's gitignored `.scratch`, so removing a merged worktree deletes them. Custom apps ticket 1 went that way: the main checkout's issue folder holds tickets 2 to 4, copied by hand. So did the spec for reordering tabs by dragging, whose merge now traces to nothing.
 - `shipped` is set only by a merge that remembers to. An audit on 2026-10-09 found two merged options still `accepted`, and one marked `shipped` with a ticket unbuilt.

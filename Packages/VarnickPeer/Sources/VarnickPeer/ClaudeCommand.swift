@@ -11,7 +11,7 @@ public enum ClaudeCommand {
 
     /// The settings claude is started with (`--settings`), added to the user's own hooks: ADR 0001's SessionStart
     /// hook and the turn hooks of ADR 0010. The hook for a session's own message (`PaneMessage`) and the allowance for
-    /// `notify` are there with it on or off. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
+    /// `notify` are always there. `allowedTools` are Claude Code permission rules an automation's run may use without a dialog
     /// (option 01 of `prompts-cant-run-on-a-schedule`), added beside `notify`'s. `permissionHooks: false` is for a session that gets
     /// `skipDeletePromptEntry`: it has no `PermissionRequest` entry, which would keep Claude Code's delete prompt on (`docs/agents/where-it-breaks.md`).
     public static func hookSettings(allowedTools: [String] = [], voice: Bool = false,

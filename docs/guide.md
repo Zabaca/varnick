@@ -367,8 +367,7 @@ whether the panel is visible, key and pinned, what it shows (the search and its 
 tab and its panes, with this session marked and the focused pane; the session board and its selected card;
 the Outline, with its zoom, filter and caret; Resources, by name only; Settings) and what has the keyboard. `board_read` gives the session
 board's cards, one per tab with its sessions listed under it, by column (Running, Stopped, Completed) as the board
-shows them. Each pane gets an id such as `s1`
-(a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
+shows them. Each pane gets an id such as `s1` (a card its tab's, a session its pane's), the same every time, in all of them. `pane_read` gives a pane's kind and
 title and, for a terminal (a Claude session or a shell, this session's own included), the text its screen shows now,
 never its scrollback; for a pane showing a card, the last screen the card holds with its time; for a page, a file or
 a custom app, its kind and title only. **A terminal's screen holds whatever is on it, secrets included.** `outline_read` (only while Settings › Experimental › Outline is on; both Outline tools are refused otherwise) gives
@@ -452,8 +451,7 @@ behind the app in front. With `place`, the result opens beside the session's own
 never sent to TypeSafe or judged for relevance, so a page your `?` search would lift can sit lower here.
 
 `show` changes what the panel shows, through the same functions its keys and `!` commands use: `view` search,
-board or outline, `pane` an id from `panel` or `board_read` (shows
-that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `outline`, `resources`).
+board or outline, `pane` an id from `panel` or `board_read` (shows that pane's tab with the pane focused), or `command` the name of a `!` command (`transcript`, `kanban`, `outline`, `resources`).
 It never shows, hides or pins the panel: with the panel hidden, what it showed is there the next time you open it.
 It never runs `!listen`, which turns on the microphone. It never takes the keyboard from the app you are in, never clears what you typed in the search, and is refused while
 Settings, the Restart Varnick card or the split picker shows, for two seconds after you press a key in the panel,
