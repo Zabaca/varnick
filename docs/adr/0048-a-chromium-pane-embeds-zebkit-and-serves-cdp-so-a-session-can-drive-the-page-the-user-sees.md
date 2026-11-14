@@ -17,4 +17,4 @@ A session couldn't read or drive a Browser pane: `pane_read` gave its kind and t
 
 - **A session can read and act in a logged-in page.** It goes to Anthropic with the session, as a terminal's screen does. `docs/privacy-and-security.md` and where-it-breaks ("What the tools do not promise") say so.
 - **CDP has no password.** Any process on this Mac can drive the profile while the engine runs, as with Chrome's `--remote-debugging-port`.
-- **Accepted gaps of the prototype:** no switch in Settings › Experimental (the tile shows whenever the framework is there); popups open as zebkit's own window, not as a pane; `pane_open` has no Chromium kind; the helpers aren't counted in Resources.
+- **Accepted gaps of the prototype:** no switch in Settings › Experimental (the tile shows whenever the framework is there); popups open as zebkit's own window, not as a pane; `pane_open` has a Chromium kind (amended 2026-11-13), a bridge until the `page` kind itself opens Chromium; the helpers aren't counted in Resources.

@@ -105,6 +105,14 @@ extension PanelAccess {
         case .page:
             guard let url = ClaudeSession.httpURL(from: args["url"] ?? "") else { throw PanelRefusal.bad("url must be an http or https address") }
             record.url = url.absoluteString
+        case .chromium:
+            // The engine and its pages are this Mac's: another machine that controls the tab would show the address in WebKit (`splitOnHost` refuses the same).
+            guard controller == nil else { throw PanelRefusal.bad("A Chromium pane works on this Mac, not in a tab another machine controls: open a page instead") }
+            guard ChromiumEngine.isInstalled else { throw PanelRefusal.bad("Chromium isn't available: Zebkit.framework isn't beside this Varnick.") }
+            guard !ChromiumEngine.hasFailed else { throw PanelRefusal.bad(ChromiumEngine.failedNote) }
+            guard let url = ClaudeSession.httpURL(from: args["url"] ?? "") else { throw PanelRefusal.bad("url must be an http or https address") }
+            record.url = url.absoluteString
+            record.chromium = true
         case .file:
             guard let path = args["path"]?.trimmingCharacters(in: .whitespaces), !path.isEmpty else { throw PanelRefusal.bad("A file needs a path") }
             guard PeerFile.isInside(path, folders: [project]) else { throw PanelRefusal.bad("That file is outside this session's project") }
@@ -124,7 +132,9 @@ extension PanelAccess {
         let pane = model.addPane(record, app: app, beside: caller, in: tab, axis: place.axis, controller: controller)
         let where_ = controller.map { " This tab is controlled by \(PeerManager.shared.name(of: $0)), so the pane is in the tab for it and shows there within about 5 seconds." }
             ?? (SessionBoard.panelIsVisible && model.activeTab === tab && model.showsTerminal ? "" : " It is there when the user opens the tab.")
-        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)",
+        let later = kind == .chromium ? " It is a Chromium page, made once the pane is on screen and Chromium is up, usually a few seconds: call pane_read on it again shortly for the CDP endpoint and target"
+            + " (until then it says Chromium is starting or the pane is not shown yet), and again if the user has not opened the tab yet." : ""
+        return Answered(text: "Opened \(id(for: pane.id, caller: caller.id)), a \(Self.kindText(pane)), \(place.rawValue) this pane. It is not focused: focus and the panel are as they were.\(where_)\(later)",
                         action: kind.rawValue + elsewhere)
     }
 
