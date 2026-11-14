@@ -22,6 +22,20 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
   anywhere and Varnick never deletes them: you do. Nothing encrypts them beyond your Mac's disk encryption. Files
   already saved stay when the setting is turned off. Varnick's log says only that saving stopped, with an error
   code, never what was heard.
+- **The logins of your Browser panes, copied into Chromium's profile.** At Varnick's Chromium engine's first starts on this
+  Mac, every cookie in the store your Browser panes use (WebKit's), HttpOnly ones too, is copied into the engine's own
+  profile (`chromium-profile` in Varnick's support folder), so a site you were logged into stays logged in in a Chromium
+  pane. The copy is checked at a later start and tried again until it shows, at most three times; after the last
+  check Varnick stops, and its settings hold a mark that says so. For the check, Varnick writes one cookie of its own, on a made-up
+  host that is not a real site, as the last of the copy, and deletes it when the next start finds it, so it sits in the profile
+  between the copy and its confirmation (and for up to 180 days if its deletion fails). A small file in the profile
+  folder keeps a count, and, only if the engine refuses that cookie, scrambled (salted, hashed) fingerprints of the
+  carried cookies' names and sites, never the names themselves; it is deleted when the copy stops. Whether the
+  copy reaches the profile has not been seen working yet. Local storage and IndexedDB are not copied. WebKit's store is
+  left where it is, on disk, and Varnick never deletes it. The copy is between two stores on this Mac, never sent anywhere
+  (a session reading a Chromium pane can use those logins, as the Chromium pane under
+  [Panel access](#anthropic-through-panel-access) says). Varnick's log holds counts only, never a cookie's name, value or
+  site. Cookies without an expiry last until Varnick quits in Chromium, as in any browser. Your Chrome's logins are not read.
 - **Pictures of the screen.** When it reads a window from a picture, the picture is never written to disk,
   logged or sent.
 
