@@ -133,6 +133,12 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 - **One profile** for every page and app pane, as WebKit's store is today: a session's `pane_open` `page` loads with the user's cookies, and whatever step 2 opens reaches every site's cookies. zebkit's contexts are in memory only, so nothing persistent per tab or project exists; out of scope.
 - **Cookie keys.** The engine's default keeps the cookie key in the macOS keychain, which may ask after an ad hoc rebuild (unverified; the hand check). Its file storage avoids the keychain but keeps the key beside the cookies.
 
+### Resources and screen reading (step 7)
+
+**Built so** (ADR 0048 has the reasoning, the files and what is unverified):
+- **Resources.** The engine's C API has no process per page (checked in the 0.4.0 headers), so the helpers are one row, "Chromium, the engine of every page", under Not in a tab, appearing with the first page and equal to the sum of the helpers' footprints. The helpers are Varnick's children whose file lies in the framework's Helpers folder, so another app's Chromium is never counted; they were already inside Varnick's total (landing in "Other"), so nothing is counted twice and no total moves. A Chromium page's tab says "In Chromium" with no figure, and opened it says where its memory is. The engine's part inside Varnick's own process stays in Varnick's figure, so the row is under the 200 MB. `make check-engine` holds the rule.
+- **Screen reading.** zebkit has no call for accessibility; the one lever is Chromium's `--force-renderer-accessibility` in the start's argv, passed when Accessibility is granted at that start, so a Mac that never granted it pays nothing and a later grant applies from the next restart. Whether the page then appears in Varnick's own tree is **unverified** and is the first check of the by-hand list. Not routed through CDP. A session's `look` still refuses Varnick's own windows; the spoken request is what reads the panel.
+
 ### The framework in Varnick.app (step 8)
 
 - Copied into the bundle's Frameworks folder, where Varnick already looks for it in a bundle (untested there).

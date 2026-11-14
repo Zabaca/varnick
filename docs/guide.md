@@ -340,14 +340,15 @@ for what a session is shown.
 ⌘⇧M (or `!resources`, also found as `!memory`) shows how much memory Varnick uses and what uses it, in place of the panel's
 content as the session board does; the same key again, or esc, goes back. The figures are footprints, the number Activity
 Monitor's Memory column shows. At the top are Varnick's total and its process count, and the same processes grouped by
-kind (the app, Claude Code, MCP tools, web pages, the Phone page server, app servers, zmx, shells and other). Under it is the
+kind (the app, Claude Code, MCP tools, web pages, Chromium, the Phone page server, app servers, zmx, shells and other). Under it is the
 app's own memory: what the on-device models hold (MLX's own count, naming the models loaded now), its graphics memory
 beyond that, and everything else. The tabs that run on this Mac follow, biggest first; → opens one into its panes and their
 processes (Claude Code, its MCP tool, the commands it runs, a terminal's shell and what runs in it, an app's server, a page's
 WebKit process, zmx), and ↩ shows the tab. The Close button on a tab, or your End session key (⌘W) on the selected one, closes
 it as its × does, so a tab with a Claude conversation goes to Stopped and Recent, and a session that must ask first brings its
-tab up to ask. Below the tabs are what Varnick runs that belongs to no tab (the Phone page server, the text helper, WebKit's
-shared processes, links to other machines), the tabs of other machines open here (they show where they run and no figures,
+tab up to ask. A page in Chromium has no process of its own to show: its tab says it is in Chromium, and what Chromium costs is one row of its helpers
+below. Below the tabs are what Varnick runs that belongs to no tab (the Phone page server, the text helper, WebKit's
+shared processes, Chromium's helpers, links to other machines), the tabs of other machines open here (they show where they run and no figures,
 since their memory is on that machine), and, greyed, the Claude Code that runs in other apps and terminals, so the figures
 add up to Activity Monitor's. A process is Varnick's only when its ancestry leads to Varnick or to one of its zmx sessions,
 never by its name. Rows keep their order while the view is open, and the figures are read every 3 seconds only while it

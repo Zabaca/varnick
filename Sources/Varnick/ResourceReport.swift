@@ -1,7 +1,8 @@
 import Foundation
+import VarnickPeer
 
-// What the Resources view shows (⌘⇧M, `!resources`): Varnick's processes, each counted once, grouped by tab and pane. Foundation only and
-// no app state, so it can be checked without the app. `Resources` (Resources.swift) reads the processes and the panes and calls `build`.
+// What the Resources view shows (⌘⇧M, `!resources`): Varnick's processes, each counted once, grouped by tab and pane. Foundation and VarnickPeer's
+// pure rules only, and no app state, so it can be checked without the app. `Resources` (Resources.swift) reads the processes and the panes and calls `build`.
 
 /// A pane as the attribution needs it, read from the model on the main actor.
 struct ResourcePane: Equatable, Sendable {
@@ -16,6 +17,8 @@ struct ResourcePane: Equatable, Sendable {
     let client: Int32?
     /// WebKit's process ids of the pane's web views, read again at each measure since a page that goes to another site can move.
     let pages: [Int32]
+    /// The pane shows a Chromium page: its memory is the engine's helpers', counted as one row under no pane (the engine's C API gives no process per page).
+    let inChromium: Bool
 }
 
 struct ResourceTab: Equatable, Sendable {
@@ -36,6 +39,8 @@ struct ResourceContext: Sendable {
     let ownBinaries: Set<String>
     /// Where the build's own `bun` lives (the text helper), nil when unknown.
     let helpersFolder: String?
+    /// The Chromium framework's Helpers folder, links resolved (`EngineHelpers`), nil when unknown.
+    let engineHelpersFolder: String?
     /// Where ssh keeps the shared connections to other machines (`SSHRunner.controlDirectory`).
     let sshFolder: String
     /// The Phone page server's zmx session, the Mac's upgrade session, and the prefix of a headless host's installer sessions.
@@ -53,7 +58,7 @@ struct ResourceContext: Sendable {
 }
 
 enum ResourceKind: Int, CaseIterable {
-    case app, claude, mcp, web, phone, appServer, zmx, other
+    case app, claude, mcp, web, chromium, phone, appServer, zmx, other
 
     var title: String {
         switch self {
@@ -61,6 +66,7 @@ enum ResourceKind: Int, CaseIterable {
         case .claude: "Claude Code"
         case .mcp: "MCP tools"
         case .web: "Web pages"
+        case .chromium: "Chromium"
         case .phone: "Phone page server"
         case .appServer: "App servers"
         case .zmx: "zmx"
@@ -71,7 +77,7 @@ enum ResourceKind: Int, CaseIterable {
 
 /// What Varnick runs that belongs to no open pane.
 enum ResourceHelper: Int, CaseIterable {
-    case phonePage, textHelper, webShared, webPages, relay, ssh, builds, sessions, other
+    case phonePage, textHelper, webShared, webPages, chromium, relay, ssh, builds, sessions, other
 
     var title: String {
         switch self {
@@ -79,6 +85,7 @@ enum ResourceHelper: Int, CaseIterable {
         case .textHelper: "Text helper"
         case .webShared: "WebKit's GPU and network processes"
         case .webPages: "Web pages in no pane"
+        case .chromium: "Chromium, the engine of every page"
         case .relay: "Other machines reaching this Mac's tabs"
         case .ssh: "Links to other machines"
         case .builds: "Upgrade and install runs"
@@ -104,6 +111,7 @@ struct ResourcePaneRow: Equatable, Identifiable {
     let id: UUID
     let title: String
     let kind: String
+    let inChromium: Bool
     var processes: [ResourceProcess]
     var total: UInt64 { processes.footprint }
 }
@@ -113,6 +121,8 @@ struct ResourceTabRow: Equatable, Identifiable {
     let name: String
     let kind: String
     var panes: [ResourcePaneRow]
+    /// The tab has a Chromium page and no process of its own: its memory is in Chromium's row, so the tab shows no figure.
+    var inChromiumAlone: Bool { count == 0 && panes.contains { $0.inChromium } }
     var total: UInt64 { panes.reduce(0) { $0 + $1.total } }
     var count: Int { panes.reduce(0) { $0 + $1.processes.count } }
 }
@@ -232,6 +242,7 @@ struct ResourceReport: Equatable {
         }
         claim(zmxBySession[context.phoneSession] ?? [], .phonePage)
         claim(processes.filter(rules.isTextHelper).map(\.pid), .textHelper)
+        claim(processes.filter(rules.isEngineHelper).map(\.pid), .chromium)
         claim(processes.filter(rules.isRelay).map(\.pid), .relay)
         claim(zmxBySession.filter { $0.key == context.upgradeSession || $0.key.hasPrefix(context.installSessionPrefix) }.flatMap(\.value), .builds)
         claim(zmxBySession.filter { $0.key.hasPrefix("varnick-") }.sorted { $0.key < $1.key }.flatMap(\.value), .sessions)
@@ -242,6 +253,7 @@ struct ResourceReport: Equatable {
             if rules.isWebKit(process) { return .web }
             if rules.isMCP(process) { return .mcp }
             if rules.isClaude(process) { return .claude }
+            if helperOf[process.pid] == .chromium { return .chromium }
             if helperOf[process.pid] == .phonePage { return .phone }
             if let id = owner[process.pid], paneOf[id]?.isApp == true { return .appServer }
             return .other
@@ -277,7 +289,7 @@ struct ResourceReport: Equatable {
         }.sorted { $0.total > $1.total }
 
         for tab in tabs {
-            let panes = tab.panes.map { ResourcePaneRow(id: $0.id, title: $0.title, kind: $0.kind, processes: byPane[$0.id, default: []].sortedBySize) }
+            let panes = tab.panes.map { ResourcePaneRow(id: $0.id, title: $0.title, kind: $0.kind, inChromium: $0.inChromium, processes: byPane[$0.id, default: []].sortedBySize) }
             if let host = tab.host {
                 let mine = panes.flatMap(\.processes)
                 report.elsewhere.append(ResourceElsewhereRow(id: tab.id, name: tab.name, kind: tab.kind, host: host, share: mine.footprint, count: mine.count))
@@ -332,6 +344,9 @@ struct ResourceReport: Equatable {
         func isSSHLink(_ process: ProcessEntry) -> Bool {
             process.executableName == "ssh" && process.arguments?.first.map { $0.hasPrefix("ssh: " + context.sshFolder) } == true
         }
+        func isEngineHelper(_ process: ProcessEntry) -> Bool {
+            EngineHelpers.isHelper(path: process.path, parent: process.ppid, ownPid: context.ownPid, folder: context.engineHelpersFolder)
+        }
         func isTextHelper(_ process: ProcessEntry) -> Bool {
             guard let folder = context.helpersFolder, let path = process.path else { return false }
             return process.executableName == "bun" && path.hasPrefix(folder)
@@ -350,6 +365,7 @@ struct ResourceReport: Equatable {
             case .app: return "Varnick"
             case .claude: return "Claude Code"
             case .mcp: return "Varnick MCP tool"
+            case .chromium: return "Chromium helper"
             case .web:
                 if process.path?.contains("WebKit.GPU") == true { return "WebKit GPU" }
                 if process.path?.contains("WebKit.Networking") == true { return "WebKit network" }

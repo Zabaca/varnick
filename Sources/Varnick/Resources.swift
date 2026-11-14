@@ -94,6 +94,7 @@ final class Resources: ObservableObject {
         // The kernel reports a process's path with links resolved, so the helpers' folder is too.
         let context = ResourceContext(ownPid: getpid(), ownBinaries: Self.binaryNames,
                                       helpersFolder: ResourceFolder.current.helpers.resolvingSymlinksInPath().path,
+                                      engineHelpersFolder: ChromiumEngine.frameworkURL.appendingPathComponent("Helpers").resolvingSymlinksInPath().path,
                                       sshFolder: SSHRunner.controlDirectory.path, phoneSession: PhonePage.sessionName,
                                       upgradeSession: UpgradeRunner.sessionName, installSessionPrefix: InstallerRunner.sessionPrefix)
         let loaded = loadedModels(model)
@@ -151,7 +152,7 @@ final class Resources: ObservableObject {
         let pages = [pane.webView, pane.fileViewer?.pageView].compactMap { $0 }.compactMap(WebKitProcess.pageProcess)
         return ResourcePane(id: pane.id, title: pane.label, kind: pane.kind, isApp: pane.isApp,
                             session: here && (pane.runsInZmx || pane.isApp) ? Zmx.sessionName(pane.id) : nil,
-                            client: pid > 0 ? pid : nil, pages: pages)
+                            client: pid > 0 ? pid : nil, pages: pages, inChromium: pane.chromiumPage != nil)
     }
 
     // MARK: Selection and keys
