@@ -79,7 +79,7 @@ enum ChromiumEngine {
             // Made before the engine can call `wake`, which it does from its threads during init.
             _ = ChromiumPump.shared
             _ = kit.setWakeup(wake, nil)
-            // Chromium's own switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path alone.
+            // Chromium's switches are read from argv; Varnick's (such as --mcp) mean nothing to it, so it gets the executable's path and `ScreenReader.pageAccessibilitySwitches`.
             let settings = try String(data: JSONSerialization.data(withJSONObject: [
                 "profileDirectory": profileURL.path, "headless": false,
                 // Chromium's log would go to stderr, which is Varnick's log, and it carries addresses.
@@ -87,12 +87,13 @@ enum ChromiumEngine {
                 // A page takes the system's light or dark, as WebKit's did.
                 "appearance": ["follow": true],
             ] as [String: Any]), encoding: .utf8)!
-            var argv: [UnsafeMutablePointer<CChar>?] = [strdup(CommandLine.arguments.first ?? "Varnick"), nil]
+            let arguments = [CommandLine.arguments.first ?? "Varnick"] + ScreenReader.pageAccessibilitySwitches
+            var argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
             var error: UnsafeMutablePointer<CChar>?
-            let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(1, $0.baseAddress, settings, &error) }
+            let status = argv.withUnsafeMutableBufferPointer { kit.initWithSettings(Int32(arguments.count), $0.baseAddress, settings, &error) }
             guard status == 0 else { throw ChromiumFailure("the engine didn't start: " + kit.take(error, or: "code \(status)")) }
             state = .running(kit)
-            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane")
+            NSLog("Varnick: Chromium \(String(cString: kit.engineVersion())) started, no CDP until a session reads a Chromium pane" + (arguments.count > 1 ? ", page accessibility asked for" : ""))
             ChromiumPump.shared.wake(afterMilliseconds: 0)
             ChromiumLogins.carry(kit)
         } catch {
