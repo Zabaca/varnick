@@ -126,7 +126,7 @@ enum ChromiumEngine {
     /// How long after the last read CDP stops: 30 minutes, or the hidden default's, from 1 s to 30 minutes.
     nonisolated static var cdpIdle: TimeInterval {
         let shortened = UserDefaults.standard.double(forKey: cdpIdleKey)
-        return shortened > 0 ? min(shortened, 30 * 60) : 30 * 60
+        return shortened > 0 ? max(1, min(shortened, 30 * 60)) : 30 * 60
     }
 
     /// `cdpIdle` in words, for what a session is told.
