@@ -71,7 +71,7 @@ Each step is its own branch and merge, with `make build` and the `make check-*` 
    *Checked by hand:* a page at a localhost port before its server starts says it is waiting and appears by itself once it runs; Scratch opens beside a Claude pane and reloads as Claude writes; an app whose server is killed shows its output and Reload runs it again; a page of another Mac's tab at that Mac's localhost loads through its proxy, says the host's reason when the host's Phone page server is stopped, and loads at once when it is back.
 7. **Resources and screen reading count Chromium.** Resources gives the engine's helpers a row of their own; a `look` at Varnick's panel over a Chromium page reads the page.
    *Checked by hand:* Resources' Chromium row appears with the first page and its total matches Activity Monitor's for the helpers; a spoken screen request about a page in the panel answers from the page's text.
-8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization (built 2026-11-13; the notarization and the hand check are not yet done).
+8. **The framework inside Varnick.app.** `make app` copies it into the bundle and signs it for notarization (built and verified locally 2026-11-13; notarization not tried, hand check not done).
    *Checked by hand:* `make app` notarizes; on a Mac, the installed app opens a Browser pane in Chromium, a custom app and Scratch, survives a restart with them, and Gatekeeper raises nothing for the helper.
 9. **WebKit's page path deleted,** after the user's go-ahead on step 8's check.
    *Checked by hand:* every check of steps 3, 5 and 6 again on the installed app, and a file pane's rendered Markdown still shows.
@@ -135,13 +135,12 @@ Decisions 3 to 6 of Further Notes (new windows and popups as panes, downloads to
 
 ### The framework in Varnick.app (step 8)
 
-Built on 2026-11-13 (ADR 0048, "Where the framework sits" and "Signed with Varnick's identity", has the evidence and what is unverified; `docs/releasing.md` and where-it-breaks, Signing, have the steps):
+Built and verified locally on 2026-11-13 (the signature, not a run); notarization not tried, and the installed-app hand check not done. ADR 0048 ("Where the framework sits", "Signed with Varnick's identity") has the layout, the signing and what is unverified; `docs/releasing.md` has the trial and the check.
 
-- **Copied into the bundle's `Contents/Frameworks`** by `make app`, where `ChromiumEngine.frameworkURL` looks in a bundle (`ResourceFolder.Place.frameworks`); a checkout still has it beside the binary. zebkit has no setting for a framework or helper path: the engine finds itself with `dladdr` and the helper from the framework, and the helper's rpath leads back to the framework it sits in, so the host's place doesn't enter. The prototype recorded that helpers crash with the host elsewhere; no cause was kept, and the source says otherwise, so the first run from the bundle is the hand check.
-- **Signed inside out, never with `--deep`:** the helper with the hardened runtime, the secure timestamp and `Zebkit.entitlements` (`allow-jit` alone, as Chrome's renderer helper has it, from memory; zebkit ships one helper for every role), then the framework with the runtime, then the bundle. `make build` signs the same way minus the timestamp, so a checkout's restart tests the entitlement. Checked locally: the bundle verifies strictly and deeply, every Mach-O has the runtime and a secure timestamp, one team throughout. **Not done: notarization**, which is the user's to start (`make app CHECK_BUILD=1`, which sends the app to Apple and publishes nothing).
-- **The app grows by 144 MB on disk** (the framework; 408 MB in all) and the zip by about 58 MB (the app zips to about 134 MB); the disk image's size is unmeasured.
-- **The notices:** the package ships no licence or notice file; `THIRD_PARTY_NOTICES.md` says so, and whether Chromium's credits must travel with the app is unverified.
-- **After step 9, on this evidence:** an installed app would have a working browser if notarization accepts the app and the helpers run from `Contents/Frameworks` with the one entitlement; neither is known. If either fails, step 9 must not land, because the installed app would have no page engine at all: WebKit's fallback is what step 9 deletes.
+- Copied into the bundle's `Contents/Frameworks` by `make app`, where `ChromiumEngine.frameworkURL` looks in a bundle. Signed inside out, never with `--deep`: the helper with the hardened runtime, the secure timestamp and an entitlements file (`allow-jit`), then the framework, then the bundle. A checkout is signed the same way minus the timestamp, so its restart tests the entitlement.
+- The app grows by 143 MB on disk; the zipped app is 140.2 MB and the zipped framework 61.0 MB; the disk image's size is unmeasured.
+- **The notices and licences carry zebkit's LGPL-2.1 and Chromium's notices (unverified what zebkit ships for them). Open release blocker, James's to resolve:** the archive ships no licence or notice file, so a release must not ship the framework until `LICENSES/` carries the LGPL-2.1 text, the source offer the LGPL requires and Chromium's third-party notices (`docs/releasing.md`, Before you start).
+- **After step 9, on this evidence:** an installed app would have a working browser if notarization accepts the app and the helpers run from `Contents/Frameworks` with the one entitlement; none of those is known. If one fails, step 9 must not land, because WebKit's fallback is what it deletes.
 
 ### Step 9
 

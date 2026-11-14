@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- What the hardened runtime lets zebkit's helper (Zebkit Helper.app, every Chromium child process: renderers, GPU, network) do beyond its default, and nothing else. Add an entitlement only for a failure seen, with a comment saying which. -->
+<!-- What the hardened runtime lets zebkit's helper (every Chromium child process) do beyond its default; why, and what else it might need: ADR 0048, "Signed with Varnick's identity". -->
 <plist version="1.0">
 <dict>
-	<!-- V8's JIT memory (MAP_JIT) in the renderers. Chrome's own renderer helper carries this one for the same reason (from memory); the hardened runtime refuses the mapping without it. Not yet seen to fail without it: the first run of a signed helper is a hand check (ADR 0048). Chrome's other entitlements for its helpers (unsigned executable memory, no library validation, the latter only for plugins) are not asked for. -->
+	<!-- V8's JIT memory in the renderers. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 </dict>

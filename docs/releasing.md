@@ -15,6 +15,9 @@ and [0026](adr/0026-varnick-ships-on-a-disk-image-and-moves-itself-to-applicatio
   ships the Agent SDK, which `agent.js` in the app contains (ADR 0029; its licence is in `THIRD_PARTY_NOTICES.md`). Option 02 of
   `docs/problems/text-generation-ignores-the-claude-subscription/` is the way back if they don't allow it.
 - `TextHelper/check.sh` passes against the build.
+- **Chromium's notices are an open release blocker, and James's to resolve.** A release must not ship `Zebkit.framework` until `LICENSES/` carries the
+  LGPL-2.1 text, the source offer the LGPL requires and Chromium's third-party notices. The zebkit archive ships no licence or notice file (its credits
+  may be inside `zebkit.pak`, unverified). Step 8 of option 02 of `docs/problems/two-browser-panes/` has the requirement; `THIRD_PARTY_NOTICES.md` lists the framework.
 
 ## 2. Build
 
@@ -29,18 +32,26 @@ that too. Each is assessed by `spctl` before the target succeeds. It leaves, in 
 - `Varnick.zip` and `Varnick.zip.sha256`
 - `Varnick.dmg` and `Varnick.dmg.sha256`
 
-`Varnick.app` carries `Zebkit.framework` (Chromium, ADR [0048](adr/0048-a-chromium-pane-embeds-zebkit-and-serves-cdp-so-a-session-can-drive-the-page-the-user-sees.md)) in `Contents/Frameworks`: about 144 MB on disk, and about 58 MB more to download (the framework zipped alone,
-measured with `ditto` on 2026-11-13; the whole app zips to about 134 MB). `make app` signs it inside out with the secure timestamp, its helper with the hardened runtime and
-`Zebkit.entitlements`, then the framework, then the app, as it does zmx and Bun. **The first notarization with the framework in the app has not been tried.** Try it before a release, from any checkout with no changes to tracked files, which sends the app (not the disk image) to Apple's notary service and publishes nothing:
+It ends by printing the version, build and commit. Both versions come from the commit's time in UTC, so the same commit always
+makes the same numbers: `CFBundleShortVersionString` is `2026.10.10` (no leading zeros), `CFBundleVersion` is `20261010.1558`.
+
+`Varnick.app` carries `Zebkit.framework` (Chromium) in `Contents/Frameworks`, signed as ADR [0048](adr/0048-a-chromium-pane-embeds-zebkit-and-serves-cdp-so-a-session-can-drive-the-page-the-user-sees.md)
+says. It is 143 MB unpacked; the app zips to 140.2 MB and the framework alone to 61.0 MB (as the reviewer measured on 2026-11-13); the disk image's size is unmeasured.
+
+**Notarization with the framework in the app has not been tried.** The trial, from a clean checkout of `main` with the notary credential in `Makefile.local`,
+sends the app (not the disk image) to Apple's notary service and publishes nothing, and is the user's to start:
 
 ```
 make app CHECK_BUILD=1
+d=$(mktemp -d)
+ditto .build/app/Varnick.app "$d/Varnick.app"
+xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Safari;" "$d/Varnick.app"
+spctl -a -vv -t exec "$d/Varnick.app"
 ```
 
-If the notary service refuses the app, `notarytool`'s log names the file and the reason, and the target prints it; `Zebkit Helper` and `Zebkit` are the files to look for. Then check it by hand as step 3 says.
-
-It ends by printing the version, build and commit. Both versions come from the commit's time in UTC, so the same commit always
-makes the same numbers: `CFBundleShortVersionString` is `2026.10.10` (no leading zeros), `CFBundleVersion` is `20261010.1558`.
+`spctl` must say `source=Notarized Developer ID`. A refusal prints `notarytool`'s log, which names the file and the reason (`Zebkit Helper` and `Zebkit` are the ones to look for).
+Then quit the checkout's Varnick (the account lock admits one), `open "$d/Varnick.app"` and make the Chromium check below. Remove `$d` afterwards. Don't use step 3's disk image
+for this: a check build writes `Varnick-check.dmg`, never notarized, and leaves any older `Varnick.dmg` where it was.
 
 ## 3. Check it like a download
 
@@ -60,14 +71,15 @@ rm -r "$d"
 
 Both `spctl` lines must say `source=Notarized Developer ID`.
 
-Then, with the checkout's Varnick quit (the account lock admits one), run that copy of the app and check Chromium, which no agent has run from a bundle:
+**The Chromium check**, on the copy the trial opened or, for a release, the app mounted above (with the checkout's Varnick quit), which no agent has run from a bundle:
 
-- A Browser pane opens a page (a public address) with nothing from Gatekeeper or the keychain, and Resources or Activity Monitor lists a `Zebkit Helper` process whose path is inside `Varnick.app/Contents/Frameworks`.
+- A Browser pane at a script-heavy public site renders, with nothing from Gatekeeper or the keychain.
+- `ps -axo command | grep '[Z]ebkit Helper.*--type=renderer'` shows a renderer running from inside that copy's `Contents/Frameworks`.
 - The page survives quitting the app and opening it again.
-- A blank page, or a `Zebkit Helper` that exits at once, leaves a crash report in `~/Library/Logs/DiagnosticReports`. A signature or library-validation exit means the signing is wrong; an `mmap` or code-memory exit means `Zebkit.entitlements` needs `com.apple.security.cs.allow-unsigned-executable-memory` (add it only for that failure, with a comment); a `dyld` exit means the layout is wrong, which is a zebkit matter (ADR 0048, "Where the framework sits").
-- `defaults write com.zabaca.varnick pagesInChromium -bool false` is the way out on a Mac where Chromium can't run: every page is WebKit's at the next launch.
+- A blank page or a helper that exits at once leaves a crash report in `~/Library/Logs/DiagnosticReports`; where-it-breaks, Signing, says what each signature suggests, and the way out
+  (`defaults write com.zabaca.varnick pagesInChromium -bool false`, then a restart, which makes every page WebKit's).
 
-Do not publish a build whose Chromium failed this check: a Browser pane would be blank for everyone, since Chromium is chosen wherever the framework is there.
+Don't publish a build whose Chromium failed this check: Chromium is chosen wherever the framework is there, so a Browser pane would be blank for everyone.
 
 ## 4. Tag and publish
 

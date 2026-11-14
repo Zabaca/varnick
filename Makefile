@@ -23,7 +23,7 @@ ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
 # Chromium panes: zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary, and by `make app` in the bundle's
-# Contents/Frameworks (Sources/Varnick/Chromium.swift, ResourceFolder). 44 MB fetched, 154 MB unpacked, never committed. Varnick dlopens it the
+# Contents/Frameworks (Sources/Varnick/Chromium.swift, ResourceFolder). 44 MB fetched, 143 MB unpacked, never committed. Varnick dlopens it the
 # first time a Chromium pane shows, so a build without it runs and its pages are WebKit's (`PageEngine`).
 ZEBKIT_VERSION := 0.4.0
 ZEBKIT_SHA256 := b94bf42c6485b6226b667fe5cdb80f341b24d1a4a1d41297039d79ccd02945c8
@@ -54,13 +54,17 @@ ZMX_SIGNER_STAMP = .build/release/zmx.signer.$(SIGN_SHORT)
 ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none)
 # bun carries Bun.entitlements: allow-jit and nothing else. Ad hoc, it keeps the signature it was fetched with, as zmx does.
 BUN_SIGNER_STAMP = .build/release/bun.signer.$(SIGN_SHORT)
-# The framework is signed with Varnick's identity so the hardened runtime's library validation lets Varnick load it (same team), its helper first
-# as nested code. Both carry the hardened runtime, which notarization asks of every executable; the helper, which runs Chromium's renderers, also
-# Zebkit.entitlements (V8's JIT). `make app` signs its copy in the bundle by the same target, with the secure timestamp (ZEBKIT_TIMESTAMP). The
-# stamp's last part names how it was signed, so a change to that re-signs a checkout's framework. Ad hoc, it keeps the package's signature.
-ZEBKIT_SIGNER_STAMP = .build/release/zebkit.signer.$(SIGN_SHORT).runtime
+# The framework is signed with Varnick's identity, its helper first as nested code, by `zebkit-codesign`: how and why is ADR 0048 ("Signed with
+# Varnick's identity"). A checkout signs with no timestamp and the hardened runtime, which ZEBKIT_CHECKOUT_RUNTIME= (empty, in Makefile.local)
+# turns off there only; `make app` always has it. The stamp ends in a hash of those flags and Zebkit.entitlements, so changing either re-signs.
+# Ad hoc, it keeps the package's signature.
+ZEBKIT_CHECKOUT_RUNTIME ?= -o runtime
+ZEBKIT_SIGN_HASH := $(shell printf '%s' '$(ZEBKIT_CHECKOUT_RUNTIME)' | cat - Zebkit.entitlements | shasum -a 256 | cut -c1-8)
+ZEBKIT_SIGNER_STAMP = .build/release/zebkit.signer.$(SIGN_SHORT).$(ZEBKIT_SIGN_HASH)
 ZEBKIT_TIMESTAMP := --timestamp=none
-ZEBKIT_CODESIGN = codesign -f -s "$(SIGN_ID)" -o runtime $(ZEBKIT_TIMESTAMP)
+ZEBKIT_RUNTIME = $(if $(filter -,$(SIGN_ID)),,$(if $(filter --timestamp,$(ZEBKIT_TIMESTAMP)),-o runtime,$(ZEBKIT_CHECKOUT_RUNTIME)))
+ZEBKIT_CODESIGN = codesign -f -s "$(SIGN_ID)" $(ZEBKIT_RUNTIME) $(ZEBKIT_TIMESTAMP)
+ZEBKIT_HELPER_ENTITLEMENTS = $(if $(ZEBKIT_RUNTIME),--entitlements Zebkit.entitlements)
 BUN_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER))
 # Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
@@ -162,6 +166,7 @@ endif
 	@test -f $(BUN_SIGNER_STAMP) || $(MAKE) --no-print-directory $(BUN_SIGNER_STAMP)
 
 sign-zebkit:
+	@test -f $(ZEBKIT)/Versions/A/Zebkit || rm -f $(ZEBKIT_STAMP)
 	@test -f $(ZEBKIT_STAMP) || $(MAKE) --no-print-directory $(ZEBKIT_STAMP)
 	@test -f $(ZEBKIT_SIGNER_STAMP) || $(MAKE) --no-print-directory $(ZEBKIT_SIGNER_STAMP)
 
@@ -332,21 +337,22 @@ $(ZEBKIT_STAMP):
 	@touch $@ $(ZEBKIT_SIGNER_STAMP)
 
 # The same framework signed by another identity, or in another way: nothing is fetched again. Signed as a clone and moved into place, since a
-# running Varnick holds the framework's pages and its helpers run from it, and signing in place would change them under it.
+# running Varnick holds the framework's pages and its helpers run from it, and signing in place would change them under it. The old one is
+# moved aside first and deleted last, so an interrupted build leaves a framework in place (or none, which `sign-zebkit` fetches again).
 $(ZEBKIT_SIGNER_STAMP):
 	@if [ "$(SIGN_ID)" = - ] && ! ls .build/release/zebkit.signer.* >/dev/null 2>&1; then \
 	  echo "zebkit: keeps the signature it was fetched with"; \
 	else \
 	  rm -rf .build/zebkit-fetch && mkdir -p .build/zebkit-fetch && cp -cR $(ZEBKIT) .build/zebkit-fetch/Zebkit.framework && \
 	  $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=.build/zebkit-fetch/Zebkit.framework && \
-	  rm -rf $(ZEBKIT) && mv -f .build/zebkit-fetch/Zebkit.framework $(ZEBKIT) && rm -rf .build/zebkit-fetch; \
+	  mv $(ZEBKIT) .build/zebkit-fetch/old.framework && mv .build/zebkit-fetch/Zebkit.framework $(ZEBKIT) && rm -rf .build/zebkit-fetch; \
 	fi
 	rm -f .build/release/zebkit.signer.*
 	@touch $@
 
-# The helper first, as nested code, then the framework: never --deep, which would put the helper's entitlements on the library too.
+# The helper first, as nested code, then the framework; never --deep.
 zebkit-codesign:
-	@$(ZEBKIT_CODESIGN) --entitlements Zebkit.entitlements "$(ZEBKIT_DIR)/Versions/A/Helpers/Zebkit Helper.app"
+	@$(ZEBKIT_CODESIGN) $(ZEBKIT_HELPER_ENTITLEMENTS) "$(ZEBKIT_DIR)/Versions/A/Helpers/Zebkit Helper.app"
 	@$(ZEBKIT_CODESIGN) $(ZEBKIT_DIR)/Versions/A
 	@codesign --verify --strict --deep $(ZEBKIT_DIR)/Versions/A
 
@@ -472,9 +478,8 @@ app-guard:
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
 	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
 
-# Signing is inside out, never --deep: zmx and bun first (bun with its own identifier and entitlements), then the framework (its helper,
-# then the framework: `zebkit-codesign`), then the bundle with its entitlements and identifier. All carry the secure timestamp that only
-# notarization needs. Lines that name the identity start with @.
+# Signing is inside out, never --deep: zmx, bun and the framework (`zebkit-codesign`) first, then the bundle with its entitlements and
+# identifier. All carry the secure timestamp that only notarization needs. Lines that name the identity start with @.
 app-bundle: app-guard
 	@$(MAKE) --no-print-directory build
 	rm -rf $(APP) $(APP_DIR)/Varnick.iconset
