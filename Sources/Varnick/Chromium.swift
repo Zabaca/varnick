@@ -12,12 +12,11 @@ import VarnickPeer
 /// and its CDP endpoint, when it is served (each pane is a target of its own).
 @MainActor
 enum ChromiumEngine {
-    /// `Zebkit.framework` beside the binary (`make build` puts it there), or in a bundle's Contents/Frameworks. Its helpers crash at start when the
-    /// host executable is anywhere else (found 2026-11-11), so this is the one place looked at.
+    /// `Zebkit.framework`: in a bundle's Contents/Frameworks, else beside the binary (`make build` puts it there). Nowhere else is looked at: the
+    /// prototype saw the helpers crash at start with the host elsewhere, and zebkit's source finds them from the framework alone (ADR 0048, "Where
+    /// the framework sits"), so the bundle's place is hand-checked.
     static var frameworkURL: URL {
-        let place = ResourceFolder.current
-        let folder = place.bundle.map { $0.appendingPathComponent("Contents/Frameworks", isDirectory: true) } ?? place.folder
-        return folder.appendingPathComponent("Zebkit.framework", isDirectory: true)
+        ResourceFolder.current.frameworks.appendingPathComponent("Zebkit.framework", isDirectory: true)
     }
 
     /// A page pane gets Chromium only when the engine is there to load (`PageEngine`).

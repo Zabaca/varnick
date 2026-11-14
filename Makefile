@@ -22,9 +22,9 @@ ZMX_VERSION := 0.8.1
 ZMX_SHA256 := 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
 ZMX_URL := https://github.com/neurosnap/zmx/releases/download/v$(ZMX_VERSION)/zmx-$(ZMX_VERSION)-macos-aarch64.tar.gz
 ZMX_STAMP := .build/release/zmx.$(ZMX_SHA256)
-# Chromium panes (prototype, branch chromium-pane): zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary,
-# the one place its helpers start from (Sources/Varnick/Chromium.swift). 44 MB fetched, 154 MB unpacked, never committed. Varnick dlopens it the
-# first time a Chromium pane shows, so a build without it runs and lists no Chromium tile.
+# Chromium panes: zebkit's engine, Chromium as a library (LGPL-2.1), pinned like zmx and put beside the binary, and by `make app` in the bundle's
+# Contents/Frameworks (Sources/Varnick/Chromium.swift, ResourceFolder). 44 MB fetched, 154 MB unpacked, never committed. Varnick dlopens it the
+# first time a Chromium pane shows, so a build without it runs and its pages are WebKit's (`PageEngine`).
 ZEBKIT_VERSION := 0.4.0
 ZEBKIT_SHA256 := b94bf42c6485b6226b667fe5cdb80f341b24d1a4a1d41297039d79ccd02945c8
 ZEBKIT_PACKAGE := zebkit-$(ZEBKIT_VERSION)-aarch64-apple-darwin
@@ -55,9 +55,12 @@ ZMX_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SI
 # bun carries Bun.entitlements: allow-jit and nothing else. Ad hoc, it keeps the signature it was fetched with, as zmx does.
 BUN_SIGNER_STAMP = .build/release/bun.signer.$(SIGN_SHORT)
 # The framework is signed with Varnick's identity so the hardened runtime's library validation lets Varnick load it (same team), its helper first
-# as nested code. Neither gets the hardened runtime: the helper runs Chromium's renderers, whose V8 needs JIT. Ad hoc, it keeps the package's signature.
-ZEBKIT_SIGNER_STAMP = .build/release/zebkit.signer.$(SIGN_SHORT)
-ZEBKIT_CODESIGN = codesign -f -s "$(SIGN_ID)" --timestamp=none
+# as nested code. Both carry the hardened runtime, which notarization asks of every executable; the helper, which runs Chromium's renderers, also
+# Zebkit.entitlements (V8's JIT). `make app` signs its copy in the bundle by the same target, with the secure timestamp (ZEBKIT_TIMESTAMP). The
+# stamp's last part names how it was signed, so a change to that re-signs a checkout's framework. Ad hoc, it keeps the package's signature.
+ZEBKIT_SIGNER_STAMP = .build/release/zebkit.signer.$(SIGN_SHORT).runtime
+ZEBKIT_TIMESTAMP := --timestamp=none
+ZEBKIT_CODESIGN = codesign -f -s "$(SIGN_ID)" -o runtime $(ZEBKIT_TIMESTAMP)
 BUN_CODESIGN = $(if $(filter -,$(SIGN_ID)),codesign -f -s -,codesign -f -s "$(SIGN_ID)" -o runtime --timestamp=none --entitlements Bun.entitlements -i $(BUN_IDENTIFIER))
 # Matches Varnick's binary by its path only, as scripts/restart.sh does: an unanchored pattern also
 # matches any process whose arguments mention the path, such as a pane started with a prompt that
@@ -328,18 +331,22 @@ $(ZEBKIT_STAMP):
 	rm -rf .build/zebkit-fetch .build/release/zebkit.*
 	@touch $@ $(ZEBKIT_SIGNER_STAMP)
 
-# The same framework signed by another identity (or by the first one): nothing is fetched again.
+# The same framework signed by another identity, or in another way: nothing is fetched again. Signed as a clone and moved into place, since a
+# running Varnick holds the framework's pages and its helpers run from it, and signing in place would change them under it.
 $(ZEBKIT_SIGNER_STAMP):
 	@if [ "$(SIGN_ID)" = - ] && ! ls .build/release/zebkit.signer.* >/dev/null 2>&1; then \
 	  echo "zebkit: keeps the signature it was fetched with"; \
 	else \
-	  $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=$(ZEBKIT); \
+	  rm -rf .build/zebkit-fetch && mkdir -p .build/zebkit-fetch && cp -cR $(ZEBKIT) .build/zebkit-fetch/Zebkit.framework && \
+	  $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=.build/zebkit-fetch/Zebkit.framework && \
+	  rm -rf $(ZEBKIT) && mv -f .build/zebkit-fetch/Zebkit.framework $(ZEBKIT) && rm -rf .build/zebkit-fetch; \
 	fi
 	rm -f .build/release/zebkit.signer.*
 	@touch $@
 
+# The helper first, as nested code, then the framework: never --deep, which would put the helper's entitlements on the library too.
 zebkit-codesign:
-	@$(ZEBKIT_CODESIGN) "$(ZEBKIT_DIR)/Versions/A/Helpers/Zebkit Helper.app"
+	@$(ZEBKIT_CODESIGN) --entitlements Zebkit.entitlements "$(ZEBKIT_DIR)/Versions/A/Helpers/Zebkit Helper.app"
 	@$(ZEBKIT_CODESIGN) $(ZEBKIT_DIR)/Versions/A
 	@codesign --verify --strict --deep $(ZEBKIT_DIR)/Versions/A
 
@@ -465,8 +472,9 @@ app-guard:
 	  if [ "$$(git branch --show-current)" != main ] || ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
 	    echo "error: app: a published build comes from main, with HEAD in origin/main as last fetched; CHECK_BUILD=1 builds anything else, without the zip" >&2; exit 1; fi; fi
 
-# Signing is inside out, never --deep: zmx and bun first (bun with its own identifier and entitlements), then the bundle with its
-# entitlements and identifier. All carry the secure timestamp that only notarization needs. Lines that name the identity start with @.
+# Signing is inside out, never --deep: zmx and bun first (bun with its own identifier and entitlements), then the framework (its helper,
+# then the framework: `zebkit-codesign`), then the bundle with its entitlements and identifier. All carry the secure timestamp that only
+# notarization needs. Lines that name the identity start with @.
 app-bundle: app-guard
 	@$(MAKE) --no-print-directory build
 	rm -rf $(APP) $(APP_DIR)/Varnick.iconset
@@ -475,6 +483,8 @@ app-bundle: app-guard
 	cp -c .build/release/zmx $(APP)/Contents/MacOS/zmx
 	mkdir -p $(APP)/Contents/Helpers
 	cp -c .build/release/bun $(APP)/Contents/Helpers/bun
+	mkdir -p $(APP)/Contents/Frameworks
+	cp -cR $(ZEBKIT) $(APP)/Contents/Frameworks/Zebkit.framework
 	cp -c .build/release/agent.js $(APP)/Contents/Resources/agent.js
 	rsync -a .build/release/mods/ $(APP)/Contents/Resources/mods/ --exclude '.DS_Store'
 	cp -c .build/release/mlx.metallib $(APP)/Contents/Resources/mlx.metallib
@@ -502,6 +512,7 @@ app-bundle: app-guard
 	@id=$$(scripts/signing-identity.sh --developer-id 2>/dev/null) || { echo "error: app: no Developer ID Application identity" >&2; exit 1; }; \
 	  codesign -f -s "$$id" -o runtime --timestamp $(APP)/Contents/MacOS/zmx || exit 1; \
 	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Bun.entitlements -i $(BUN_IDENTIFIER) $(APP)/Contents/Helpers/bun || exit 1; \
+	  $(MAKE) --no-print-directory zebkit-codesign ZEBKIT_DIR=$(APP)/Contents/Frameworks/Zebkit.framework ZEBKIT_TIMESTAMP=--timestamp SIGN_ID="$$id" || exit 1; \
 	  codesign -f -s "$$id" -o runtime --timestamp --entitlements Varnick.entitlements -i $(LABEL) $(APP) || exit 1
 	codesign --verify --deep --strict --verbose=2 $(APP)
 
