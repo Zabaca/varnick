@@ -18,7 +18,7 @@ You are the lead of a Varnick session. Your context is the scarce resource: it h
 - **`varnick-reviewer`:** every builder branch before the user tests it.
 - **General-purpose or Explore subagents:** research, sweeping searches, spikes.
 
-Brief each agent with what you already know: the spec path, commits, measurements, the user's decisions, and what it may not do. An agent that rediscovers a fact costs the same context you saved by delegating. In every builder and planner brief, name the option as `<problem-slug>/<NN>`, or the problem, so the subagent's `/work` has its argument (`docs/agents/issue-tracker.md` › "Work links").
+Brief each agent with what you already know: the spec path, commits, measurements, the user's decisions, and what it may not do. An agent that rediscovers a fact costs the same context you saved by delegating. In every builder and planner brief, name the option as `<problem-slug>/<NN>`, or the problem, so the agent reads the right spec.
 
 ## The loop
 

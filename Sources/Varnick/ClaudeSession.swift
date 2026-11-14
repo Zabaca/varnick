@@ -287,10 +287,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
     /// transcript's date then.
     private var recordedTurn: PaneTurn?
     private var transcriptStamp: Date?
-    /// The pane's work links (ADR 0020), read by `checkWork` when its log's date changes; nil until a hook has written one. For a pane on a
-    /// peer, the host's, from its `status` (`follow`).
-    private(set) var work: PaneWork?
-    private var workStamp: Date?
     /// `transcript_path` from the session file, read again when that file's date changes.
     private var transcriptPath: (path: String, sessionFileDate: Date?)?
     /// App panes: the app this pane runs, set when the pane is made from the picker.
@@ -649,7 +645,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let conversation = resumable ? record.conversationID : nil
         try? FileManager.default.removeItem(at: conversationFile)
         PaneFolder.writeTurn(ClaudeCommand.firstTurn(resuming: conversation, prompt: prompt), for: record.id)
-        PaneFolder.clearSubagentWork(for: record.id)
         PaneFolder.clearMessage(for: record.id)
         // Nothing sent to an earlier run of the pane reaches this one, and the old run's channel mark goes.
         MessageQueue.clear(for: record.id)
@@ -664,7 +659,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // automation tools with no switch. A run of an automation lists `notify` alone (option 01 of
         // `prompts-cant-run-on-a-schedule`), and `outline_append` too when its allowed tools name it (ADR 0040's amendment of 2026-10-29). The voice
         // session gets a pane's set but not the pane tools.
-        // The Problems board's work-link hooks are read at each start as well.
         let isRun = record.isRun
         // The voice session (option 09 of `listening-never-answers`) has a pane's full set and the search tool, and two more hooks.
         let isVoice = record.isVoice
@@ -679,7 +673,7 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         let claudeArgs = ClaudeCommand.arguments(skipPermissions: skipsPermissions, agent: agent,
                                                  resuming: conversation,
                                                  sessionID: again ? record.conversationID : record.id.uuidString.lowercased(),
-                                                 prompt: prompt, problems: Settings.shared.problemsBoard,
+                                                 prompt: prompt,
                                                  mcpConfig: ScreenMCP.configuration(pane: record.id, screen: !isRun && Settings.shared.screenAccess,
                                                                                     panel: !isRun,
                                                                                     automations: !isRun,
@@ -1360,16 +1354,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         if first || new != old { onMessageChange(old, new, first) }
     }
 
-    /// Reads the work records and the log when the log's date changes: every hook that changes a record appends to it, so otherwise this
-    /// is one stat a second per pane (the board's tick). A peer's files are on its host.
-    func checkWork() {
-        guard isClaude, !isOnPeer else { return }
-        let stamp = PaneFolder.modificationDate(PaneFolder.workLogFile(for: record.id).path)
-        guard stamp != workStamp else { return }
-        workStamp = stamp
-        work = stamp == nil ? nil : PaneFolder.work(for: record.id)
-    }
-
     /// A name given with /rename outranks Claude's own title: searches the transcript's last 64 KB for it each time the
     /// transcript's date changes, and keeps it in the title record.
     private func checkRename() {
@@ -1407,9 +1391,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         turn = status.running ? status.turn.map {
             PaneTurn($0, since: Turn.began(ageSeconds: status.turnAge, before: Date()), failure: status.failure, interrupted: status.esc == true)
         } : nil
-        // Its work links are the host's (ADR 0020). Once it isn't running there, the history stays for the closing pane to save and
-        // the live records go, so the card leaves Building.
-        if status.running { work = status.work?.paneWork } else { dropHostLive() }
         guard status.running else { return false }
         var changed = false
         if let reported = status.conversation {
@@ -1434,12 +1415,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         // Not known to hold either; the next reply is a starting point again, as for the turn.
         message = nil
         messageKnown = false
-        dropHostLive()
-    }
-
-    /// The host's live work records are no longer known to hold; its history is kept.
-    private func dropHostLive() {
-        if let work { self.work = PaneWork(live: [], logged: work.history) }
     }
 
     /// Runs the exit callback exactly once, whichever path notices first.
@@ -1569,7 +1544,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
             self.restartedAt = Date()
             self.launchClaude(restarting: true)
             self.checkTurn()
-            self.checkWork()
         }
     }
 
@@ -1641,7 +1615,6 @@ final class ClaudeSession: NSObject, ObservableObject, Identifiable, LocalProces
         restartedAt = Date()
         launchClaude(restarting: true)
         checkTurn()
-        checkWork()
         return nil
     }
 

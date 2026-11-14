@@ -807,60 +807,10 @@ if CommandLine.arguments.contains("--sync") {
     }
 }
 
-// `Varnick --hook-settings` prints the `--settings` value claude is started with, to run the hooks' shell by hand. It always has the
-// work-link hooks, whatever the Problems board switch says: they are what it is run to reach.
+// `Varnick --hook-settings` prints the `--settings` value claude is started with, to run the hooks' shell by hand.
 if CommandLine.arguments.contains("--hook-settings") {
-    print(ClaudeCommand.hookSettings(problems: true))
+    print(ClaudeCommand.hookSettings())
     exit(0)
-}
-
-// `Varnick --problems [--work <pane folder>]… [--ended <pane folder>]… [--sent <pane folder>]… [--sent-json <file>]… [folder…]` prints the Problems tab's columns, each card's evidence and
-// chips and each pane folder's links, for those project folders (main checkouts) or the projects Varnick lists and Home, and exits (to check the rules
-// and the hooks' files without the UI). A pane folder is read for its work files; `--ended` reads it as a pane that has closed; `--sent`
-// reads it as a host would for a paired Mac (printing the `sessions` entry it sends) and shows it as that Mac's open session; `--sent-json`
-// takes such an entry from a file (one line, as a host sent it, with or without `work`).
-if let i = CommandLine.arguments.firstIndex(of: "--problems") {
-    var folders: [String] = [], open: [URL] = [], ended: [URL] = [], sent: [URL] = [], sentJSON: [URL] = []
-    var rest = CommandLine.arguments.dropFirst(i + 1)[...]
-    while let argument = rest.popFirst() {
-        if argument == "--work", let folder = rest.popFirst() { open.append(URL(fileURLWithPath: folder)) }
-        else if argument == "--ended", let folder = rest.popFirst() { ended.append(URL(fileURLWithPath: folder)) }
-        else if argument == "--sent", let folder = rest.popFirst() { sent.append(URL(fileURLWithPath: folder)) }
-        else if argument == "--sent-json", let file = rest.popFirst() { sentJSON.append(URL(fileURLWithPath: file)) }
-        else if !argument.hasPrefix("--") { folders.append(argument) }
-    }
-    MainActor.assumeIsolated {
-        Task { @MainActor in
-            let roots = folders.isEmpty ? ProblemsReader.roots(of: Project.scan(roots: Settings.shared.projectFolders).map(\.path)) : folders
-            print(await ProblemsReader.report(roots, open: open, ended: ended, sent: sent, sentJSON: sentJSON), terminator: "")
-            exit(0)
-        }
-        RunLoop.main.run()
-    }
-}
-
-// `Varnick --work-history <pane folder>` makes the database ready (every table, `work_history` included) and writes the pane folder's links
-// into it as one closed session (a made-up id), then exits: to check the table's migration and write against a COPY of the database. It
-// refuses to run unless VARNICK_DB names that copy, so it can never write the live one.
-if let i = CommandLine.arguments.firstIndex(of: "--work-history"), i + 1 < CommandLine.arguments.count {
-    guard let path = ProcessInfo.processInfo.environment["VARNICK_DB"], !path.isEmpty else {
-        print("Set VARNICK_DB to a copy of the database: this writes to it")
-        exit(1)
-    }
-    do {
-        try HistorySync.prepare(at: path)
-        let links = PaneFolder.work(in: URL(fileURLWithPath: CommandLine.arguments[i + 1])).history
-        let record = SessionRecord(id: UUID(), prompt: "", title: "", directory: "/", startedAt: Date(), lastUsed: Date())
-        Task {
-            await HistorySync.recordWork(of: record, links: links, databasePath: path).value
-            print("Wrote \(links.count) link\(links.count == 1 ? "" : "s") for session \(record.id.uuidString.lowercased()) into \(path)")
-            exit(0)
-        }
-        RunLoop.main.run()
-    } catch {
-        print("Failed: \(error.localizedDescription)")
-        exit(1)
-    }
 }
 
 // `Varnick --search "query"` prints the hybrid results of a `?` search for it (it adds the `?`) and exits (debugging / ranking checks).

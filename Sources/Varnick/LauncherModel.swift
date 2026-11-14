@@ -581,9 +581,6 @@ final class LauncherModel: ObservableObject {
 
     private func token(for project: Project) -> String { token(for: project, among: activeProjects) }
 
-    /// A project's `#name` word among this Mac's, as a pill on the Problems tab.
-    func projectPill(_ project: Project) -> String { token(for: project, among: projects) }
-
     private func token(for project: Project, among projects: [Project]) -> String {
         let shared = projects.contains { $0.name == project.name && $0.path != project.path }
         return "#" + (shared ? "\(project.group)/\(project.name)" : project.name)
@@ -703,8 +700,6 @@ final class LauncherModel: ObservableObject {
             record.agent = info.agent
             record.conversation = info.conversation
             record.host = peer.id
-            // The links it was listed with, so the ended card it becomes keeps them (`endRememberedTabs`).
-            record.workLinks = info.work?.paneWork.history
             return record
         }
 
@@ -1199,9 +1194,6 @@ final class LauncherModel: ObservableObject {
         case .kanban:
             if clearingQuery { query = "" }
             showBoard(.sessions)
-        case .problems:
-            if clearingQuery { query = "" }
-            showBoard(.problems)
         case .outline:
             if clearingQuery { query = "" }
             showOutline(focusing: focusing)
@@ -1666,7 +1658,7 @@ final class LauncherModel: ObservableObject {
         func key(_ tab: TabRecord) -> [[String]] {
             tab.records.map { [$0.id.uuidString, $0.host ?? "", $0.title, $0.directory, $0.agent ?? "", $0.conversation ?? ""] }
         }
-        return old.name != new.name || key(old) != key(new) || old.records.map(\.workLinks) != new.records.map(\.workLinks)
+        return old.name != new.name || key(old) != key(new)
     }
 
     /// Makes an ended card of a remembered tab of `host` once its latest listing succeeded without it and its
@@ -2628,15 +2620,6 @@ final class LauncherModel: ObservableObject {
         var record = session.snapshot
         // The name ⌘⇧R gave a one-pane tab is the card's, as on the running card (`SessionBoard.card(for:in:_:)`).
         if record.isClaude, (held?.saved.layout.records.count ?? tab.sessions.count) == 1, let name = tab.name { record.title = name }
-        // Its links stay with the saved record, so its card keeps its chips (ADR 0020); the log is read here, once, as the pane closes.
-        // A pane on a peer keeps what that host last said; the search database gets this Mac's own at once, and a peer's at the sync.
-        if record.isClaude {
-            let links = session.isOnPeer ? session.work?.history ?? [] : PaneFolder.work(for: record.id).history
-            if !links.isEmpty {
-                record.workLinks = links
-                if !session.isOnPeer { HistorySync.recordWork(of: record, links: links, databasePath: store.path) }
-            }
-        }
         // A tab that ends isn't being renamed any more, on screen or not (the board can end a tab under it).
         if renamingTab === tab, tab.sessions.count == 1 { renamingTab = nil }
         // A pane closed in a tab that stays open leaves its conversation in the tab's history, with the last title it had. It does not reach
@@ -3246,7 +3229,7 @@ final class LauncherModel: ObservableObject {
         if showingBoard { closeBoard() } else { showBoard() }
     }
 
-    /// `tab` is the one to show (`!problems`); nil leaves the board on the tab it showed last.
+    /// `tab` is the one to show; nil leaves the board on the tab it showed last.
     func showBoard(_ tab: SessionBoard.Tab? = nil) {
         pendingSplit = nil
         willCoverTabs()
@@ -4046,13 +4029,13 @@ extension PeerRecentTab {
 
 /// A `!` command; its name is what's typed after `!`. Run by `LauncherModel.runCommand`.
 enum LauncherCommand: String, CaseIterable, Identifiable {
-    case listen, transcript, kanban, outline, problems, resources
+    case listen, transcript, kanban, outline, resources
 
     var id: String { rawValue }
 
-    /// The commands `!` lists and matches: `!problems` and `!outline` only with their switches on (Settings › Experimental).
+    /// The commands `!` lists and matches: `!outline` only with its switch on (Settings › Experimental).
     @MainActor static var available: [LauncherCommand] {
-        allCases.filter { ($0 != .problems || Settings.shared.problemsBoard) && ($0 != .outline || Settings.shared.outlineOn) }
+        allCases.filter { $0 != .outline || Settings.shared.outlineOn }
     }
 
     /// What matches it after `!`: `!tabs` is another name for `!kanban` and `!wf` for `!outline`, so both find the one row.
@@ -4061,7 +4044,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .kanban: [rawValue, "tabs"]
         case .outline: [rawValue, "wf"]
         case .resources: [rawValue, "memory"]
-        case .listen, .transcript, .problems: [rawValue]
+        case .listen, .transcript: [rawValue]
         }
     }
 
@@ -4071,7 +4054,6 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .transcript: "text.alignleft"
         case .kanban: "rectangle.split.3x1"
         case .outline: "list.bullet.indent"
-        case .problems: "tray.full"
         case .resources: "memorychip"
         }
     }
@@ -4083,7 +4065,6 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .transcript: "Show transcript"
         case .kanban: "Show session board"
         case .outline: "Show outline"
-        case .problems: "Show problems board"
         case .resources: "Show Resources"
         }
     }
@@ -4094,7 +4075,6 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .transcript: "Today's transcript in a tab, following new lines"
         case .kanban: "Claude sessions by turn: Running, Stopped, Completed (also !tabs)"
         case .outline: "Your bullets, kept on this Mac and shown on its Phone page (also !wf)"
-        case .problems: "Problems by stage: Backlog, Decided, Building, Shipped, Closed"
         case .resources: "Memory by tab, pane and helper (also !memory)"
         }
     }
@@ -4103,7 +4083,7 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     @MainActor var needsAttention: Bool {
         switch self {
         case .listen: Listener.shared.state.needsAttention
-        case .transcript, .kanban, .outline, .problems, .resources: false
+        case .transcript, .kanban, .outline, .resources: false
         }
     }
 }

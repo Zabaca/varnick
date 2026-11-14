@@ -7,6 +7,8 @@ evidence: Two read-only audits on 2026-10-17 at bda4a64, over git (merges, statu
 status: closed
 ---
 
+Note, 2026-11-13: the Problems board and the work links this problem is about were removed at the user's request (experimental; it may return): see [ADR 0020](../../adr/0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md), withdrawn. The problem stays closed: what it asked for that outlives the board, statuses set by the merge, is in `docs/agents/issue-tracker.md`.
+
 ## What the user wants
 
 Decided on 2026-10-17, relayed by the coordinator, after reading the audits: the board and the links say what is true without catch-up commits.

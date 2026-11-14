@@ -6,6 +6,8 @@ status: abandoned
 reason: Built as option 01's first branch (merge 6b80690), and option 01 shipped on top of it.
 ---
 
+Note, 2026-11-13: the Problems tab that this option describes was removed at the user's request (experimental; it may return): see [ADR 0020](../../adr/0020-work-links-come-from-hooks-and-explicit-marks-never-from-transcripts.md), withdrawn. Its status is as it was when it was decided.
+
 ## Solution
 
 **The Problems tab** is option 01's: the same columns, rule, cards, evidence, Show evidence, keys and projects, with no chips.

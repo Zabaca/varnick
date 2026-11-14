@@ -83,21 +83,20 @@ extension PanelAccess {
 
 // MARK: The session board
 
-/// `board_read`: the Session board's cards by column, as the board shows them, or the Problems tab's. It has no actions: Done, Restart
+/// `board_read`: the Session board's cards by column, as the board shows them. It has no actions: Done, Restart
 /// and End act on other sessions, and opening a card is `show` with its id.
 struct BoardPanelView: PanelAccessView {
     static let name = "board"
     static let readSpec = PanelToolSpec(
         summary: "Reads the session board: the tabs as cards in Running, Stopped and Completed, each with its id (s1…), title, "
             + "project, the Mac it runs on when that is another, the turn and how long (\"Working 12m\") of its most urgent session, a mark "
-            + "when that waits on the user, its note (\"Controlled on…\"), and the problem or option it is linked to. Under each card its "
+            + "when that waits on the user and its note (\"Controlled on…\"). Under each card its "
             + "Claude sessions, each with its own id (the one `pane_read` takes), title, turn, background work, mark and note, and \"this "
-            + "session\" on the caller's own. With `tab: problems`, the Problems tab's cards instead, by stage. It reads the board whether it is showing or not. "
+            + "session\" on the caller's own. It reads the board whether it is showing or not. "
             + "Before answering with the Sessions tab it asks the paired Macs and headless hosts what is open on them, unless they were asked in the last few "
             + "seconds, and waits up to 5 seconds for them; the reply names the machines that did not answer in time, whose cards are then missing or as last "
-            + "fetched. The Problems tab asks no machine. The titles and notes go to Anthropic with this session.",
-        properties: ["tab": ["type": "string", "enum": ["sessions", "problems"],
-                             "description": "sessions (the default), or problems while the Problems board switch is on."]])
+            + "fetched. The titles and notes go to Anthropic with this session.",
+        properties: [:])
 
     let model: LauncherModel
 
@@ -109,8 +108,10 @@ struct BoardPanelView: PanelAccessView {
             // The paired machines' tab lists first, so a session opened on one a moment ago is on the board though nobody is at this Mac.
             let unreached = await model.bringPeerListsUpToDate()
             return sessions(caller: caller) + (PeerListRefresh.note(unreached: unreached).map { "\n" + $0 } ?? "")
-        case "problems": return try problems(caller: caller)
-        default: throw PanelRefusal.bad("tab is sessions or problems")
+        // A session started before the Problems board was removed still lists `tab`: `sessions` is still accepted, though the error below says
+        // board_read takes no tab.
+        case "problems": throw PanelRefusal.problemsRemoved
+        default: throw PanelRefusal.bad("board_read takes no tab: it reads the Sessions tab")
         }
     }
 
@@ -152,7 +153,6 @@ struct BoardPanelView: PanelAccessView {
         if !card.background.isEmpty, card.turn != .background { parts.append(card.background.text) }
         if let mark = card.mark { parts.append(mark) }
         if let note = card.note { parts.append("note: " + PanelAccess.oneLine(note)) }
-        if let work = card.workText { parts.append("work: " + work) }
         return parts.joined(separator: " · ")
     }
 
@@ -165,29 +165,6 @@ struct BoardPanelView: PanelAccessView {
         if let note = session.note { parts.append("note: " + PanelAccess.oneLine(note)) }
         if session.id == caller { parts.append("this session") }
         return parts.joined(separator: " · ")
-    }
-
-    @MainActor private func problems(caller: UUID) throws -> String {
-        guard Settings.shared.problemsBoard else { throw PanelRefusal.problemsOff }
-        // The chips come from the Sessions cards.
-        model.board.refresh()
-        let board = model.board.problems
-        // The board's own read, off the main actor and only while the tab shows: a hidden tab holds what it last read, or nothing yet.
-        guard board.loaded else { return "Session board, Problems tab: not read yet. It reads the projects' problems when the tab is shown." }
-        var lines = ["Session board, Problems tab" + (model.showingBoard && model.board.tab == .problems ? "" : " (as last read)")]
-        for column in ProblemColumn.allCases {
-            let cards = board.cards(in: column)
-            lines.append("\(column.title) (\(cards.count))" + (cards.isEmpty ? ": none" : ":"))
-            for card in cards {
-                var parts = ["\"\(PanelAccess.oneLine(card.title))\"", PanelAccess.oneLine((card.project as NSString).lastPathComponent, limit: 60),
-                             "\(card.severity)"]
-                if !card.chips.isEmpty {
-                    parts.append("sessions: " + card.chips.map { "\(PanelAccess.shared.id(for: $0.id, caller: caller)) (\($0.column.title))" }.joined(separator: ", "))
-                }
-                lines.append("  " + parts.joined(separator: " · "))
-            }
-        }
-        return lines.joined(separator: "\n")
     }
 }
 
