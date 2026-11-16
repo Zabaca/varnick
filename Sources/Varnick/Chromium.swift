@@ -573,10 +573,18 @@ final class ChromiumPage: NSView {
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
     private(set) var title = ""
-    /// The engine's error page told the title last, and then the page that committed after it has told none yet: a page with no `<title>`
-    /// tells none and would keep "Error". Only then, since a reload or Back tells no title for one the history entry already has.
-    private var titleIsErrorPages = false
-    private var awaitsTitle = false
+    /// Whose the title is. A page with no `<title>` tells none, so one that loads after the engine's error page would keep "Error": the title
+    /// goes only then (`awaited` at the finish), since a reload or Back tells none for a title the history entry already has.
+    private enum TitleSource {
+        /// A page's own, or none yet.
+        case page
+        /// A load failed, which a download and a navigation cut off report too: a title told now is the error page's.
+        case failed
+        case errorPage
+        /// The page that committed after the error page has told no title yet.
+        case awaited
+    }
+    private var titleSource = TitleSource.page
     var address: String { wanted ?? "" }
     /// A window this page opened (`target=_blank`, `window.open`, a sign-in popup), made into a page of its own for a pane to show.
     var onPageWindow: (ChromiumPage) -> Void = { $0.close() }
@@ -828,8 +836,7 @@ final class ChromiumPage: NSView {
                     // A reload after the page closed itself opens where it was, not where it started.
                     page.wanted = text
                     page.seenAddress = text
-                    page.awaitsTitle = page.titleIsErrorPages
-                    page.titleIsErrorPages = false
+                    page.titleSource = page.titleSource == .errorPage ? .awaited : .page
                     page.onURL(text)
                     page.onLoaded()
                 }
@@ -837,8 +844,8 @@ final class ChromiumPage: NSView {
                 guard isPage else { return }
                 ChromiumPage.later(data) { page in
                     // No title came for the page that followed the error page: "Error" goes, and the pane is named as one with no title is.
-                    if page.awaitsTitle {
-                        page.awaitsTitle = false
+                    if page.titleSource == .awaited {
+                        page.titleSource = .page
                         page.title = ""
                         page.onTitle("")
                     }
@@ -846,7 +853,7 @@ final class ChromiumPage: NSView {
                 }
             case Zebkit.loadFailed:
                 ChromiumPage.later(data) {
-                    $0.titleIsErrorPages = true
+                    if $0.titleSource == .page { $0.titleSource = .failed }
                     $0.onLoadFailed(text)
                 }
             default:
@@ -857,7 +864,11 @@ final class ChromiumPage: NSView {
             guard let title, let data else { return }
             let text = String(cString: title)
             ChromiumPage.later(data) {
-                $0.awaitsTitle = false
+                switch $0.titleSource {
+                case .failed: $0.titleSource = .errorPage
+                case .awaited: $0.titleSource = .page
+                case .page, .errorPage: break
+                }
                 $0.title = text
                 $0.onTitle(text)
             }
