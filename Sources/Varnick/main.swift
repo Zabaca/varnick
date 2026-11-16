@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Settings › Resources takes the same keys, but only while that tab shows: the tab underneath gets none of them.
             if self.model.settingsResources.isShown, self.model.settingsResources.key(event) { return nil }
             // A key no shortcut takes may be the Edit menu's, which a Chromium page would keep from it.
-            guard let action = settings.action(for: event), self.perform(action) else { return ChromiumPage.takesEditKey(event) ? nil : event }
+            guard let action = settings.action(for: event), self.perform(action) else { return ChromiumPage.giveMenuKey(event) ? nil : event }
             return nil
         }
 

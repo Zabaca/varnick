@@ -573,8 +573,10 @@ final class ChromiumPage: NSView {
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
     private(set) var title = ""
-    /// Whether the document shown has told a title: one with no `<title>` tells none, and would keep the title of the page before it.
-    private var titleTold = false
+    /// The engine's error page told the title last, and then the page that committed after it has told none yet: a page with no `<title>`
+    /// tells none and would keep "Error". Only then, since a reload or Back tells no title for one the history entry already has.
+    private var titleIsErrorPages = false
+    private var awaitsTitle = false
     var address: String { wanted ?? "" }
     /// A window this page opened (`target=_blank`, `window.open`, a sign-in popup), made into a page of its own for a pane to show.
     var onPageWindow: (ChromiumPage) -> Void = { $0.close() }
@@ -677,11 +679,9 @@ final class ChromiumPage: NSView {
         kit.reload(view)
     }
 
-    /// ⌘C, ⌘V, ⌘X, ⌘A, ⌘Z and ⌘⇧Z with a page holding the keyboard, for the key monitor: the engine's view takes every key equivalent
-    /// for its page and passes none it leaves on to the main menu (posted ⌘C reached the page's keydown and copied nothing, 2026-11-16), so
-    /// the Edit menu gets the key first and its command goes to the page as the first responder. A page that handles one of these keys in
-    /// its own keydown no longer sees it; cut, copy and paste still reach it as the clipboard events.
-    static func takesEditKey(_ event: NSEvent) -> Bool {
+    /// Gives a ⌘ key to the main menu (Edit's six) when a page holds the keyboard, and says whether the menu took it: the engine's view
+    /// passes no key it leaves on to the menu, so the menu goes first and the page's keydown never sees those keys (where-it-breaks, Focus and keys).
+    static func giveMenuKey(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command), let responder = event.window?.firstResponder as? NSView else { return false }
         var view: NSView? = responder
         while let above = view, !(above is ChromiumPage) { view = above.superview }
@@ -826,24 +826,29 @@ final class ChromiumPage: NSView {
                 ChromiumPage.later(data) { page in
                     guard isPage else { return }
                     // A reload after the page closed itself opens where it was, not where it started.
-                    page.titleTold = false
                     page.wanted = text
                     page.seenAddress = text
+                    page.awaitsTitle = page.titleIsErrorPages
+                    page.titleIsErrorPages = false
                     page.onURL(text)
                     page.onLoaded()
                 }
             case Zebkit.loadFinished:
                 guard isPage else { return }
                 ChromiumPage.later(data) { page in
-                    // The engine tells no title for a page without one: the last page's (its own error page's "Error") goes, and the pane names the host.
-                    if !page.titleTold, !page.title.isEmpty {
+                    // No title came for the page that followed the error page: "Error" goes, and the pane is named as one with no title is.
+                    if page.awaitsTitle {
+                        page.awaitsTitle = false
                         page.title = ""
                         page.onTitle("")
                     }
                     page.onLoaded()
                 }
             case Zebkit.loadFailed:
-                ChromiumPage.later(data) { $0.onLoadFailed(text) }
+                ChromiumPage.later(data) {
+                    $0.titleIsErrorPages = true
+                    $0.onLoadFailed(text)
+                }
             default:
                 return
             }
@@ -852,7 +857,7 @@ final class ChromiumPage: NSView {
             guard let title, let data else { return }
             let text = String(cString: title)
             ChromiumPage.later(data) {
-                $0.titleTold = true
+                $0.awaitsTitle = false
                 $0.title = text
                 $0.onTitle(text)
             }
