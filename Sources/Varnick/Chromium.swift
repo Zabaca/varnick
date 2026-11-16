@@ -573,6 +573,8 @@ final class ChromiumPage: NSView {
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
     private(set) var title = ""
+    /// Whether the document shown has told a title: one with no `<title>` tells none, and would keep the title of the page before it.
+    private var titleTold = false
     var address: String { wanted ?? "" }
     /// A window this page opened (`target=_blank`, `window.open`, a sign-in popup), made into a page of its own for a pane to show.
     var onPageWindow: (ChromiumPage) -> Void = { $0.close() }
@@ -673,6 +675,19 @@ final class ChromiumPage: NSView {
     func reload() {
         guard let kit, let view else { return makePage() }
         kit.reload(view)
+    }
+
+    /// ⌘C, ⌘V, ⌘X, ⌘A, ⌘Z and ⌘⇧Z with a page holding the keyboard, for the key monitor: the engine's view takes every key equivalent
+    /// for its page and passes none it leaves on to the main menu (posted ⌘C reached the page's keydown and copied nothing, 2026-11-16), so
+    /// the Edit menu gets the key first and its command goes to the page as the first responder. A page that handles one of these keys in
+    /// its own keydown no longer sees it; cut, copy and paste still reach it as the clipboard events.
+    static func takesEditKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command), let responder = event.window?.firstResponder as? NSView else { return false }
+        var view: NSView? = responder
+        while let above = view, !(above is ChromiumPage) { view = above.superview }
+        // The pane itself has the keyboard while its card is up: nothing goes to the page under it.
+        guard view is ChromiumPage, responder !== view else { return false }
+        return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
     }
 
     func focusPage() {
@@ -811,6 +826,7 @@ final class ChromiumPage: NSView {
                 ChromiumPage.later(data) { page in
                     guard isPage else { return }
                     // A reload after the page closed itself opens where it was, not where it started.
+                    page.titleTold = false
                     page.wanted = text
                     page.seenAddress = text
                     page.onURL(text)
@@ -818,7 +834,14 @@ final class ChromiumPage: NSView {
                 }
             case Zebkit.loadFinished:
                 guard isPage else { return }
-                ChromiumPage.later(data) { $0.onLoaded() }
+                ChromiumPage.later(data) { page in
+                    // The engine tells no title for a page without one: the last page's (its own error page's "Error") goes, and the pane names the host.
+                    if !page.titleTold, !page.title.isEmpty {
+                        page.title = ""
+                        page.onTitle("")
+                    }
+                    page.onLoaded()
+                }
             case Zebkit.loadFailed:
                 ChromiumPage.later(data) { $0.onLoadFailed(text) }
             default:
@@ -829,6 +852,7 @@ final class ChromiumPage: NSView {
             guard let title, let data else { return }
             let text = String(cString: title)
             ChromiumPage.later(data) {
+                $0.titleTold = true
                 $0.title = text
                 $0.onTitle(text)
             }
