@@ -573,6 +573,18 @@ final class ChromiumPage: NSView {
     var onURL: (String) -> Void = { _ in }
     var onTitle: (String) -> Void = { _ in }
     private(set) var title = ""
+    /// Whose the title is. A page with no `<title>` tells none, so one that loads after the engine's error page would keep "Error": the title
+    /// goes only then (`awaited` at the finish), since a reload or Back tells none for a title the history entry already has.
+    private enum TitleSource {
+        /// A page's own, or none yet.
+        case page
+        /// A load failed, which a download and a navigation cut off report too: a title told now is the error page's.
+        case failed
+        case errorPage
+        /// The page that committed after the error page has told no title yet.
+        case awaited
+    }
+    private var titleSource = TitleSource.page
     var address: String { wanted ?? "" }
     /// A window this page opened (`target=_blank`, `window.open`, a sign-in popup), made into a page of its own for a pane to show.
     var onPageWindow: (ChromiumPage) -> Void = { $0.close() }
@@ -673,6 +685,17 @@ final class ChromiumPage: NSView {
     func reload() {
         guard let kit, let view else { return makePage() }
         kit.reload(view)
+    }
+
+    /// Gives a ⌘ key to the main menu (Edit's six) when a page holds the keyboard, and says whether the menu took it: the engine's view
+    /// passes no key it leaves on to the menu, so the menu goes first and the page's keydown never sees those keys (where-it-breaks, Focus and keys).
+    static func giveMenuKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command), let responder = event.window?.firstResponder as? NSView else { return false }
+        var view: NSView? = responder
+        while let above = view, !(above is ChromiumPage) { view = above.superview }
+        // The pane itself has the keyboard while its card is up: nothing goes to the page under it.
+        guard view is ChromiumPage, responder !== view else { return false }
+        return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
     }
 
     func focusPage() {
@@ -813,14 +836,26 @@ final class ChromiumPage: NSView {
                     // A reload after the page closed itself opens where it was, not where it started.
                     page.wanted = text
                     page.seenAddress = text
+                    page.titleSource = page.titleSource == .errorPage ? .awaited : .page
                     page.onURL(text)
                     page.onLoaded()
                 }
             case Zebkit.loadFinished:
                 guard isPage else { return }
-                ChromiumPage.later(data) { $0.onLoaded() }
+                ChromiumPage.later(data) { page in
+                    // No title came for the page that followed the error page: "Error" goes, and the pane is named as one with no title is.
+                    if page.titleSource == .awaited {
+                        page.titleSource = .page
+                        page.title = ""
+                        page.onTitle("")
+                    }
+                    page.onLoaded()
+                }
             case Zebkit.loadFailed:
-                ChromiumPage.later(data) { $0.onLoadFailed(text) }
+                ChromiumPage.later(data) {
+                    if $0.titleSource == .page { $0.titleSource = .failed }
+                    $0.onLoadFailed(text)
+                }
             default:
                 return
             }
@@ -829,6 +864,11 @@ final class ChromiumPage: NSView {
             guard let title, let data else { return }
             let text = String(cString: title)
             ChromiumPage.later(data) {
+                switch $0.titleSource {
+                case .failed: $0.titleSource = .errorPage
+                case .awaited: $0.titleSource = .page
+                case .page, .errorPage: break
+                }
                 $0.title = text
                 $0.onTitle(text)
             }
