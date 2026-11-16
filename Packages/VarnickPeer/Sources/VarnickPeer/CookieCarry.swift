@@ -165,14 +165,23 @@ public enum CookieCarry {
         public var sentinel: Bool
         public var salt: String
         public var carried: [Carried]
-        public init(attempts: Int, accepted: Int, sentinel: Bool = false, salt: String, carried: [Carried]) {
+        /// Nil in a record of the build before the warm-up (version 1); every record written now has `recordVersion`.
+        public var version: Int?
+        public init(attempts: Int, accepted: Int, sentinel: Bool = false, salt: String, carried: [Carried], version: Int? = CookieCarry.recordVersion) {
             self.attempts = attempts
             self.accepted = accepted
             self.sentinel = sentinel
             self.salt = salt
             self.carried = carried
+            self.version = version
         }
+
+        /// The version-1 record of an empty read counted as a copy (ADR 0048, "Observed 2026-11-15"): nothing taken, nothing carried, no check cookie. It is
+        /// read as no record. A version-1 copy Chromium refused wrote the same, and is dropped with it: one start's worth, so the bound restarts once.
+        public var isFalseEmpty: Bool { version == nil && accepted == 0 && carried.isEmpty && !sentinel }
     }
+
+    public static let recordVersion = 2
 
     /// What a later start makes of the record, once it has read the digests of the cookies Chromium holds.
     public enum Verdict: Equatable, Sendable {
@@ -201,10 +210,20 @@ public enum CookieCarry {
         return record.attempts >= maxAttempts ? .giveUp : .retry
     }
 
-    /// Whether a start's copy ends it for good, with this start's `attempts` counted. Not on an empty read (WebKit may answer empty before it has loaded its
-    /// store), nor when Chromium took none; nothing to give, or nothing persistent taken, can't be lost and ends it.
-    public static func endsAfterCopy(attempts: Int, webKitCookies: Int, given: Int, accepted: Int, acceptedPersistent: Int) -> Bool {
-        if webKitCookies == 0 || (given > 0 && accepted == 0) { return attempts >= maxAttempts }
+    /// Whether a start's copy ends it for good, with this start's `attempts` counted, after a read that returned cookies. Not when Chromium took none;
+    /// nothing to give, or nothing persistent taken, can't be lost and ends it.
+    public static func endsAfterCopy(attempts: Int, given: Int, accepted: Int, acceptedPersistent: Int) -> Bool {
+        if given > 0 && accepted == 0 { return attempts >= maxAttempts }
         return given == 0 || acceptedPersistent == 0
+    }
+
+    /// A cookie file this size or smaller holds no cookie: measured on `HTTPCookieStorage` files, none is about 111 bytes and one is 257 or more (ADR 0048).
+    public static let emptyStoreBytes = 180
+
+    /// Whether an empty read of WebKit's store ends the copy: only after the warm-up's load finished and with the store's file agreeing, by size (0 when
+    /// absent, nil when it can't be told). Never counted toward `maxAttempts`; otherwise tried again at the next start (ADR 0048, "Observed 2026-11-15").
+    public static func endsAfterEmptyRead(warmedUp: Bool, storeFileBytes: Int?) -> Bool {
+        guard warmedUp, let bytes = storeFileBytes else { return false }
+        return bytes <= emptyStoreBytes
     }
 }

@@ -7,16 +7,20 @@ import WebKit
 // store is given to the engine in-process (`zebkit_automation_call` with no view, no port), except any cookie Chromium holds already, with a check cookie of
 // Varnick's own last. The copy is confirmed at a later start, by finding that cookie in what Chromium reads back from disk, and only then is it done
 // (`CookieCarry` has the rules, `make check-cookies` checks them). Nothing is logged but counts, and nothing is written but Chromium's profile (and in it
-// `recordName`) and `doneKey`.
+// `recordName`) and `doneKey`. WebKit's store is read after a hidden web view has loaded a page, and an empty read ends nothing unless the store's file agrees
+// (ADR 0048, "Observed 2026-11-15").
 
 @MainActor
 enum ChromiumLogins {
-    /// Set when the copy is over for good: confirmed, nothing to carry, or given up after `CookieCarry.maxAttempts` starts. Then nothing reads WebKit again.
+    /// Set when the copy is over for good: confirmed, nothing to carry (an empty read the store's file agrees with), or given up after `CookieCarry.maxAttempts`
+    /// starts. Then nothing reads WebKit again.
     static let doneKey = "chromiumWebKitCookiesCarried"
     /// What the last copy left, in Chromium's profile folder: counts and salted digests of its cookies' keys, never a name or a site.
     private static let recordName = "varnick-logins-carry.json"
     /// How long the engine holds the pages back for the copy: past it they load, and the copy goes on, still skipping any cookie Chromium has by then.
     private static let holdSeconds = 3.0
+    /// How long the read waits for the warm-up web view's load: past it WebKit is read anyway, and an empty answer then ends nothing.
+    private static let warmUpSeconds = 5.0
 
     /// One start's copy. `holding` is true from `carry` until the copy ends or `holdSeconds` pass, and the pages that asked meanwhile wait in `held`.
     private struct Run {
@@ -24,6 +28,9 @@ enum ChromiumLogins {
         var record: CookieCarry.Record?
         var webKit: [WebKitCookie]?
         var readingWebKit = false
+        /// The web view that brings WebKit's processes up, kept until the read answers; whether its load finished before the read was made.
+        var warmUp: WarmUp?
+        var warmedUp = false
         var copying = false
         var holding = false
         var held: [@MainActor () -> Void] = []
@@ -38,7 +45,7 @@ enum ChromiumLogins {
         return true
     }
 
-    /// Starts reading WebKit's cookies when this start will copy, so the read overlaps the engine's start (`WKHTTPCookieStore.getAllCookies`, no web view).
+    /// Starts reading WebKit's cookies when this start will copy, so the read overlaps the engine's start (a warm-up web view, then `WKHTTPCookieStore.getAllCookies`).
     static func beginReading() {
         guard run == nil, !UserDefaults.standard.bool(forKey: doneKey), readRecord() == nil else { return }
         run = Run()
@@ -91,15 +98,65 @@ enum ChromiumLogins {
         proceed()
     }
 
+    /// A web view in no window that loads an empty page, so WebKit's cookie store is up before it is read; calls `done` once, with whether the load finished.
+    @MainActor
+    private final class WarmUp: NSObject, WKNavigationDelegate {
+        private let view = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        private var done: (@MainActor (Bool) -> Void)?
+        private var timer: Timer?
+
+        init(timeout: TimeInterval, done: @escaping @MainActor (Bool) -> Void) {
+            self.done = done
+            super.init()
+            view.navigationDelegate = self
+            view.loadHTMLString("<html></html>", baseURL: nil)
+            let timer = Timer(timeInterval: timeout, repeats: false) { [weak self] _ in MainActor.assumeIsolated { self?.end(false) } }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { end(true) }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { end(false) }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { end(false) }
+
+        private func end(_ finished: Bool) {
+            timer?.invalidate()
+            timer = nil
+            guard let done else { return }
+            self.done = nil
+            done(finished)
+        }
+    }
+
     private static func readWebKit() {
         run?.readingWebKit = true
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+        run?.warmUp = WarmUp(timeout: warmUpSeconds) { finished in
             guard run != nil else { return }
-            run?.webKit = cookies.map {
-                WebKitCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, isSecure: $0.isSecure, isHTTPOnly: $0.isHTTPOnly,
-                             sameSite: $0.sameSitePolicy?.rawValue, expires: $0.isSessionOnly ? nil : $0.expiresDate)
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                guard run != nil else { return }
+                run?.warmUp = nil
+                run?.warmedUp = finished
+                run?.webKit = cookies.map {
+                    WebKitCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, isSecure: $0.isSecure, isHTTPOnly: $0.isHTTPOnly,
+                                 sameSite: $0.sameSitePolicy?.rawValue, expires: $0.isSessionOnly ? nil : $0.expiresDate)
+                }
+                let when = finished ? "after the warm-up web view finished its load" : "without the warm-up finishing (it failed or timed out)"
+                NSLog("Varnick: Chromium logins: WebKit's store answered with \(cookies.count) cookies, read \(when)")
+                proceed()
             }
-            proceed()
+        }
+    }
+
+    /// The size of WebKit's cookie file for this app, by size only (never read): 0 when it isn't there, nil when that can't be told.
+    private static func storeFileBytes() -> Int? {
+        guard let id = Bundle.main.bundleIdentifier, let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return nil }
+        let path = library.appendingPathComponent("HTTPStorages/\(id).binarycookies").path
+        do {
+            return (try FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+            return 0
+        } catch {
+            return nil
         }
     }
 
@@ -107,17 +164,24 @@ enum ChromiumLogins {
     private static func proceed() {
         guard let current = run, current.copying, let cookies = current.webKit, current.kit != nil else { return }
         run?.copying = false
-        let attempts = (current.record?.attempts ?? 0) + 1
         guard !cookies.isEmpty else {
-            // WebKit may answer empty before it has loaded its store: that is never taken for "nothing to copy" short of the last attempt.
-            return conclude(attempts: attempts, webKitCookies: 0, planned: [], accepted: [], sentinelThere: false, words: "WebKit's store read empty")
+            // An empty read is no attempt and writes no record: WebKit has answered empty while its file held cookies, so it is believed only with the file's word.
+            let bytes = storeFileBytes()
+            let size = bytes.map { "\($0) bytes" } ?? "of a size that couldn't be told"
+            if CookieCarry.endsAfterEmptyRead(warmedUp: current.warmedUp, storeFileBytes: bytes) {
+                return finish("WebKit's store read empty after the warm-up, and its file is \(size): nothing to carry", done: true)
+            }
+            let when = current.warmedUp ? "after" : "without"
+            let words = "WebKit's store read empty, \(when) the warm-up, and its file is \(size): not taken for nothing to carry, not counted; looked for at the next start"
+            return finish(words, done: false)
         }
+        let attempts = (current.record?.attempts ?? 0) + 1
         readChromium { keys in
             let plan = CookieCarry.plan(webkit: cookies, chromiumHas: keys, now: Date())
             run?.webKit = nil
             let counts = "of \(cookies.count) WebKit cookies, \(plan.alreadyThere) already in Chromium, \(plan.expired) expired, \(plan.unplaceable) with no domain"
             guard !plan.entries.isEmpty else {
-                return conclude(attempts: attempts, webKitCookies: cookies.count, planned: [], accepted: [], sentinelThere: false, words: "copied 0 \(counts)")
+                return conclude(attempts: attempts, planned: [], accepted: [], sentinelThere: false, words: "copied 0 \(counts)")
             }
             // Persistent cookies are what a restart can lose: the check cookie goes last, to tell the next start whether they reached the disk.
             let sentinel = plan.entries.contains { $0.expires != nil } ? CookieCarry.sentinel(now: Date()) : nil
@@ -127,7 +191,7 @@ enum ChromiumLogins {
                     let present = plan.entries.filter { after.contains($0.key) }.count
                     let sentinelThere = sentinel.map { after.contains($0.key) } ?? false
                     let check = sentinel == nil ? "" : sentinelThere ? ", the check cookie is in" : ", the check cookie was not accepted, so the carried cookies stand in for it"
-                    conclude(attempts: attempts, webKitCookies: cookies.count, planned: plan.entries, accepted: accepted, sentinelThere: sentinelThere,
+                    conclude(attempts: attempts, planned: plan.entries, accepted: accepted, sentinelThere: sentinelThere,
                              words: "copied \(accepted.count)\(one ? " one by one" : "") \(counts), \(present) of \(plan.entries.count) planned are in Chromium now\(check)")
                 }
             }
@@ -170,10 +234,9 @@ enum ChromiumLogins {
     }
 
     /// This start's copy is over: whether that ends it, and the record for the next start if not.
-    private static func conclude(attempts: Int, webKitCookies: Int, planned: [CookieCarry.Entry], accepted: [CookieCarry.Entry], sentinelThere: Bool, words: String) {
+    private static func conclude(attempts: Int, planned: [CookieCarry.Entry], accepted: [CookieCarry.Entry], sentinelThere: Bool, words: String) {
         let persistent = accepted.filter { $0.expires != nil }
-        var done = CookieCarry.endsAfterCopy(attempts: attempts, webKitCookies: webKitCookies, given: planned.count, accepted: accepted.count,
-                                             acceptedPersistent: persistent.count)
+        var done = CookieCarry.endsAfterCopy(attempts: attempts, given: planned.count, accepted: accepted.count, acceptedPersistent: persistent.count)
         var note = ""
         if !done {
             let salt = UUID().uuidString
@@ -229,7 +292,7 @@ enum ChromiumLogins {
     private static var recordURL: URL { ChromiumEngine.profileURL.appendingPathComponent(recordName) }
 
     private static func readRecord() -> CookieCarry.Record? {
-        (try? Data(contentsOf: recordURL)).flatMap { try? JSONDecoder().decode(CookieCarry.Record.self, from: $0) }
+        (try? Data(contentsOf: recordURL)).flatMap { try? JSONDecoder().decode(CookieCarry.Record.self, from: $0) }.flatMap { $0.isFalseEmpty ? nil : $0 }
     }
 
     private static func writeRecord(_ record: CookieCarry.Record) -> Bool {

@@ -144,14 +144,47 @@ expect("the check cookie goes last in the parameters, after the others", {
 // MARK: Whether a copy ends it
 
 let max = CookieCarry.maxAttempts
-expect("an empty WebKit read on the first start does not end it", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 0, given: 0, accepted: 0, acceptedPersistent: 0))
-expect("an empty read at the last attempt ends it", CookieCarry.endsAfterCopy(attempts: max, webKitCookies: 0, given: 0, accepted: 0, acceptedPersistent: 0))
-expect("cookies read but nothing to give (all there, or expired) ends it", CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 0, accepted: 0, acceptedPersistent: 0))
-expect("cookies given and taken, some persistent, waits for the next start's confirmation", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 5, acceptedPersistent: 3))
-expect("cookies given and all taken, none persistent, ends it", CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 5, acceptedPersistent: 0))
-expect("some refused, some persistent taken, waits", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 2, acceptedPersistent: 1))
-expect("cookies given and none taken does not end it", !CookieCarry.endsAfterCopy(attempts: 1, webKitCookies: 9, given: 5, accepted: 0, acceptedPersistent: 0))
-expect("cookies given and none taken at the last attempt ends it", CookieCarry.endsAfterCopy(attempts: max, webKitCookies: 9, given: 5, accepted: 0, acceptedPersistent: 0))
+expect("cookies read but nothing to give (all there, or expired) ends it", CookieCarry.endsAfterCopy(attempts: 1, given: 0, accepted: 0, acceptedPersistent: 0))
+expect("cookies given and taken, some persistent, waits for the next start's confirmation", !CookieCarry.endsAfterCopy(attempts: 1, given: 5, accepted: 5, acceptedPersistent: 3))
+expect("cookies given and all taken, none persistent, ends it", CookieCarry.endsAfterCopy(attempts: 1, given: 5, accepted: 5, acceptedPersistent: 0))
+expect("some refused, some persistent taken, waits", !CookieCarry.endsAfterCopy(attempts: 1, given: 5, accepted: 2, acceptedPersistent: 1))
+expect("cookies given and none taken does not end it", !CookieCarry.endsAfterCopy(attempts: 1, given: 5, accepted: 0, acceptedPersistent: 0))
+expect("cookies given and none taken at the last attempt ends it", CookieCarry.endsAfterCopy(attempts: max, given: 5, accepted: 0, acceptedPersistent: 0))
+
+// MARK: Whether an empty read ends it
+
+let small = CookieCarry.emptyStoreBytes
+expect("an empty read after the warm-up, with no store file, ends it", CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: 0))
+expect("an empty read after the warm-up, with a store file of an empty one's size, ends it", CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: 111))
+expect("a store file at the limit still counts as empty", CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: small))
+expect("the limit lies between an empty file (111 bytes) and one cookie's (257)", small > 111 && small < 257)
+expect("an empty read after the warm-up with a store file far larger than an empty one does not end it", !CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: 4096))
+expect("a store file one byte over the limit does not end it", !CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: small + 1))
+expect("an empty read before the warm-up finished never ends it, whatever the file", !CookieCarry.endsAfterEmptyRead(warmedUp: false, storeFileBytes: 0))
+expect("an empty read with a file size that can't be told does not end it", !CookieCarry.endsAfterEmptyRead(warmedUp: true, storeFileBytes: nil))
+
+// MARK: Records of the build before the warm-up (version 1: no version key)
+
+func decode(_ json: String) -> CookieCarry.Record? { try? JSONDecoder().decode(CookieCarry.Record.self, from: Data(json.utf8)) }
+let falseEmpty = decode(#"{"attempts":1,"accepted":0,"sentinel":false,"salt":"s","carried":[]}"#)
+expect("the empty read that build counted as a copy decodes and is a false empty, to be read as no record", falseEmpty?.isFalseEmpty == true)
+let awaiting = decode(#"{"attempts":1,"accepted":3,"sentinel":true,"salt":"s","carried":[]}"#)
+expect("a real copy of that build awaiting its check cookie is kept", awaiting != nil && awaiting?.isFalseEmpty == false)
+expect("it is confirmed when the check cookie is there",
+       awaiting.map { CookieCarry.verdict(for: $0, chromiumDigests: [], sentinelPresent: true, now: now) } == .confirmedBySentinel)
+expect("it is retried when the check cookie is not", awaiting.map { CookieCarry.verdict(for: $0, chromiumDigests: [], sentinelPresent: false, now: now) } == .retry)
+let fallback = decode(#"{"attempts":2,"accepted":2,"sentinel":false,"salt":"s","carried":[{"digest":"a","expires":1900000000}]}"#)
+expect("a copy of that build with carried digests is kept", fallback != nil && fallback?.isFalseEmpty == false)
+expect("it is confirmed when one is there",
+       fallback.map { CookieCarry.verdict(for: $0, chromiumDigests: ["a"], sentinelPresent: false, now: now) } == .confirmed(present: 1, of: 1))
+expect("it is retried when none is, on its second attempt", fallback.map { CookieCarry.verdict(for: $0, chromiumDigests: [], sentinelPresent: false, now: now) } == .retry)
+expect("a copy of that build with only session cookies taken (nothing carried, some accepted) is kept",
+       decode(#"{"attempts":1,"accepted":2,"sentinel":false,"salt":"s","carried":[]}"#)?.isFalseEmpty == false)
+expect("a record of this build that took nothing is not a false empty: it counts", CookieCarry.Record(attempts: 1, accepted: 0, salt: "s", carried: []).isFalseEmpty == false)
+expect("a record of this build round-trips with its version", {
+    let r = record(attempts: 2, carried: [("a", far)])
+    return (try? JSONEncoder().encode(r)).flatMap { try? JSONDecoder().decode(CookieCarry.Record.self, from: $0) } == r && r.version == CookieCarry.recordVersion
+}())
 
 print("check-cookies: \(cases) cases, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

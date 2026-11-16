@@ -28,7 +28,9 @@ vulnerability, see [the end of this page](#reporting-a-vulnerability).
   pane. The copy is checked at a later start and tried again until it shows, at most three times; after the last
   check Varnick stops, and its settings hold a mark that says so. For the check, Varnick writes one cookie of its own, on a made-up
   host that is not a real site, as the last of the copy, and deletes it when the next start finds it, so it sits in the profile
-  between the copy and its confirmation (and for up to 180 days if its deletion fails). A small file in the profile
+  between the copy and its confirmation (and for up to 180 days if its deletion fails).
+  At each engine start until the copy is done, Varnick reads that store through a hidden web view, with nothing shown, and checks the size of its
+  cookie file (never its contents); a store that reads empty while its file is large is read again at the next start. A small file in the profile
   folder keeps a count, and, only if the engine refuses that cookie, scrambled (salted, hashed) fingerprints of the
   carried cookies' names and sites, never the names themselves; it is deleted when the copy stops. Whether the
   copy reaches the profile has not been seen working yet. Local storage and IndexedDB are not copied. WebKit's store is
