@@ -3,15 +3,18 @@ import SwiftUI
 // The projects column (option 02 of tabs-past-the-strip-are-hidden): a column left of the panes that lists the projects with open tabs, and
 // the choice that filters the tab strip to one of them (`TabStrip.tabs`).
 
-/// A row of the projects column: every tab, the tabs of one project (by its `#word`, as the pills show it), or the tabs in no project.
+/// A row of the projects column: every tab, Home's tabs, the tabs of one project (by its `#word`, as the pills show it), or the tabs in no project.
 enum TabProject: Hashable {
     case all
+    /// This Mac's Home folder, which is no project (`HomeFolder`): a session with no project starts there.
+    case home
     case project(String)
     case other
 
     var title: String {
         switch self {
         case .all: "All"
+        case .home: "#Home"
         case .project(let word): word
         case .other: "Other"
         }
@@ -45,7 +48,7 @@ final class TabProjects: ObservableObject {
     private var anchors: [UUID: (pane: UUID, folder: String)] = [:]
 
     /// A tab's row: that of its first Claude pane, else its first pane, by the pills' rule (its folder is one of its machine's projects). Focus,
-    /// a shell's `cd` and a move of panes don't move it. No project is Other.
+    /// a shell's `cd` and a move of panes don't move it. This Mac's Home folder is Home; no project is Other.
     private func row(of tab: ClaudeTab) -> TabProject {
         guard let model else { return .other }
         // The pane it had stays while it is still a Claude pane of the tab (or the tab has none): a move can change which pane is first, and
@@ -55,7 +58,9 @@ final class TabProjects: ObservableObject {
         guard let pane = kept ?? claude ?? tab.sessions.first else { return .other }
         if anchors[tab.viewID]?.pane != pane.id { anchors[tab.viewID] = (pane.id, pane.record.directory) }
         let folder = anchors[tab.viewID]?.folder ?? pane.record.directory
-        return model.pills(folder: folder, agent: nil, host: pane.record.host).project.map(TabProject.project) ?? .other
+        if let project = model.pills(folder: folder, agent: nil, host: pane.record.host).project { return .project(project) }
+        // Another machine's Home has another path, so its tabs stay in Other.
+        return pane.record.host == nil && folder.withoutTrailingSlash == HomeFolder.path ? .home : .other
     }
 
     /// Works the rows out again, and keeps the tab on screen in the chosen one: the choice follows it, and falls back to All when its last
@@ -79,12 +84,12 @@ final class TabProjects: ObservableObject {
     /// Whether the chosen row holds the tab.
     func includes(_ tab: ClaudeTab) -> Bool { choice == .all || rowOf[tab.viewID] == choice }
 
-    /// All, the projects by name, then Other when a tab is in none.
+    /// All, Home, the projects by name, then Other when a tab is in none.
     var orderedRows: [TabProject] {
         let rows = Set(rowOf.values)
         let words = rows.compactMap { row -> String? in if case .project(let word) = row { word } else { nil } }
             .sorted { $0.caseInsensitiveCompare($1) == .orderedAscending }
-        return [.all] + words.map(TabProject.project) + (rows.contains(.other) ? [.other] : [])
+        return [.all] + (rows.contains(.home) ? [.home] : []) + words.map(TabProject.project) + (rows.contains(.other) ? [.other] : [])
     }
 
     struct Info: Identifiable {
