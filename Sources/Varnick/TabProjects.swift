@@ -59,7 +59,7 @@ final class TabProjects: ObservableObject {
         if anchors[tab.viewID]?.pane != pane.id { anchors[tab.viewID] = (pane.id, pane.record.directory) }
         let folder = anchors[tab.viewID]?.folder ?? pane.record.directory
         if let project = model.pills(folder: folder, agent: nil, host: pane.record.host).project { return .project(project) }
-        // Another machine's Home has another path, so its tabs stay in Other.
+        // Only this Mac's Home is known here, so another machine's tabs stay in Other.
         return pane.record.host == nil && folder.withoutTrailingSlash == HomeFolder.path ? .home : .other
     }
 
