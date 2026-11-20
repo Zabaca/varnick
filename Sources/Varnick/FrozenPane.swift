@@ -214,7 +214,8 @@ final class FrozenScreenContainer: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 { onReturn() }
+        // Never with ⌘: Maximize pane's ⌘⇧↩ reaches here in a tab with one pane, and must not take the session over.
+        if !event.modifierFlags.contains(.command), event.keyCode == 36 || event.keyCode == 76 { onReturn() }
     }
 
     /// Called when the card starts or stops being shown: this view is on screen (its tab is active and

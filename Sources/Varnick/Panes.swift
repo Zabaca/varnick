@@ -598,8 +598,10 @@ final class ClaudeTab: ObservableObject {
     /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
     func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
         guard let node = PaneNode.build(layout.addingMissing(sessions.keys.sorted()), sessions: sessions) else { return }
-        restore()
+        // The same panes placed or sized otherwise (a host's divider, a rename, its file tree) leave a maximized pane alone; a pane come or gone doesn't.
+        let before = Set(root.leaves.map(\.id))
         root.become(node)
+        if Set(root.leaves.map(\.id)) != before { restore() }
         if !contains(focused), let first = root.leaves.first { focused = first }
     }
 
