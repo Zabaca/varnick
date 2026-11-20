@@ -50,7 +50,7 @@ enum PaneMCP {
             + "opening serves nothing, and \(ChromiumEngine.cdpStopText); where Chromium can't run the reply and pane_read say why, and the pane tells the user what to do) "
             + "or file (a file pane for `path`, a file inside this session's project). The new pane takes half of this pane's place, `beside` it (the default) "
             + "or `below`; focus stays where it was, so the user keeps typing where they were, and Varnick's panel is never brought up, hidden or pinned: with the "
-            + "panel hidden or the tab not on screen the pane is there when the user opens it. A new Claude pane never skips permission checks when this session "
+            + "panel hidden or the tab not on screen the pane is there when the user opens it. In a tab where the user has maximized a pane, opening brings the whole split back first, so the new pane is in sight. A new Claude pane never skips permission checks when this session "
             + "does not. An app runs that app's code, outside Claude Code's permission checks, and a page loads in Varnick's browser with the user's cookies (it is logged in wherever the user has logged in inside Varnick's pages, "
             + "and its CDP endpoint has no auth while it is served: any program on this Mac can drive it). It is an ordinary pane: the user can watch it, type into it and close it, it raises notices "
             + "and is on the board, and it lists these tools too. Open only what the user asked for or what the work plainly needs: a Claude session draws on the "

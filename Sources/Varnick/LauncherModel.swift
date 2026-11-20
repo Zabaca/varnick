@@ -2239,6 +2239,15 @@ final class LauncherModel: ObservableObject {
         tab.focus(next)
     }
 
+    /// ⌘⇧↩: the focused pane fills the pane area, or the split comes back. False, so the key goes on, in a tab with one pane. It is view state of
+    /// the tab (`ClaudeTab.maximized`): no layout changes, so the layout lock doesn't apply, and nothing is saved or told to a host.
+    func toggleMaximize() -> Bool {
+        guard let tab = activeTab else { return false }
+        guard tab.toggleMaximize() else { return false }
+        tab.focus(tab.focused)
+        return true
+    }
+
     /// ⌃⌘⇧H/J/K/L: the focused pane trades places with the pane ⌘⇧H/J/K/L would focus, the splits and so the sizes staying. Focus stays on it.
     func swapPane(_ direction: PaneDirection) {
         guard let tab = activeTab, let other = tab.neighbor(direction) else { return }

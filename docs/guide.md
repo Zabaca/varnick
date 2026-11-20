@@ -157,6 +157,17 @@ mark with how many of them have a session waiting on you.
 Whether the column shows is kept across restarts; the chosen project isn't, and the strip starts on All. The three keys can be
 rebound in Settings › Shortcuts.
 
+## Maximizing a pane
+
+In a tab with two or more panes, **⌘⇧↩** makes the focused pane fill the whole pane area, and the same key brings the split back exactly as it
+was. The file tree, the projects column and the tab strip stay where they are. The other panes keep running: a Claude session, a terminal
+or a page is not ended, restarted or reloaded, and a terminal keeps its size. A chip in the tab's header says how many panes are hidden;
+click it to restore. Moving focus to another pane (⌘⇧H, ⌘⇧J, ⌘⇧K, ⌘⇧L, or a notice or a session showing it), splitting, swapping or
+closing the maximized pane restores the split first, and so does a session opening a pane in the tab. A tab with one pane passes the key on to the pane.
+It is only how the tab looks: it works in a tab another Mac or the phone controls, and it is not kept across a restart or sent to another device.
+Rebind the key in Settings › Shortcuts (⌘↩ is left alone because pages use it to submit). A session's `panel` call says which pane is
+maximized and which are hidden.
+
 ## Peers
 
 Varnick on one Mac can pair with Varnick on another Mac, and with a headless host, over SSH with your own

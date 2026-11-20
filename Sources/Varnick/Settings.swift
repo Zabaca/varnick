@@ -82,7 +82,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     case backToSearch, newTerminalTab, renameTab, endPane, doneSession, restartSession, paste, previousTab, nextTab, toggleFiles, sessionBoard
     case toggleProjects, previousProject, nextProject
     case splitSideBySide, splitStacked, splitSideBySideOther, splitStackedOther, focusLeft, focusDown, focusUp, focusRight
-    case swapLeft, swapDown, swapUp, swapRight
+    case swapLeft, swapDown, swapUp, swapRight, maximizePane
     case webAddress, webReload
     case fontBigger, fontSmaller, fontReset
 
@@ -94,7 +94,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var isSwap: Bool { self == .swapLeft || self == .swapDown || self == .swapUp || self == .swapRight }
 
     /// A default added after users bound keys: it takes no key a user already gave another action (`Settings.combo`).
-    var yieldsDefaultToUserKeys: Bool { isSwap || self == .toggleVoiceMode }
+    var yieldsDefaultToUserKeys: Bool { isSwap || self == .toggleVoiceMode || self == .maximizePane }
 
     /// Not offered now: the Outline's shortcut while its switch is off. A hidden action keeps its binding but takes no key and counts in no conflict, so
     /// binding its keys to another action leaves it as it was.
@@ -135,6 +135,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapDown: "Swap with pane below"
         case .swapUp: "Swap with pane above"
         case .swapRight: "Swap with pane right"
+        case .maximizePane: "Maximize / restore the focused pane"
         case .webAddress: "Edit address (web pane)"
         case .webReload: "Reload (web pane)"
         case .fontBigger: "Bigger text"
@@ -149,7 +150,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .backToSearch, .newTerminalTab, .renameTab, .endPane, .doneSession, .restartSession, .paste, .previousTab, .nextTab, .toggleFiles, .sessionBoard,
              .toggleProjects, .previousProject, .nextProject: "Tabs"
         case .splitSideBySide, .splitStacked, .splitSideBySideOther, .splitStackedOther, .focusLeft, .focusDown, .focusUp, .focusRight,
-             .swapLeft, .swapDown, .swapUp, .swapRight: "Splits"
+             .swapLeft, .swapDown, .swapUp, .swapRight, .maximizePane: "Splits"
         case .webAddress, .webReload: "Web"
         case .fontBigger, .fontSmaller, .fontReset: "Terminal"
         }
@@ -190,6 +191,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .swapDown: KeyCombo(keyCode: kVK_ANSI_J, [.command, .control, .shift])
         case .swapUp: KeyCombo(keyCode: kVK_ANSI_K, [.command, .control, .shift])
         case .swapRight: KeyCombo(keyCode: kVK_ANSI_L, [.command, .control, .shift])
+        case .maximizePane: KeyCombo(keyCode: kVK_Return, [.command, .shift])
         case .webAddress: KeyCombo(keyCode: kVK_ANSI_L, .command)
         case .webReload: KeyCombo(keyCode: kVK_ANSI_R, .command)
         case .fontBigger: KeyCombo(keyCode: kVK_ANSI_Equal, .command)

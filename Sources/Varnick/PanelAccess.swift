@@ -503,9 +503,14 @@ final class PanelAccess {
     /// A tab: its name and its panes, each with its id, kind and title, the focused one and this session's marked.
     private func tabLines(_ tab: ClaudeTab, caller: UUID, showing: Bool = true) -> [String] {
         let name = tab.name ?? tab.focused.label
-        var lines = [(showing ? "Showing: the tab" : "This session's tab (not showing):") + " \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s"):"]
+        // A maximized pane (the user's key) shows alone: the others are out of sight, still running, and the user's focus keys or `show` bring them back.
+        let maximized = tab.maximizedPane
+        let hidden = tab.hiddenByMaximize.count
+        var lines = [(showing ? "Showing: the tab" : "This session's tab (not showing):") + " \"\(name)\" with \(tab.sessions.count) pane\(tab.sessions.count == 1 ? "" : "s")"
+                     + (maximized == nil ? ":" : ", one maximized (the other \(hidden) \(hidden == 1 ? "is" : "are") hidden, still running; `show` with a hidden pane's id restores the split):")]
         for pane in tab.sessions {
             var marks: [String] = []
+            if pane === maximized { marks.append("maximized") } else if maximized != nil { marks.append("hidden") }
             if pane === tab.focused { marks.append("focused") }
             if pane.id == caller { marks.append("this session") }
             if pane.record.openedBy == caller { marks.append("opened by this session") }

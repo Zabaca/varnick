@@ -127,7 +127,7 @@ enum PanelMCP {
         properties: [
             "view": ["type": "string", "enum": ["search", "board", "outline"],
                      "description": "Show the search, the session board or the Outline (also !wf; only while the Outline switch is on). Showing the Outline puts the caret in a bullet only if the panel already has the keyboard."],
-            "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused. A card's id from board_read shows its tab, with its most urgent session focused."],
+            "pane": ["type": "string", "description": "A pane's id from panel or board_read (s1…): shows its tab with that pane focused (a tab with a maximized pane shows its whole split again first). A card's id from board_read shows its tab, with its most urgent session focused."],
             "command": ["type": "string", "description": "A ! command's name, run as pressing Return on its row does: \(commands) (kanban is also tabs, outline is also wf, resources is also memory). Not listen: it turns on the microphone."],
         ]))
 
@@ -151,7 +151,7 @@ enum PanelMCP {
     private static let panel = tool("panel", PanelToolSpec(
         summary: "Says what Varnick's panel shows now, and where the keyboard focus is. Whether the panel is visible, key and pinned; what it "
             + "shows: the search (its mode, and whether its field is empty, never its text), a tab with its panes (each with an id such as s1, "
-            + "its kind and title, which has focus and which is this session), the session board with its tab and selected card, the Outline with its zoom, filter and caret, Settings, "
+            + "its kind and title, which has focus and which is this session; when the user has maximized one, the tab says so and marks that pane \"maximized\" and the others \"hidden\": they are out of sight but run on, and show with a hidden pane's id brings the split back), the session board with its tab and selected card, the Outline with its zoom, filter and caret, Settings, "
             + "and the Restart Varnick card or the split picker over any of them. A pane's id stays the same for as long as this session lives, and show, board_read and pane_read use the same ids. "
             + "When this session's own pane is not among the panes listed (the Outline, the board, the search or another tab shows), a line like \"This session: s1 (in the tab ...)\" gives its id, so it can show pane: back, and the panes of this session's own tab follow it in the same form (id, kind, title, this session, and \"opened by this session\" on the ones it opened with pane_open, which pane_close takes), none of another tab's. A tab another Mac or the phone controls is listed this way too, and so are the panes opened before a Varnick restart, whose ids start again.",
         properties: [:]))
