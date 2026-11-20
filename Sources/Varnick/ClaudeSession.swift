@@ -2185,6 +2185,7 @@ struct ClaudePane: View {
                 }
                 // The strip fills what the pills and the pin leave, and reports only its width; the header's empty part drags the window.
                 TabStripView(model: model, strip: strip, tab: tab, chipX: $chipX)
+                MaximizedChip(tab: tab)
                 // The focused pane's pills, as in its row in the session list (`LauncherModel.pills`). With no
                 // detail line to fall back on, the folder and an unpaired Mac's name stand in for a missing pill.
                 let pills = model.pills(for: tab.focused.record)

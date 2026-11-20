@@ -198,7 +198,11 @@ struct PanePanelView: PanelAccessView {
         guard let session = model.tabs.lazy.flatMap(\.sessions).first(where: { $0.id == target }) else {
             return try card(target, id: id)
         }
-        let header = "\(id) \(PanelAccess.kindText(session)) \"\(PanelAccess.oneLine(session.label))\"" + (target == caller ? " (this session)" : "")
+        var header = "\(id) \(PanelAccess.kindText(session)) \"\(PanelAccess.oneLine(session.label))\"" + (target == caller ? " (this session)" : "")
+        // The user maximized another pane of its tab: it runs on and is read as ever, but is out of sight.
+        if model.tabs.first(where: { $0.contains(session) })?.hiddenByMaximize.contains(where: { $0 === session }) == true {
+            header += " (hidden: another pane of its tab is maximized)"
+        }
         if let page = session.chromiumPage { return header + "\n" + (await Self.chromiumLines(page, url: session.record.url)) }
         // Only a terminal has a screen to read.
         guard session.isClaude || session.isShell else { return header + "\nContents are not read: its kind and title only." }

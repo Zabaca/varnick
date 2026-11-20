@@ -362,6 +362,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .swapDown where inSession: model.swapPane(.down)
         case .swapUp where inSession: model.swapPane(.up)
         case .swapRight where inSession: model.swapPane(.right)
+        // A tab with one pane has nothing to maximize: the key goes on to the pane.
+        case .maximizePane where inSession: return model.toggleMaximize()
         case .webAddress: return model.webAction { $0.editingAddress = true }
         case .webReload: return model.webAction(includingRemoteFiles: true) { $0.reload() }
         case .fontBigger: Settings.shared.adjustFont(0.5)

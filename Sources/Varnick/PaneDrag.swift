@@ -281,10 +281,10 @@ extension View {
 
 /// A tab's panes with what a pane drag needs of them: the space the gesture and the frames are in, the area, and the overlay that draws the drag.
 struct PaneArea: View {
-    let tab: ClaudeTab
+    @ObservedObject var tab: ClaudeTab
 
     var body: some View {
-        PaneView(node: tab.root, tab: tab)
+        panes
             .coordinateSpace(name: PaneDrag.space)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { tab.paneDrag.area = CGRect(origin: .zero, size: $0) }
             .onPreferenceChange(PaneFrames.self) { tab.paneDrag.frames = $0 }
@@ -292,6 +292,17 @@ struct PaneArea: View {
             .background(DividerAnchor(grab: tab.dividers))
             .onDisappear { tab.dividers.release() }
             .overlay { PaneDropOverlay(drop: tab.paneDrag.drop) }
+    }
+
+    /// The whole split, or, while a pane is maximized (`ClaudeTab.maximized`), that pane alone: the others' views leave the tree, as a tab's do when
+    /// another shows, so nothing of theirs is resized.
+    @ViewBuilder private var panes: some View {
+        if let only = tab.maximizedPane {
+            TerminalLeaf(session: only, tab: tab)
+                .id(only.id)
+        } else {
+            PaneView(node: tab.root, tab: tab)
+        }
     }
 }
 

@@ -403,6 +403,9 @@ final class ClaudeTab: ObservableObject {
     let paneDrag = PaneDrag()
     /// The tab's dividers, grabbed from a zone around each (`DividerGrab`).
     let dividers = DividerGrab()
+    /// The pane shown alone in the pane area (⌘⇧↩) while the others are out of the view tree: view state only. The tree, its fractions, the saved
+    /// layout and what a host is told stay as they are, so the layout lock does not apply to it, and it is neither saved nor sent. Read `maximizedPane`.
+    @Published private(set) var maximized: ClaudeSession?
 
     init(root: PaneNode, id: UUID = UUID(), focused: ClaudeSession? = nil, name: String? = nil, history: [HeldConversation] = []) {
         self.id = id
@@ -425,6 +428,12 @@ final class ClaudeTab: ObservableObject {
     var sessionsByID: [String: ClaudeSession] {
         Dictionary(sessions.map { ($0.id.uuidString.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The maximized pane, while it is still in the tab and the tab has others to hide.
+    var maximizedPane: ClaudeSession? { maximized.flatMap { sessions.count > 1 && contains($0) ? $0 : nil } }
+
+    /// The panes the maximized one hides, for the chip and `panel`.
+    var hiddenByMaximize: [ClaudeSession] { maximizedPane.map { shown in sessions.filter { $0 !== shown } } ?? [] }
 
     /// The Claude panes, in layout order.
     var claudeSessions: [ClaudeSession] { sessions.filter(\.isClaude) }
@@ -477,8 +486,32 @@ final class ClaudeTab: ObservableObject {
     /// Focus moved to this pane from another (`focus`): the model tells a pane a session opened that it is the user's now.
     var onFocus: (ClaudeSession) -> Void = { _ in }
 
+    /// ⌘⇧↩: the focused pane takes the whole pane area, or the split comes back as it was. False when the tab has one pane and nothing to restore.
+    /// The other panes' views leave the tree as a tab's do when another tab shows: their sessions run on and their terminals keep their sizes, since a
+    /// view out of a window fits nothing (`HostContainer`).
+    @discardableResult
+    func toggleMaximize() -> Bool {
+        if maximized != nil {
+            restore()
+            return true
+        }
+        guard sessions.count > 1 else { return false }
+        dividers.release()
+        dividers.frames = [:]
+        maximized = focused
+        return true
+    }
+
+    /// The whole split shows again, with the same tree and divider sizes. Whatever shows, adds, moves or closes a pane starts with it.
+    func restore() {
+        guard maximized != nil else { return }
+        maximized = nil
+    }
+
     func focus(_ session: ClaudeSession) {
         guard contains(session) else { return }
+        // Focus on a hidden pane would leave it invisible: the split comes back first.
+        if maximized !== session { restore() }
         if focused !== session {
             focused = session
             onFocus(session)
@@ -487,6 +520,7 @@ final class ClaudeTab: ObservableObject {
     }
 
     func split(_ axis: SplitAxis, adding new: ClaudeSession) {
+        restore()
         root.leaf(for: focused)?.split(axis, adding: new)
         focus(new)
     }
@@ -518,6 +552,7 @@ final class ClaudeTab: ObservableObject {
 
     /// Splits `target`'s pane without moving focus (a file pane stacking under the file column).
     func add(_ new: ClaudeSession, beside target: ClaudeSession, _ axis: SplitAxis) {
+        restore()   // or the new pane would be out of sight
         root.leaf(for: target)?.split(axis, adding: new)
         objectWillChange.send()   // the strip measures the pane count
     }
@@ -528,6 +563,9 @@ final class ClaudeTab: ObservableObject {
         guard let leaf = root.leaf(for: session) else { return true }
         guard let parent = leaf.parent,
               let sibling = parent.children.first(where: { $0 !== leaf }) else { return false }
+        // The maximized pane closing brings the split back, with a neighbour focused. A hidden pane closing leaves the split as it is (`maximizedPane`
+        // lets go by itself once no other pane is left).
+        if maximized === session { restore() }
         // Focus goes to the pane that grows into the space: the sibling, or if the sibling
         // is itself split, its pane right next to the closed one.
         let first = parent.children.first === leaf
@@ -538,7 +576,8 @@ final class ClaudeTab: ObservableObject {
         let candidates = sibling.leaves
         let next = neighbor(of: session, toward, among: candidates) ?? candidates.first
         guard leaf.removeLeaf() else { return false }
-        objectWillChange.send()   // the strip measures the pane count
+        if sessions.count < 2 { restore() }
+        objectWillChange.send()   // the strip measures the pane count, and the maximized chip counts the hidden ones
         if focused === session, let next = next ?? sessions.first {
             if focusing { focus(next) } else { focused = next }
         }
@@ -550,6 +589,7 @@ final class ClaudeTab: ObservableObject {
     @discardableResult
     func swap(_ a: ClaudeSession, _ b: ClaudeSession) -> Bool {
         guard a !== b, let first = root.leaf(for: a), let second = root.leaf(for: b) else { return false }
+        restore()
         first.exchange(with: second)
         return true
     }
@@ -558,6 +598,7 @@ final class ClaudeTab: ObservableObject {
     /// that is closing) goes beside the last. Focus stays where it was if that pane is still in the tab.
     func rearrange(to layout: PeerLayout, using sessions: [String: ClaudeSession]) {
         guard let node = PaneNode.build(layout.addingMissing(sessions.keys.sorted()), sessions: sessions) else { return }
+        restore()
         root.become(node)
         if !contains(focused), let first = root.leaves.first { focused = first }
     }
@@ -634,7 +675,8 @@ struct TerminalLeaf: View {
     @State private var hovering = false
 
     var body: some View {
-        let split = tab.root.session == nil
+        // A maximized pane is the only one in sight: no focus ring, and no grip to drag it by.
+        let split = tab.root.session == nil && tab.maximizedPane == nil
         Group {
             if session.staysOnHost {
                 RemotePaneCard(session: session) { tab.focus(session) }
@@ -897,6 +939,38 @@ struct CloseButton: View {
         .foregroundStyle(.secondary)
         .help(help)
         .onHover { hovering = $0 }
+    }
+}
+
+/// In the tab's header while a pane is maximized: how many panes are out of sight, still running. A click brings the split back, as the key does.
+struct MaximizedChip: View {
+    @ObservedObject var tab: ClaudeTab
+    @ObservedObject private var settings = Settings.shared
+
+    var body: some View {
+        let hidden = tab.hiddenByMaximize.count
+        if hidden > 0 {
+            Button {
+                tab.restore()
+                tab.focus(tab.focused)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 9, weight: .bold))
+                    Text("\(hidden) hidden")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(1)
+            .help("This pane is maximized: \(hidden) other pane\(hidden == 1 ? " is" : "s are") hidden and still running. Click to bring the split back"
+                  + (settings.combo(.maximizePane).map { " (\($0.label))" } ?? "") + ".")
+        }
     }
 }
 
